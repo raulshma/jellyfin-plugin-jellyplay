@@ -1,0 +1,115 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
+using Jellyfin.Plugin.JellyPlay.Realtime;
+using Jellyfin.Plugin.JellyPlay.Services.Settings;
+using Jellyfin.Plugin.JellyPlay.Storage;
+using Microsoft.Extensions.Logging.Abstractions;
+using Xunit;
+
+namespace Jellyfin.Plugin.JellyPlay.Tests;
+
+public sealed class SettingsServiceTests : IDisposable
+{
+    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-svc-tests-" + Guid.NewGuid().ToString("N"));
+    private readonly JellyPlayDatabase _db;
+    private readonly SettingsService _service;
+    private Configuration.SyncConfig _syncConfig = new();
+
+    public SettingsServiceTests()
+    {
+        Directory.CreateDirectory(_tempDir);
+        _db = new JellyPlayDatabase(_tempDir);
+        _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => _syncConfig, NullLogger<SettingsService>.Instance);
+    }
+
+    public void Dispose()
+    {
+        _db.Dispose();
+        try
+        {
+            Directory.Delete(_tempDir, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+    }
+
+    private static Api.SettingsWriteDto Dto(string ns, string key, long at, string json = "true")
+        => new() { Ns = ns, Key = key, SchemaVersion = 1, UpdatedAt = at, Value = JsonDocument.Parse(json).RootElement };
+
+    [Fact]
+    public void ResolveProfile_BasePlusOverlay_OverlayWins()
+    {
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "theme", 1, "\"base\""), Dto("ui", "skip", 1, "30") });
+        _service.ApplyBatch("u1", "tv", "d1", new[] { Dto("ui", "theme", 2, "\"tv\"") });
+
+        var resolved = _service.ResolveProfile("u1", "tv");
+
+        var theme = resolved.Settings.Single(entry => entry.Key == "theme");
+        Assert.Equal("\"tv\"", theme.Value.GetRawText());
+        Assert.Equal(2, resolved.Settings.Count); // skip inherited from base
+    }
+
+    [Fact]
+    public void ResolveProfile_ForcedDefault_OverridesUser()
+    {
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "theme", 1, "\"user\"") });
+        _service.SetAdminDefaults(
+            SettingsService.GlobalDefaultsScope,
+            JsonDocument.Parse("{\"ui/theme\":{\"mode\":\"forced\",\"value\":\"admin\"}}").RootElement);
+
+        var resolved = _service.ResolveProfile("u1", "");
+
+        Assert.Equal("\"admin\"", resolved.Settings.Single(entry => entry.Key == "theme").Value.GetRawText());
+    }
+
+    [Fact]
+    public void ResolveProfile_SuggestedDefault_FillsMissingOnly()
+    {
+        _service.SetAdminDefaults(
+            SettingsService.GlobalDefaultsScope,
+            JsonDocument.Parse("{\"player/skip\":{\"mode\":\"suggested\",\"value\":15}}").RootElement);
+
+        var resolved = _service.ResolveProfile("u2", "");
+
+        Assert.Equal(15, resolved.Settings.Single(entry => entry.Key == "skip").Value.GetInt32());
+    }
+
+    [Fact]
+    public void ResolveProfile_SuggestedDefault_DoesNotOverrideUserValue()
+    {
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("player", "skip", 1, "30") });
+        _service.SetAdminDefaults(
+            SettingsService.GlobalDefaultsScope,
+            JsonDocument.Parse("{\"player/skip\":{\"mode\":\"suggested\",\"value\":15}}").RootElement);
+
+        var resolved = _service.ResolveProfile("u1", "");
+
+        Assert.Equal(30, resolved.Settings.Single(entry => entry.Key == "skip").Value.GetInt32());
+    }
+
+    [Fact]
+    public void ApplyBatch_RejectsStale_AndReturnsHead()
+    {
+        var first = _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "theme", 10) });
+        var second = _service.ApplyBatch("u1", "", "d2", new[] { Dto("ui", "theme", 5) });
+
+        Assert.Single(first.Applied);
+        Assert.Single(second.Rejected);
+        Assert.True(second.Head >= first.Head);
+    }
+
+    [Fact]
+    public void ResetNamespace_RemovesAllKeysInNamespace()
+    {
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1), Dto("ui", "b", 1), Dto("player", "c", 1) });
+
+        _service.ResetNamespace("u1", "", "ui");
+
+        var all = _service.GetAll("u1", "");
+        var remaining = Assert.Single(all.Settings);
+        Assert.Equal("player", remaining.Ns);
+    }
+}

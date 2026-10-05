@@ -1,0 +1,65 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build Jellyfin.Plugin.JellyPlay.sln -c Release
+      - run: dotnet test Jellyfin.Plugin.JellyPlay.sln -c Release --no-build
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build and package
+        run: ./build.sh "${GITHUB_REF#refs/tags/v}"
+      - name: Update manifest
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          ZIP_MD5=$(md5sum "dist/Jellyfin.Plugin.JellyPlay.zip" | cut -d' ' -f1)
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          python3 - <<EOF
+          import json
+          with open('manifest.json') as f:
+              manifest = json.load(f)
+          entry = manifest[0]
+          entry['versions'] = [v for v in entry.get('versions', []) if v['version'] != '$VERSION']
+          entry['versions'].insert(0, {
+              'version': '$VERSION',
+              'changelog': 'https://github.com/raulshma/jellyfin-plugin-jellyplay/releases/tag/v$VERSION',
+              'targetAbi': '10.11.11.0',
+              'sourceUrl': 'https://github.com/raulshma/jellyfin-plugin-jellyplay',
+              'timestamp': '$TIMESTAMP',
+              'checksum': '$ZIP_MD5'
+          })
+          with open('manifest.json', 'w') as f:
+              json.dump(manifest, f, indent=2)
+          EOF
+          git config user.name "release-bot"
+          git config user.email "bot@raulshma.dev"
+          git add manifest.json
+          git commit -m "manifest: v$VERSION"
+          git push
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Jellyfin.Plugin.JellyPlay.zip

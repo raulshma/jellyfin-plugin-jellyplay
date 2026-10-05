@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>JellyPlay</title>
+</head>
+<body>
+    <div data-role="page" id="jellyplayConfigPage" class="page type-interior jellyplayConfigurationPage">
+        <div data-role="content">
+            <div class="content-primary">
+                <form id="jellyplayConfigForm">
+                    <div class="verticalSection">
+                        <h2 class="sectionTitle">JellyPlay</h2>
+                        <p class="sectionDescription">Companion plugin for the JellyPlay client. Client settings sync, events, Seerr bridge, ratings and more.</p>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Events</h3>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label><input type="checkbox" is="emby-checkbox" id="NewMediaEnabled" /><span>New media events</span></label>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="NewMediaGroupingSeconds">Episode grouping window (seconds)</label>
+                            <input id="NewMediaGroupingSeconds" name="NewMediaGroupingSeconds" type="number" min="10" max="600" is="emby-input" class="emby-input" />
+                        </div>
+                        <div class="selectContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="NewMediaAudience">New media audience</label>
+                            <select id="NewMediaAudience" name="NewMediaAudience" is="emby-select" class="emby-select">
+                                <option value="all">All users</option>
+                                <option value="admins">Admins only</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Seerr bridge</h3>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="SeerrServerUrl">Seerr server URL</label>
+                            <input id="SeerrServerUrl" name="SeerrServerUrl" type="url" is="emby-input" class="emby-input" placeholder="http://jellyseerr:5055" />
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="SeerrApiKey">Seerr API key</label>
+                            <input id="SeerrApiKey" name="SeerrApiKey" type="password" is="emby-input" class="emby-input" />
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="WebhookSecret">Webhook secret (auto-generate if empty)</label>
+                            <input id="WebhookSecret" name="WebhookSecret" type="text" is="emby-input" class="emby-input" />
+                        </div>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Ratings</h3>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MdbListApiKey">MDBList API key</label>
+                            <input id="MdbListApiKey" name="MdbListApiKey" type="password" is="emby-input" class="emby-input" />
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="TmdbApiKey">TMDB API key</label>
+                            <input id="TmdbApiKey" name="TmdbApiKey" type="password" is="emby-input" class="emby-input" />
+                        </div>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Newsletter (SMTP)</h3>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="SmtpHost">SMTP host</label>
+                            <input id="SmtpHost" name="SmtpHost" type="text" is="emby-input" class="emby-input" />
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="SmtpPort">SMTP port</label>
+                            <input id="SmtpPort" name="SmtpPort" type="number" is="emby-input" class="emby-input" />
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="SmtpUsername">SMTP username</label>
+                            <input id="SmtpUsername" name="SmtpUsername" type="text" is="emby-input" class="emby-input" />
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="SmtpPassword">SMTP password</label>
+                            <input id="SmtpPassword" name="SmtpPassword" type="password" is="emby-input" class="emby-input" />
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="FromAddress">From address</label>
+                            <input id="FromAddress" name="FromAddress" type="email" is="emby-input" class="emby-input" />
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="TestRecipient">Test recipient</label>
+                            <input id="TestRecipient" name="TestRecipient" type="email" is="emby-input" class="emby-input" />
+                        </div>
+                    </div>
+
+                    <div>
+                        <button is="emby-button" type="submit" class="raised button-submit emby-button"><span>Save</span></button>
+                    </div>
+                </form>
+
+                <div class="verticalSection" style="margin-top:2em">
+                    <h3 class="sectionTitle">YAML editor</h3>
+                    <a is="emby-linkbutton" class="raised emby-button" href="#/configurationpage?name=JellyPlayYaml">Open YAML config editor</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script type="text/javascript" src="configurationpage?name=JellyPlay.js"></script>
+</body>
+</html>
