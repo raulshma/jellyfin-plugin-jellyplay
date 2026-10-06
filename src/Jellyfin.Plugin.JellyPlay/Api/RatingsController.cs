@@ -29,7 +29,7 @@ public class RatingsController : ControllerBase
     public async Task<IActionResult> GetRatings([FromQuery, Required] string imdbId)
     {
         var result = await _mdbList.GetRatings(imdbId);
-        return result is null ? NotFound() : Ok(result);
+        return result is null ? NotFound() : JellyPlayResponses.Camel(result);
     }
 
     [HttpGet("mdblist/keyInfo")]
@@ -53,20 +53,20 @@ public class RatingsController : ControllerBase
     public async Task<IActionResult> GetSeasonRatings([FromQuery, Required] string tmdbId, [FromQuery, Required] int seasonNumber)
     {
         var result = await _tmdb.GetSeasonRatings(tmdbId, seasonNumber);
-        return result is null ? NotFound() : Ok(new { season = seasonNumber, episodes = result });
+        return result is null ? NotFound() : JellyPlayResponses.Camel(new { season = seasonNumber, episodes = result });
     }
 
     [HttpGet("tmdb/nextEpisode")]
     public async Task<IActionResult> GetNextEpisode([FromQuery, Required] string tmdbId)
     {
         var result = await _tmdb.GetNextEpisode(tmdbId);
-        return result is null ? NotFound() : Ok(new { name = result.Name, airDate = result.AirDate });
+        return result is null ? NotFound() : JellyPlayResponses.Camel(new { name = result.Name, airDate = result.AirDate });
     }
 
     [HttpGet("imdb/charts")]
     public async Task<IActionResult> GetTop250()
     {
         var chart = await _imdb.GetTop250();
-        return chart is null ? NotFound() : Ok(chart);
+        return chart is null ? NotFound() : JellyPlayResponses.Camel(chart);
     }
 }

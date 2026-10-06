@@ -64,7 +64,7 @@ public class EventsController : ControllerBase
 
     [HttpGet("devices")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public IActionResult GetDevices() => Ok(_db.GetDevices(User.GetUserId().ToString()));
+    public IActionResult GetDevices() => JellyPlayResponses.Camel(_db.GetDevices(User.GetUserId().ToString()));
 
     /// <summary>Admin broadcast to every connected client.</summary>
     [HttpPost("broadcast")]

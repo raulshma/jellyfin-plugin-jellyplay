@@ -46,14 +46,14 @@ public class SeerrController : ControllerBase
             _ => new SeerrLoginResult(false, "unknown-auth-type")
         };
 
-        return result.Success ? Ok(new { linked = true }) : Unauthorized(new { error = result.Error });
+        return result.Success ? JellyPlayResponses.Camel(new { linked = true }) : Unauthorized(new { error = result.Error });
     }
 
     [HttpGet("status")]
     public IActionResult Status()
     {
         var session = _sessions.GetSession(User.GetUserId().ToString());
-        return Ok(new
+        return JellyPlayResponses.Camel(new
         {
             configured = _sessions.IsConfigured,
             serverUrl = _sessions.IsConfigured ? _sessions.ServerUrl : null,
@@ -64,7 +64,7 @@ public class SeerrController : ControllerBase
 
     [HttpGet("validate")]
     public IActionResult Validate()
-        => Ok(new { valid = _sessions.GetSession(User.GetUserId().ToString()) is not null });
+        => JellyPlayResponses.Camel(new { valid = _sessions.GetSession(User.GetUserId().ToString()) is not null });
 
     [HttpDelete("logout")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
@@ -114,7 +114,7 @@ public class SeerrController : ControllerBase
             var subject = root.TryGetProperty("subject", out var subjectElement) ? subjectElement.GetString() : "Seerr request";
             var message = root.TryGetProperty("message", out var messageElement) ? messageElement.GetString() : null;
             _events.PublishBroadcast($"Seerr: {subject}", message ?? "Request activity in Seerr", null);
-            return Ok();
+            return JellyPlayResponses.Camel();
         }
         catch (System.Text.Json.JsonException)
         {
@@ -127,7 +127,7 @@ public class SeerrController : ControllerBase
     public IActionResult WebhookInfo()
     {
         var config = JellyPlayPlugin.Instance!.Configuration.Seerr;
-        return Ok(new
+        return JellyPlayResponses.Camel(new
         {
             autoProvision = config.AutoProvisionWebhook,
             secretConfigured = !string.IsNullOrEmpty(config.WebhookSecret),
@@ -141,6 +141,6 @@ public class SeerrController : ControllerBase
     {
         var baseUrl = $"{Request.Scheme}://{Request.Host}{Request.PathBase}";
         var ok = await _provisioner.ProvisionAsync(baseUrl);
-        return ok ? Ok(new { provisioned = true }) : StatusCode(StatusCodes.Status502BadGateway, new { provisioned = false });
+        return ok ? JellyPlayResponses.Camel(new { provisioned = true }) : StatusCode(StatusCodes.Status502BadGateway, new { provisioned = false });
     }
 }

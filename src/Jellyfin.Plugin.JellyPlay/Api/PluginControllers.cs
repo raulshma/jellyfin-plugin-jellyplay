@@ -40,7 +40,7 @@ public class RowsController : ControllerBase
         var rows = JellyPlayPlugin.Instance!.Configuration.Rows.CustomRows
             .Select(row => new { row.Title, row.Source, row.Limit })
             .ToList();
-        return Ok(new { rows });
+        return JellyPlayResponses.Camel(new { rows });
     }
 
     /// <summary>Resolves one admin-defined custom row.</summary>
@@ -57,14 +57,14 @@ public class RowsController : ControllerBase
         }
 
         var result = await _rows.ResolveAsync(definition);
-        return result is null ? NotFound() : Ok(result);
+        return result is null ? NotFound() : JellyPlayResponses.Camel(result);
     }
 
     [HttpGet("seasonal/row")]
     public async Task<IActionResult> GetSeasonal([FromQuery] string? keyword)
     {
         var result = await _seasonal.GetSeasonalRow(keyword);
-        return result is null ? NotFound() : Ok(result);
+        return result is null ? NotFound() : JellyPlayResponses.Camel(result);
     }
 }
 
@@ -84,7 +84,7 @@ public class AnimeMarkersController : ControllerBase
     public async Task<IActionResult> GetSeriesMarkers([FromQuery, Required] string seriesId, [FromQuery] string? providerSeriesId)
     {
         var result = await _markers.GetSeriesMarkers(seriesId, providerSeriesId ?? seriesId);
-        return result is null ? NotFound() : Ok(result);
+        return result is null ? NotFound() : JellyPlayResponses.Camel(result);
     }
 
     [HttpGet("animemarkers/items")]
@@ -94,7 +94,7 @@ public class AnimeMarkersController : ControllerBase
         [FromQuery, Required] int to)
     {
         var result = await _markers.GetEpisodeMarkers(seriesId, from, to);
-        return Ok(new { markers = result });
+        return JellyPlayResponses.Camel(new { markers = result });
     }
 }
 
@@ -114,7 +114,7 @@ public class RecommendationsController : ControllerBase
     public async Task<IActionResult> GetSimilar([FromRoute, Required] Guid itemId, [FromQuery] int limit = 12)
     {
         var result = await _similar.GetSimilar(itemId, limit);
-        return Ok(new { items = result });
+        return JellyPlayResponses.Camel(new { items = result });
     }
 }
 
@@ -134,15 +134,15 @@ public class UserDataController : ControllerBase
 
     [HttpGet("userratings/mine")]
     public IActionResult GetMyRatings([FromQuery] string? filter)
-        => Ok(new { ratings = _ratings.GetMyRatings(User.GetUserId(), filter) });
+        => JellyPlayResponses.Camel(new { ratings = _ratings.GetMyRatings(User.GetUserId(), filter) });
 
     [HttpGet("bookmarks/{itemId}")]
     public IActionResult GetBookmarks([FromRoute, Required] string itemId)
-        => Ok(new { bookmarks = _bookmarks.GetBookmarks(User.GetUserId().ToString(), itemId).Select(ToDto) });
+        => JellyPlayResponses.Camel(new { bookmarks = _bookmarks.GetBookmarks(User.GetUserId().ToString(), itemId).Select(ToDto) });
 
     [HttpPost("bookmarks/{itemId}")]
     public IActionResult UpsertBookmark([FromRoute, Required] string itemId, [FromBody, Required] BookmarkRequest request)
-        => Ok(ToDto(_bookmarks.Upsert(User.GetUserId().ToString(), itemId, request)));
+        => JellyPlayResponses.Camel(ToDto(_bookmarks.Upsert(User.GetUserId().ToString(), itemId, request)));
 
     [HttpDelete("bookmarks/{itemId}/{bookmarkId}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
@@ -167,7 +167,7 @@ public class TranscodesController : ControllerBase
 
     [HttpGet("transcodes/active")]
     [Authorize(Policy = MediaBrowser.Common.Api.Policies.RequiresElevation)]
-    public IActionResult GetActive() => Ok(new { transcodes = _transcodes.GetActiveTranscodes() });
+    public IActionResult GetActive() => JellyPlayResponses.Camel(new { transcodes = _transcodes.GetActiveTranscodes() });
 
     [HttpDelete("transcodes/active/{sessionId}")]
     [Authorize(Policy = MediaBrowser.Common.Api.Policies.RequiresElevation)]
@@ -177,5 +177,5 @@ public class TranscodesController : ControllerBase
 
     [HttpGet("transcodes/mine")]
     public IActionResult GetMine()
-        => Ok(new { transcodes = _transcodes.GetMine(User.Identity?.Name ?? string.Empty) });
+        => JellyPlayResponses.Camel(new { transcodes = _transcodes.GetMine(User.Identity?.Name ?? string.Empty) });
 }

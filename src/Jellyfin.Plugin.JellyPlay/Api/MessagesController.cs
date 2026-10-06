@@ -26,7 +26,7 @@ public class MessagesController : ControllerBase
     [HttpGet("messages")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<IReadOnlyList<MessageDto>> GetInbox()
-        => Ok(new { messages = _messages.GetInbox(User.GetUserId().ToString(), User.IsAdmin()) });
+        => JellyPlayResponses.Camel(new { messages = _messages.GetInbox(User.GetUserId().ToString(), User.IsAdmin()) });
 
     [HttpPost("messages/{messageId}/read")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
@@ -39,12 +39,12 @@ public class MessagesController : ControllerBase
     [HttpGet("admin/messages")]
     [Authorize(Policy = Policies.RequiresElevation)]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<IReadOnlyList<MessageRow>> GetAll() => Ok(new { messages = _messages.GetAll() });
+    public ActionResult<IReadOnlyList<MessageRow>> GetAll() => JellyPlayResponses.Camel(new { messages = _messages.GetAll() });
 
     [HttpPost("admin/messages")]
     [Authorize(Policy = Policies.RequiresElevation)]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public IActionResult Upsert([FromBody, Required] MessageAdminRequest request) => Ok(_messages.Upsert(request));
+    public IActionResult Upsert([FromBody, Required] MessageAdminRequest request) => JellyPlayResponses.Camel(_messages.Upsert(request));
 
     [HttpDelete("admin/messages/{messageId}")]
     [Authorize(Policy = Policies.RequiresElevation)]

@@ -83,7 +83,7 @@ public class JellyPlayController : ControllerBase
             features.Remove(JellyPlayContract.Features.Newsletter);
         }
 
-        return Ok(new CapabilitiesResponse(
+        return JellyPlayResponses.Camel(new CapabilitiesResponse(
             JellyPlayContract.ContractVersion,
             typeof(JellyPlayPlugin).Assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version ?? "1.0.0",
             features,
@@ -98,7 +98,7 @@ public class JellyPlayController : ControllerBase
     public ActionResult<JsonElementCompat> GetGlobalDefaults()
     {
         var raw = _settings.GetAdminDefaultsRaw(SettingsService.GlobalDefaultsScope);
-        return Ok(raw is null ? new { } : (object)raw.Value);
+        return JellyPlayResponses.Camel(raw is null ? new { } : (object)raw.Value);
     }
 
     [HttpPost("defaults")]
@@ -120,7 +120,7 @@ public class JellyPlayController : ControllerBase
             .WithNamingConvention(CamelCaseNamingConvention.Instance)
             .Build()
             .Serialize(config);
-        return Ok(new { value = yaml });
+        return JellyPlayResponses.Camel(new { value = yaml });
     }
 
     [HttpPost("config/yaml")]
@@ -137,11 +137,11 @@ public class JellyPlayController : ControllerBase
             var config = deserializer.Deserialize<PluginConfiguration>(request.Value);
             var instance = JellyPlayPlugin.Instance!;
             instance.UpdateConfiguration(config);
-            return Ok(new { error = false, message = string.Empty });
+            return JellyPlayResponses.Camel(new { error = false, message = string.Empty });
         }
         catch (System.Exception ex)
         {
-            return Ok(new { error = true, message = ex.Message });
+            return JellyPlayResponses.Camel(new { error = true, message = ex.Message });
         }
     }
 }

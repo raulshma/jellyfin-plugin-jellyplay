@@ -28,7 +28,7 @@ public class AdminController : ControllerBase
     public IActionResult PushDefaults([FromRoute] string? userId)
     {
         var outcome = _defaults.PushDefaults(string.IsNullOrEmpty(userId) ? null : userId);
-        return Ok(outcome);
+        return JellyPlayResponses.Camel(outcome);
     }
 
     [HttpGet("configBackup")]
@@ -42,6 +42,6 @@ public class AdminController : ControllerBase
         using var ms = new System.IO.MemoryStream();
         await Request.Body.CopyToAsync(ms);
         var outcome = _backup.Restore(ms.ToArray());
-        return outcome.Success ? Ok(outcome) : BadRequest(outcome);
+        return outcome.Success ? JellyPlayResponses.Camel(outcome) : BadRequest(outcome);
     }
 }

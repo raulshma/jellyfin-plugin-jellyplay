@@ -16,6 +16,8 @@
   <ItemGroup>
     <PackageReference Include="Jellyfin.Controller" Version="10.11.*-*" ExcludeAssets="runtime" />
     <PackageReference Include="Jellyfin.Model" Version="10.11.*-*" ExcludeAssets="runtime" />
+    <!-- Host-provided at runtime (stripped from the artifact by build.sh); compile-only for the camelCase output formatter -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
     <!-- GHSA-2m69-gcr7-jv3q: pin the transitive native sqlite above the vulnerable 2.1.11 -->
     <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" />

@@ -35,14 +35,14 @@ public class SettingsController : ControllerBase
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<SettingsSnapshotResponse> GetAll([FromQuery] string? profile)
-        => Ok(_settings.GetAll(User.GetUserId().ToString(), profile ?? JellyPlayDatabase.BaseProfile));
+        => JellyPlayResponses.Camel(_settings.GetAll(User.GetUserId().ToString(), profile ?? JellyPlayDatabase.BaseProfile));
 
     [HttpGet("changed")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<SettingsSnapshotResponse> GetChanged(
         [FromQuery, Required] long since,
         [FromQuery] string? profile)
-        => Ok(_settings.GetChanged(User.GetUserId().ToString(), profile ?? JellyPlayDatabase.BaseProfile, since));
+        => JellyPlayResponses.Camel(_settings.GetChanged(User.GetUserId().ToString(), profile ?? JellyPlayDatabase.BaseProfile, since));
 
     [HttpPost]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -54,7 +54,7 @@ public class SettingsController : ControllerBase
             return StatusCode(StatusCodes.Status429TooManyRequests, new { error = "rate-limited" });
         }
 
-        return Ok(_settings.ApplyBatch(
+        return JellyPlayResponses.Camel(_settings.ApplyBatch(
             User.GetUserId().ToString(),
             request.Profile,
             request.DeviceId ?? User.GetDeviceId(),
@@ -72,14 +72,14 @@ public class SettingsController : ControllerBase
     [HttpGet("resolved/{profile?}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<SettingsSnapshotResponse> Resolve([FromRoute] string? profile)
-        => Ok(_settings.ResolveProfile(User.GetUserId().ToString(), profile ?? JellyPlayDatabase.BaseProfile));
+        => JellyPlayResponses.Camel(_settings.ResolveProfile(User.GetUserId().ToString(), profile ?? JellyPlayDatabase.BaseProfile));
 
     [HttpPost("profile/{profile}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<SettingsBatchResponse> SaveDeviceProfile(
         [FromRoute, Required] string profile,
         [FromBody, Required] SettingsBatchRequest request)
-        => Ok(_settings.ApplyBatch(
+        => JellyPlayResponses.Camel(_settings.ApplyBatch(
             User.GetUserId().ToString(),
             profile,
             request.DeviceId ?? User.GetDeviceId(),
