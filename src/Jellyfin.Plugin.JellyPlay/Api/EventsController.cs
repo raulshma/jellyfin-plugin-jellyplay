@@ -24,13 +24,15 @@ public class EventsController : ControllerBase
     private readonly SseHub _hub;
     private readonly EventService _events;
     private readonly JellyPlayDatabase _db;
+    private readonly Services.Admin.BroadcastRateLimiter _rateLimiter;
     private readonly TimeProvider _clock;
 
-    public EventsController(SseHub hub, EventService events, JellyPlayDatabase db)
+    public EventsController(SseHub hub, EventService events, JellyPlayDatabase db, Services.Admin.BroadcastRateLimiter rateLimiter)
     {
         _hub = hub;
         _events = events;
         _db = db;
+        _rateLimiter = rateLimiter;
         _clock = TimeProvider.System;
     }
 
@@ -68,8 +70,14 @@ public class EventsController : ControllerBase
     [HttpPost("broadcast")]
     [Authorize(Policy = Policies.RequiresElevation)]
     [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public IActionResult Broadcast([FromBody, Required] BroadcastRequest request)
     {
+        if (!_rateLimiter.Allow("broadcast:" + User.GetUserId(), _clock.GetUtcNow().ToUnixTimeMilliseconds()))
+        {
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { error = "rate-limited" });
+        }
+
         var delivered = _events.PublishBroadcast(request.Title, request.Body, request.Url);
         return Accepted(new { delivered });
     }

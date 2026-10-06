@@ -29,6 +29,20 @@ public class RowsController : ControllerBase
         _seasonal = seasonal;
     }
 
+    /// <summary>
+    /// The admin-defined custom row titles (catalog for clients that render
+    /// one plugin row per configured list — the seasonal row is separate).
+    /// </summary>
+    [HttpGet("rows")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public IActionResult GetRowTitles()
+    {
+        var rows = JellyPlayPlugin.Instance!.Configuration.Rows.CustomRows
+            .Select(row => new { row.Title, row.Source, row.Limit })
+            .ToList();
+        return Ok(new { rows });
+    }
+
     /// <summary>Resolves one admin-defined custom row.</summary>
     [HttpGet("rows/items")]
     [ProducesResponseType(StatusCodes.Status200OK)]

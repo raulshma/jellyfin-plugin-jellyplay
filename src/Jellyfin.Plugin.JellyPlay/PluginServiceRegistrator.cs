@@ -90,5 +90,11 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         // Admin
         serviceCollection.AddSingleton<AdminDefaultsService>();
         serviceCollection.AddSingleton<ConfigBackupService>();
+        // Mutating-route abuse containment (settings POST 30/min per user, broadcast 10/min per admin)
+        serviceCollection.AddSingleton<Services.Admin.SettingsRateLimiter>();
+        serviceCollection.AddSingleton<Services.Admin.BroadcastRateLimiter>();
+
+        // Jellyfin-12 similar-items pipeline registration (reflection-guarded; no-op on 10.11)
+        serviceCollection.AddHostedService<Services.Recommendations.SimilarItemsProviderManager>();
     }
 }

@@ -677,6 +677,47 @@ public sealed class JellyPlayDatabase : IDisposable
         }
     }
 
+    public sealed record IntegrityResult(bool IntegrityOk, string Details, long WalCheckpointedFrames);
+
+    /// <summary>pragma integrity_check + WAL checkpoint — the scheduled integrity task's probe.</summary>
+    public IntegrityResult CheckIntegrity()
+    {
+        using (_lock.Write())
+        using (var connection = CreateConnection())
+        {
+            var details = string.Empty;
+            using (var check = connection.Prepare("pragma integrity_check"))
+            {
+                var rows = new List<string>();
+                foreach (var row in check.Select(row => row.GetString(0)))
+                {
+                    rows.Add(row);
+                    if (rows.Count >= 8)
+                    {
+                        break;
+                    }
+                }
+
+                details = string.Join("; ", rows);
+            }
+
+            long frames = 0;
+            using (var checkpoint = connection.Prepare("pragma wal_checkpoint(TRUNCATE)"))
+            using (var reader = checkpoint.ExecuteReader())
+            {
+                if (reader.Read() && !reader.IsDBNull(1))
+                {
+                    frames = Convert.ToInt64(reader.GetValue(1));
+                }
+            }
+
+            return new IntegrityResult(
+                details.Equals("ok", StringComparison.OrdinalIgnoreCase),
+                details,
+                frames);
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed)

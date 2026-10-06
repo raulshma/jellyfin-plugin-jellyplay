@@ -21,12 +21,14 @@ public class SettingsController : ControllerBase
 {
     private readonly SettingsService _settings;
     private readonly SseHub _hub;
+    private readonly Services.Admin.SettingsRateLimiter _rateLimiter;
     private readonly ILogger<SettingsController> _logger;
 
-    public SettingsController(SettingsService settings, SseHub hub, ILogger<SettingsController> logger)
+    public SettingsController(SettingsService settings, SseHub hub, Services.Admin.SettingsRateLimiter rateLimiter, ILogger<SettingsController> logger)
     {
         _settings = settings;
         _hub = hub;
+        _rateLimiter = rateLimiter;
         _logger = logger;
     }
 
@@ -44,12 +46,20 @@ public class SettingsController : ControllerBase
 
     [HttpPost]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public ActionResult<SettingsBatchResponse> ApplyBatch([FromBody, Required] SettingsBatchRequest request)
-        => Ok(_settings.ApplyBatch(
+    {
+        if (!_rateLimiter.Allow("settings:" + User.GetUserId(), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
+        {
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { error = "rate-limited" });
+        }
+
+        return Ok(_settings.ApplyBatch(
             User.GetUserId().ToString(),
             request.Profile,
             request.DeviceId ?? User.GetDeviceId(),
             request.Writes));
+    }
 
     [HttpDelete("{ns}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]

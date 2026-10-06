@@ -117,6 +117,7 @@ GET jellyplay/imdb/charts                  → { chart: "top250", entries: [{ran
 ## Rows (`custom-rows`, `seasonal-rows`)
 
 ```
+GET jellyplay/rows               → { rows: [{title, source, limit}] }  (admin-defined catalog)
 GET jellyplay/rows/items?title=   → { title, source, items: [{title, year?, imdbId?, tmdbId?, localItemId?}] } | 404
 GET jellyplay/seasonal/row?keyword= → RowResult (keyword optional; auto-picked by season)
 ```
