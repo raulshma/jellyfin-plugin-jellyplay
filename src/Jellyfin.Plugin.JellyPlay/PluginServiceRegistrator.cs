@@ -40,6 +40,9 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton(_ => new Func<Configuration.EventsConfig>(() => JellyPlayPlugin.Instance!.Configuration.Events));
         serviceCollection.AddSingleton(_ => new Func<Configuration.SyncConfig>(() => JellyPlayPlugin.Instance!.Configuration.Sync));
 
+        // Persistence — plugin instance owns the lazy database singleton
+        serviceCollection.AddSingleton(_ => JellyPlayPlugin.Instance!.Database);
+
         // Cache infrastructure
         serviceCollection.AddSingleton<FileCacheStore>();
 
