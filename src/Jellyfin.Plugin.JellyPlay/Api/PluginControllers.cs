@@ -9,6 +9,7 @@ using Jellyfin.Plugin.JellyPlay.Services.Rows;
 using Jellyfin.Plugin.JellyPlay.Services.Transcodes;
 using Jellyfin.Plugin.JellyPlay.Services.UserData;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
+using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -159,10 +160,12 @@ public class UserDataController : ControllerBase
 public class TranscodesController : ControllerBase
 {
     private readonly TranscodeInsightsService _transcodes;
+    private readonly IUserManager _users;
 
-    public TranscodesController(TranscodeInsightsService transcodes)
+    public TranscodesController(TranscodeInsightsService transcodes, IUserManager users)
     {
         _transcodes = transcodes;
+        _users = users;
     }
 
     [HttpGet("transcodes/active")]
@@ -177,5 +180,10 @@ public class TranscodesController : ControllerBase
 
     [HttpGet("transcodes/mine")]
     public IActionResult GetMine()
-        => JellyPlayResponses.Camel(new { transcodes = _transcodes.GetMine(User.Identity?.Name ?? string.Empty) });
+    {
+        // Sessions carry the username, not the id — resolve it from the auth'd
+        // principal's user id (Identity.Name is not the username contract).
+        var name = _users.GetUserById(User.GetUserId())?.Username ?? string.Empty;
+        return JellyPlayResponses.Camel(new { transcodes = _transcodes.GetMine(name) });
+    }
 }

@@ -147,13 +147,23 @@ POST  jellyplay/bookmarks/{itemId}     body { id?, position, chapterIndex?, labe
 DELETE jellyplay/bookmarks/{itemId}/{bookmarkId} → 204/404
 ```
 
-## Transcodes (`transcodes`)
+## Transcodes (`transcodes`) — the active-streams monitor
+
+Route ids keep the historic `transcodes` name; the data is every actively
+playing session (direct play included — the host's `SessionInfo.TranscodingInfo`
+is null for direct plays, so filtering on it would hide them) with the
+re-encode detail when the server is transcoding.
 
 ```
-GET    jellyplay/transcodes/active  [admin] → { transcodes: [{sessionId, userName?, deviceName?, itemName?, videoCodec?, audioCodec?, playMethod?, videoBitrate?, positionTicks, isPaused}] }
+GET    jellyplay/transcodes/active  [admin] → { transcodes: [{sessionId, userName?, deviceName?, itemName?, videoCodec?, audioCodec?, playMethod?, videoBitrate?, transcodeReasons?: [namedFlagBit...], positionTicks, isPaused}] }
 DELETE jellyplay/transcodes/active/{sessionId} [admin] → 204/404
-GET    jellyplay/transcodes/mine            → filtered to caller
+GET    jellyplay/transcodes/mine            → filtered to caller's username
 ```
+
+`videoCodec`/`audioCodec` are null for direct-play axes (`IsVideoDirect` /
+`IsAudioDirect`); `transcodeReasons` decomposes the host's `[Flags]`
+`TranscodeReason` into its named bits (`"VideoCodecNotSupported"`, ...) and is
+absent when not transcoding.
 
 ## Admin defaults & backup (`admin-defaults`, `config-backup`)
 
@@ -167,8 +177,18 @@ POST jellyplay/admin/configBackup [admin]          body backup JSON → restore
 
 ## Plugin config (dashboard + YAML editor)
 
-Dashboard page: events, Seerr, ratings, newsletter sections. YAML editor at
-`configurationpage?name=JellyPlayYaml`; API: `GET/POST jellyplay/config/yaml` [admin].
+Dashboard page: events, Seerr, ratings, newsletter sections, a tri-state
+client-defaults editor (the `jellyplay/defaults` map + push/backup/restore
+actions), and the YAML editor at `configurationpage?name=JellyPlayYaml`;
+API: `GET/POST jellyplay/config/yaml` [admin]. The pages' `data-i18n` text
+resolves through:
+
+```
+GET jellyplay/dashboard-strings?lang=  → { key: localizedString }   (en embedded; not feature-gated)
+```
+
+`POST jellyplay/defaults` stores the WHOLE map it receives (a removed key is a
+key absent from the body — there is no per-key unset verb).
 
 ## Versioning & deprecation
 

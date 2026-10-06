@@ -7,12 +7,12 @@
     <div data-role="page" id="jellyplayYamlPage" class="page type-interior">
         <div data-role="content">
             <div class="content-primary">
-                <h2 class="sectionTitle">JellyPlay config (YAML)</h2>
-                <p class="sectionDescription">Edits the entire plugin configuration. Values must validate against the config model; errors are reported on save.</p>
+                <h2 class="sectionTitle" data-i18n="YamlPageTitle">JellyPlay config (YAML)</h2>
+                <p class="sectionDescription" data-i18n="YamlDescription">Edits the entire plugin configuration. Values must validate against the config model; errors are reported on save.</p>
                 <textarea id="yamlEditor" spellcheck="false" style="width:100%;min-height:420px;font-family:monospace"></textarea>
                 <div style="margin-top:1em">
-                    <button is="emby-button" id="yamlSave" class="raised button-submit emby-button"><span>Save</span></button>
-                    <button is="emby-button" id="yamlReload" class="raised emby-button"><span>Reload</span></button>
+                    <button is="emby-button" id="yamlSave" class="raised button-submit emby-button"><span data-i18n="BtnSave">Save</span></button>
+                    <button is="emby-button" id="yamlReload" class="raised emby-button"><span data-i18n="YamlReload">Reload</span></button>
                 </div>
                 <pre id="yamlStatus" style="white-space:pre-wrap"></pre>
             </div>

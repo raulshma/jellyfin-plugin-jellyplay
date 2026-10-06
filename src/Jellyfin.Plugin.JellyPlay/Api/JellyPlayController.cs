@@ -110,6 +110,16 @@ public class JellyPlayController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>
+    /// The dashboard's localized string table (en embedded, ?lang= selects
+    /// another culture with parent fallback) — consumed by the config pages'
+    /// data-i18n pass, not feature-gated (cosmetic, no client behavior).
+    /// </summary>
+    [HttpGet("dashboard-strings")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public ActionResult<IReadOnlyDictionary<string, string>> GetDashboardStrings([FromQuery] string? lang)
+        => JellyPlayResponses.Camel(Helpers.DashboardStrings.All(Helpers.DashboardStrings.ResolveCulture(lang)));
+
     [HttpGet("config/yaml")]
     [Authorize(Policy = Policies.RequiresElevation)]
     [ProducesResponseType(StatusCodes.Status200OK)]

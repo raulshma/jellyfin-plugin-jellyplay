@@ -9,92 +9,111 @@
             <div class="content-primary">
                 <form id="jellyplayConfigForm">
                     <div class="verticalSection">
-                        <h2 class="sectionTitle">JellyPlay</h2>
-                        <p class="sectionDescription">Companion plugin for the JellyPlay client. Client settings sync, events, Seerr bridge, ratings and more.</p>
+                        <h2 class="sectionTitle" data-i18n="PageTitle">JellyPlay</h2>
+                        <p class="sectionDescription" data-i18n="PageDescription">Companion plugin for the JellyPlay client. Client settings sync, events, Seerr bridge, ratings and more.</p>
                     </div>
 
                     <div class="verticalSection">
-                        <h3 class="sectionTitle">Events</h3>
+                        <h3 class="sectionTitle" data-i18n="SectionEvents">Events</h3>
                         <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label><input type="checkbox" is="emby-checkbox" id="NewMediaEnabled" /><span>New media events</span></label>
+                            <label><input type="checkbox" is="emby-checkbox" id="NewMediaEnabled" /><span data-i18n="EventsNewMedia">New media events</span></label>
                         </div>
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="NewMediaGroupingSeconds">Episode grouping window (seconds)</label>
+                            <label class="inputLabel inputLabelUnfocused" for="NewMediaGroupingSeconds" data-i18n="EventsGroupingWindow">Episode grouping window (seconds)</label>
                             <input id="NewMediaGroupingSeconds" name="NewMediaGroupingSeconds" type="number" min="10" max="600" is="emby-input" class="emby-input" />
                         </div>
                         <div class="selectContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="NewMediaAudience">New media audience</label>
+                            <label class="inputLabel inputLabelUnfocused" for="NewMediaAudience" data-i18n="EventsAudience">New media audience</label>
                             <select id="NewMediaAudience" name="NewMediaAudience" is="emby-select" class="emby-select">
-                                <option value="all">All users</option>
-                                <option value="admins">Admins only</option>
+                                <option value="all" data-i18n="AudienceAll">All users</option>
+                                <option value="admins" data-i18n="AudienceAdmins">Admins only</option>
                             </select>
                         </div>
                     </div>
 
                     <div class="verticalSection">
-                        <h3 class="sectionTitle">Seerr bridge</h3>
+                        <h3 class="sectionTitle" data-i18n="SectionSeerr">Seerr bridge</h3>
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="SeerrServerUrl">Seerr server URL</label>
+                            <label class="inputLabel inputLabelUnfocused" for="SeerrServerUrl" data-i18n="SeerrServerUrl">Seerr server URL</label>
                             <input id="SeerrServerUrl" name="SeerrServerUrl" type="url" is="emby-input" class="emby-input" placeholder="http://jellyseerr:5055" />
                         </div>
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="SeerrApiKey">Seerr API key</label>
+                            <label class="inputLabel inputLabelUnfocused" for="SeerrApiKey" data-i18n="SeerrApiKey">Seerr API key</label>
                             <input id="SeerrApiKey" name="SeerrApiKey" type="password" is="emby-input" class="emby-input" />
                         </div>
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="WebhookSecret">Webhook secret (auto-generate if empty)</label>
+                            <label class="inputLabel inputLabelUnfocused" for="WebhookSecret" data-i18n="SeerrWebhookSecret">Webhook secret (auto-generate if empty)</label>
                             <input id="WebhookSecret" name="WebhookSecret" type="text" is="emby-input" class="emby-input" />
                         </div>
                     </div>
 
                     <div class="verticalSection">
-                        <h3 class="sectionTitle">Ratings</h3>
+                        <h3 class="sectionTitle" data-i18n="SectionRatings">Ratings</h3>
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MdbListApiKey">MDBList API key</label>
+                            <label class="inputLabel inputLabelUnfocused" for="MdbListApiKey" data-i18n="RatingsMdbListKey">MDBList API key</label>
                             <input id="MdbListApiKey" name="MdbListApiKey" type="password" is="emby-input" class="emby-input" />
                         </div>
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="TmdbApiKey">TMDB API key</label>
+                            <label class="inputLabel inputLabelUnfocused" for="TmdbApiKey" data-i18n="RatingsTmdbKey">TMDB API key</label>
                             <input id="TmdbApiKey" name="TmdbApiKey" type="password" is="emby-input" class="emby-input" />
                         </div>
                     </div>
 
                     <div class="verticalSection">
-                        <h3 class="sectionTitle">Newsletter (SMTP)</h3>
+                        <h3 class="sectionTitle" data-i18n="SectionNewsletter">Newsletter (SMTP)</h3>
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="SmtpHost">SMTP host</label>
+                            <label class="inputLabel inputLabelUnfocused" for="SmtpHost" data-i18n="SmtpHost">SMTP host</label>
                             <input id="SmtpHost" name="SmtpHost" type="text" is="emby-input" class="emby-input" />
                         </div>
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="SmtpPort">SMTP port</label>
+                            <label class="inputLabel inputLabelUnfocused" for="SmtpPort" data-i18n="SmtpPort">SMTP port</label>
                             <input id="SmtpPort" name="SmtpPort" type="number" is="emby-input" class="emby-input" />
                         </div>
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="SmtpUsername">SMTP username</label>
+                            <label class="inputLabel inputLabelUnfocused" for="SmtpUsername" data-i18n="SmtpUsername">SMTP username</label>
                             <input id="SmtpUsername" name="SmtpUsername" type="text" is="emby-input" class="emby-input" />
                         </div>
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="SmtpPassword">SMTP password</label>
+                            <label class="inputLabel inputLabelUnfocused" for="SmtpPassword" data-i18n="SmtpPassword">SMTP password</label>
                             <input id="SmtpPassword" name="SmtpPassword" type="password" is="emby-input" class="emby-input" />
                         </div>
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="FromAddress">From address</label>
+                            <label class="inputLabel inputLabelUnfocused" for="FromAddress" data-i18n="FromAddress">From address</label>
                             <input id="FromAddress" name="FromAddress" type="email" is="emby-input" class="emby-input" />
                         </div>
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="TestRecipient">Test recipient</label>
+                            <label class="inputLabel inputLabelUnfocused" for="TestRecipient" data-i18n="TestRecipient">Test recipient</label>
                             <input id="TestRecipient" name="TestRecipient" type="email" is="emby-input" class="emby-input" />
                         </div>
                     </div>
 
                     <div>
-                        <button is="emby-button" type="submit" class="raised button-submit emby-button"><span>Save</span></button>
+                        <button is="emby-button" type="submit" class="raised button-submit emby-button"><span data-i18n="BtnSave">Save</span></button>
                     </div>
                 </form>
 
                 <div class="verticalSection" style="margin-top:2em">
-                    <h3 class="sectionTitle">YAML editor</h3>
-                    <a is="emby-linkbutton" class="raised emby-button" href="#/configurationpage?name=JellyPlayYaml">Open YAML config editor</a>
+                    <h3 class="sectionTitle" data-i18n="SectionDefaults">Client defaults</h3>
+                    <p class="sectionDescription" data-i18n="DefaultsDescription">Tri-state defaults for the clients' synced settings, as "namespace/key". Suggested fills only what the user has not set; forced overrides the user. Save writes the map, Push applies it to user accounts (forced always, suggested only where the key is unset).</p>
+                    <div id="jellyplayDefaultsList" class="paperList"></div>
+                    <p class="sectionDescription" id="jellyplayDefaultsEmpty" data-i18n="DefaultsEmpty" style="display:none">No defaults configured yet.</p>
+                    <div style="margin-top:0.75em">
+                        <button is="emby-button" type="button" id="jellyplayDefaultsAdd" class="raised emby-button"><span data-i18n="DefaultsAddKey">Add key</span></button>
+                        <button is="emby-button" type="button" id="jellyplayDefaultsSave" class="raised button-submit emby-button"><span data-i18n="DefaultsSave">Save defaults</span></button>
+                        <button is="emby-button" type="button" id="jellyplayDefaultsPush" class="raised emby-button"><span data-i18n="DefaultsPush">Push to all users</span></button>
+                    </div>
+                </div>
+
+                <div class="verticalSection" style="margin-top:2em">
+                    <h3 class="sectionTitle" data-i18n="SectionBackup">Backup &amp; restore</h3>
+                    <button is="emby-button" type="button" id="jellyplayBackupDownload" class="raised emby-button"><span data-i18n="BackupDownload">Download backup</span></button>
+                    <button is="emby-button" type="button" id="jellyplayBackupRestore" class="raised emby-button"><span data-i18n="BackupRestore">Restore backup…</span></button>
+                    <input type="file" id="jellyplayBackupFile" accept="application/json" style="display:none" />
+                </div>
+
+                <div class="verticalSection" style="margin-top:2em">
+                    <h3 class="sectionTitle" data-i18n="SectionYaml">YAML editor</h3>
+                    <a is="emby-linkbutton" class="raised emby-button" href="#/configurationpage?name=JellyPlayYaml"><span data-i18n="YamlOpen">Open YAML config editor</span></a>
                 </div>
             </div>
         </div>

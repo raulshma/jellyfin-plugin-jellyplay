@@ -16,6 +16,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The main project excludes these from runtime (host-provided at plugin
+         load); the tests run OUTSIDE the host, so they need real copies. -->
+    <PackageReference Include="Jellyfin.Controller" Version="10.11.*" />
+    <PackageReference Include="Jellyfin.Model" Version="10.11.*" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Jellyfin.Plugin.JellyPlay\Jellyfin.Plugin.JellyPlay.csproj" />
   </ItemGroup>
 

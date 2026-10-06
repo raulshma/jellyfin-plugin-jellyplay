@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+
+  <!-- The dashboard config page + YAML editor string table (docs: localization en first).
+       Keys are read by GET jellyplay/dashboard-strings and applied to [data-i18n] elements;
+       the HTML carries the same en strings as no-JS/no-fetch fallbacks. -->
+
+  <data name="PageTitle" xml:space="preserve">
+    <value>JellyPlay</value>
+  </data>
+  <data name="PageDescription" xml:space="preserve">
+    <value>Companion plugin for the JellyPlay client. Client settings sync, events, Seerr bridge, ratings and more.</value>
+  </data>
+
+  <data name="SectionEvents" xml:space="preserve">
+    <value>Events</value>
+  </data>
+  <data name="EventsNewMedia" xml:space="preserve">
+    <value>New media events</value>
+  </data>
+  <data name="EventsGroupingWindow" xml:space="preserve">
+    <value>Episode grouping window (seconds)</value>
+  </data>
+  <data name="EventsAudience" xml:space="preserve">
+    <value>New media audience</value>
+  </data>
+  <data name="AudienceAll" xml:space="preserve">
+    <value>All users</value>
+  </data>
+  <data name="AudienceAdmins" xml:space="preserve">
+    <value>Admins only</value>
+  </data>
+
+  <data name="SectionSeerr" xml:space="preserve">
+    <value>Seerr bridge</value>
+  </data>
+  <data name="SeerrServerUrl" xml:space="preserve">
+    <value>Seerr server URL</value>
+  </data>
+  <data name="SeerrApiKey" xml:space="preserve">
+    <value>Seerr API key</value>
+  </data>
+  <data name="SeerrWebhookSecret" xml:space="preserve">
+    <value>Webhook secret (auto-generate if empty)</value>
+  </data>
+
+  <data name="SectionRatings" xml:space="preserve">
+    <value>Ratings</value>
+  </data>
+  <data name="RatingsMdbListKey" xml:space="preserve">
+    <value>MDBList API key</value>
+  </data>
+  <data name="RatingsTmdbKey" xml:space="preserve">
+    <value>TMDB API key</value>
+  </data>
+
+  <data name="SectionNewsletter" xml:space="preserve">
+    <value>Newsletter (SMTP)</value>
+  </data>
+  <data name="SmtpHost" xml:space="preserve">
+    <value>SMTP host</value>
+  </data>
+  <data name="SmtpPort" xml:space="preserve">
+    <value>SMTP port</value>
+  </data>
+  <data name="SmtpUsername" xml:space="preserve">
+    <value>SMTP username</value>
+  </data>
+  <data name="SmtpPassword" xml:space="preserve">
+    <value>SMTP password</value>
+  </data>
+  <data name="FromAddress" xml:space="preserve">
+    <value>From address</value>
+  </data>
+  <data name="TestRecipient" xml:space="preserve">
+    <value>Test recipient</value>
+  </data>
+
+  <data name="BtnSave" xml:space="preserve">
+    <value>Save</value>
+  </data>
+  <data name="MsgSaved" xml:space="preserve">
+    <value>Settings saved.</value>
+  </data>
+  <data name="MsgLoadFailed" xml:space="preserve">
+    <value>Failed to load: {0}</value>
+  </data>
+
+  <data name="SectionYaml" xml:space="preserve">
+    <value>YAML editor</value>
+  </data>
+  <data name="YamlOpen" xml:space="preserve">
+    <value>Open YAML config editor</value>
+  </data>
+
+  <data name="SectionDefaults" xml:space="preserve">
+    <value>Client defaults</value>
+  </data>
+  <data name="DefaultsDescription" xml:space="preserve">
+    <value>Tri-state defaults for the clients' synced settings, as "namespace/key". Suggested fills only what the user has not set; forced overrides the user. Save writes the map, Push applies it to user accounts (forced always, suggested only where the key is unset).</value>
+  </data>
+  <data name="DefaultsEmpty" xml:space="preserve">
+    <value>No defaults configured yet.</value>
+  </data>
+  <data name="DefaultsAddKey" xml:space="preserve">
+    <value>Add key</value>
+  </data>
+  <data name="DefaultsSave" xml:space="preserve">
+    <value>Save defaults</value>
+  </data>
+  <data name="DefaultsPush" xml:space="preserve">
+    <value>Push to all users</value>
+  </data>
+  <data name="DefaultsColumnKey" xml:space="preserve">
+    <value>Key</value>
+  </data>
+  <data name="DefaultsColumnMode" xml:space="preserve">
+    <value>Mode</value>
+  </data>
+  <data name="DefaultsColumnValue" xml:space="preserve">
+    <value>Value (JSON)</value>
+  </data>
+  <data name="DefaultsRemove" xml:space="preserve">
+    <value>Remove</value>
+  </data>
+  <data name="DefaultsModeSuggested" xml:space="preserve">
+    <value>Suggested</value>
+  </data>
+  <data name="DefaultsModeForced" xml:space="preserve">
+    <value>Forced</value>
+  </data>
+  <data name="DefaultsSaved" xml:space="preserve">
+    <value>Defaults saved.</value>
+  </data>
+  <data name="DefaultsPushed" xml:space="preserve">
+    <value>Pushed {0} key(s) to {1} user(s).</value>
+  </data>
+  <data name="DefaultsInvalidJson" xml:space="preserve">
+    <value>"{0}" is not valid JSON — saved as a plain string.</value>
+  </data>
+
+  <data name="SectionBackup" xml:space="preserve">
+    <value>Backup &amp; restore</value>
+  </data>
+  <data name="BackupDownload" xml:space="preserve">
+    <value>Download backup</value>
+  </data>
+  <data name="BackupRestore" xml:space="preserve">
+    <value>Restore backup…</value>
+  </data>
+  <data name="BackupRestored" xml:space="preserve">
+    <value>Backup restored.</value>
+  </data>
+  <data name="BackupFailed" xml:space="preserve">
+    <value>Restore failed: {0}</value>
+  </data>
+
+  <data name="YamlPageTitle" xml:space="preserve">
+    <value>JellyPlay config (YAML)</value>
+  </data>
+  <data name="YamlDescription" xml:space="preserve">
+    <value>Edits the entire plugin configuration. Values must validate against the config model; errors are reported on save.</value>
+  </data>
+  <data name="YamlReload" xml:space="preserve">
+    <value>Reload</value>
+  </data>
+  <data name="YamlStatusOk" xml:space="preserve">
+    <value>Saved.</value>
+  </data>
+</root>
