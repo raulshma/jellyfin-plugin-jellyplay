@@ -34,7 +34,7 @@ public class AnalyticsAdminController : ControllerBase
     /// </summary>
     [HttpGet("overview")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<AnalyticsOverviewResponse> GetOverview([FromQuery] int days = AnalyticsService.DefaultOverviewDays)
+    public IActionResult GetOverview([FromQuery] int days = AnalyticsService.DefaultOverviewDays)
         => JellyPlayResponses.Camel(_analytics.GetOverview(days, guid => _users.GetUserById(guid)?.Username));
 
     /// <summary>
@@ -43,7 +43,7 @@ public class AnalyticsAdminController : ControllerBase
     /// </summary>
     [HttpGet("sessions")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<AnalyticsSessionsResponse> GetSessions(
+    public IActionResult GetSessions(
         [FromQuery] string? userId,
         [FromQuery] long? since,
         [FromQuery] int limit = AnalyticsService.DefaultSessionLimit)
@@ -75,6 +75,6 @@ public class AnalyticsMeController : ControllerBase
     /// </summary>
     [HttpGet("me")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<AnalyticsMeResponse> GetMine([FromQuery] int days = AnalyticsService.DefaultOverviewDays)
+    public IActionResult GetMine([FromQuery] int days = AnalyticsService.DefaultOverviewDays)
         => JellyPlayResponses.Camel(_analytics.GetMyOverview(User.GetUserId().ToString(), days));
 }

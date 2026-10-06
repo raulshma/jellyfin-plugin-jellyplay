@@ -52,6 +52,21 @@ public static class JellyPlayResponses
     {
         StatusCode = 200,
     };
+
+    /// <summary>
+    /// The ONE error-body shape ({error: "code"}) through the same camelCase
+    /// gate — raw StatusCode(...) calls bypass the gate and leak PascalCase
+    /// serialization, contradicting docs/CONTRACT.md. All error responses
+    /// (400/401/404/429/503…) go through here.
+    /// </summary>
+    public static ContentResult Error(int statusCode, string error) => Camel(new { error }, statusCode);
+}
+
+/// <summary>Controller-side sugar for the shared error-body gate.</summary>
+public static class JellyPlayResponseExtensions
+{
+    public static ContentResult JellyPlayError(this ControllerBase _, int statusCode, string error)
+        => JellyPlayResponses.Error(statusCode, error);
 }
 
 /// <summary>

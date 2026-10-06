@@ -27,23 +27,26 @@ public sealed class FileCacheStore
     private const int SweepEveryNWrites = 64;
 
     private readonly string _cacheDir;
+    private readonly Func<int> _maxSizeMegabytes;
     private readonly ILogger<FileCacheStore> _logger;
     private int _writeCount;
 
-    public FileCacheStore(ILogger<FileCacheStore> logger, string? cacheDirectory = null)
+    /// <summary>DI/test constructor. <paramref name="cacheDirectory"/> defaults to the plugin data directory's "cache" folder; <paramref name="maxSizeMegabytes"/> defaults to the plugin configuration with a 256 MB floor.</summary>
+    public FileCacheStore(ILogger<FileCacheStore> logger, string? cacheDirectory = null, Func<int>? maxSizeMegabytes = null)
     {
         _logger = logger;
         _cacheDir = cacheDirectory ?? Path.Combine(JellyPlayPlugin.Instance?.DataDirectory ?? AppContext.BaseDirectory, "cache");
+        _maxSizeMegabytes = maxSizeMegabytes ?? (() => JellyPlayPlugin.Instance?.Configuration.Cache.MaxSizeMegabytes ?? 256);
         Directory.CreateDirectory(_cacheDir);
-        Sweep(ConfiguredMaxTotalBytes(), DefaultMaxEntryAge);
+        Sweep(MaxTotalBytes(), DefaultMaxEntryAge);
     }
 
     public string CacheDirectory => _cacheDir;
 
-    /// <summary>Cap from plugin configuration, with the built-in default as fallback.</summary>
-    public static long ConfiguredMaxTotalBytes()
+    /// <summary>Cap in bytes from the configured megabyte value, with the built-in default as fallback.</summary>
+    public long MaxTotalBytes()
     {
-        var megabytes = JellyPlayPlugin.Instance?.Configuration.Cache.MaxSizeMegabytes ?? 256;
+        var megabytes = _maxSizeMegabytes();
         return megabytes <= 0 ? DefaultMaxTotalBytes : (long)megabytes << 20;
     }
 
@@ -93,7 +96,7 @@ public sealed class FileCacheStore
         // Cheap counter: the directory walk only happens every Nth write.
         if (Interlocked.Increment(ref _writeCount) % SweepEveryNWrites == 0)
         {
-            Sweep(ConfiguredMaxTotalBytes(), DefaultMaxEntryAge);
+            Sweep(MaxTotalBytes(), DefaultMaxEntryAge);
         }
     }
 

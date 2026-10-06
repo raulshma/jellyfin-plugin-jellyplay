@@ -30,6 +30,6 @@ public class PushAdminController : ControllerBase
     /// <summary>Whether push dispatching is enabled, plus every registered device.</summary>
     [HttpGet("overview")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<AdminPushOverviewResponse> GetOverview()
+    public IActionResult GetOverview()
         => JellyPlayResponses.Camel(_push.GetAdminOverview(guid => _users.GetUserById(guid)?.Username));
 }

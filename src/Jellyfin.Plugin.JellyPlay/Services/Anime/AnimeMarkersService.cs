@@ -147,6 +147,7 @@ public sealed partial class AnimeMarkersService
     private readonly IHttpClientFactory _httpFactory;
     private readonly FileCacheStore _cache;
     private readonly ILibraryManager _libraryManager;
+    private readonly Func<AnimeConfig> _config;
     private readonly CircuitBreaker _fillerBreaker = new();
     private readonly CircuitBreaker _tenraiBreaker = new();
     private readonly ILogger<AnimeMarkersService> _logger;
@@ -154,15 +155,16 @@ public sealed partial class AnimeMarkersService
     private readonly object _fribbLock = new();
     private DateTime _fribbLoadedUtc;
 
-    public AnimeMarkersService(IHttpClientFactory httpFactory, FileCacheStore cache, ILibraryManager libraryManager, ILogger<AnimeMarkersService> logger)
+    public AnimeMarkersService(IHttpClientFactory httpFactory, FileCacheStore cache, ILibraryManager libraryManager, Func<AnimeConfig> config, ILogger<AnimeMarkersService> logger)
     {
         _httpFactory = httpFactory;
         _cache = cache;
         _libraryManager = libraryManager;
+        _config = config;
         _logger = logger;
     }
 
-    public bool IsEnabled => JellyPlayPlugin.Instance!.Configuration.Anime.Enabled;
+    public bool IsEnabled => _config().Enabled;
 
     /// <summary>True when every marker source is circuit-open (the refresh task skips such series entirely).</summary>
     public bool AllFetchBreakersOpen
@@ -176,7 +178,7 @@ public sealed partial class AnimeMarkersService
 
     public async Task<SeriesMarkers?> GetSeriesMarkers(string seriesId, string? providerSeriesId)
     {
-        var config = JellyPlayPlugin.Instance!.Configuration.Anime;
+        var config = _config();
         if (!IsEnabled)
         {
             return null;
@@ -377,7 +379,7 @@ public sealed partial class AnimeMarkersService
     {
         lock (_fribbLock)
         {
-            if (_fribbLoadedUtc > DateTime.UtcNow.AddHours(-Math.Max(1, JellyPlayPlugin.Instance!.Configuration.Anime.RefreshIntervalHours)))
+            if (_fribbLoadedUtc > DateTime.UtcNow.AddHours(-Math.Max(1, _config().RefreshIntervalHours)))
             {
                 return;
             }
@@ -385,7 +387,7 @@ public sealed partial class AnimeMarkersService
 
         try
         {
-            var url = JellyPlayPlugin.Instance!.Configuration.Anime.FribbListUrl;
+            var url = _config().FribbListUrl;
             var client = _httpFactory.CreateClient("JellyPlayHttpClient");
             var json = await client.GetStringAsync(url);
             using var doc = JsonDocument.Parse(json);

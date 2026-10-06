@@ -14,6 +14,7 @@ using Jellyfin.Plugin.JellyPlay.Services.Seerr;
 using Jellyfin.Plugin.JellyPlay.Services.Settings;
 using Jellyfin.Plugin.JellyPlay.Services.Transcodes;
 using Jellyfin.Plugin.JellyPlay.Services.UserData;
+using Jellyfin.Plugin.JellyPlay.Storage;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Events;
 using MediaBrowser.Controller.Library;
@@ -39,10 +40,21 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
 
         // Realtime
         serviceCollection.AddSingleton<SseHub>();
+        // Config seam: services receive the config section they need as a
+        // Func — never by reading JellyPlayPlugin.Instance inline. The
+        // composition root (this registrar) is the only place that touches
+        // the singleton besides Plugin.cs itself.
+        serviceCollection.AddSingleton(_ => new Func<Configuration.PluginConfiguration>(() => JellyPlayPlugin.Instance!.Configuration));
         serviceCollection.AddSingleton(_ => new Func<Configuration.EventsConfig>(() => JellyPlayPlugin.Instance!.Configuration.Events));
         serviceCollection.AddSingleton(_ => new Func<Configuration.SyncConfig>(() => JellyPlayPlugin.Instance!.Configuration.Sync));
         serviceCollection.AddSingleton(_ => new Func<Configuration.PushConfig>(() => JellyPlayPlugin.Instance!.Configuration.Push));
         serviceCollection.AddSingleton(_ => new Func<Configuration.AnalyticsConfig>(() => JellyPlayPlugin.Instance!.Configuration.Analytics));
+        serviceCollection.AddSingleton(_ => new Func<Configuration.SeerrConfig>(() => JellyPlayPlugin.Instance!.Configuration.Seerr));
+        serviceCollection.AddSingleton(_ => new Func<Configuration.RatingsConfig>(() => JellyPlayPlugin.Instance!.Configuration.Ratings));
+        serviceCollection.AddSingleton(_ => new Func<Configuration.NewsletterConfig>(() => JellyPlayPlugin.Instance!.Configuration.Newsletter));
+        serviceCollection.AddSingleton(_ => new Func<Configuration.AnimeConfig>(() => JellyPlayPlugin.Instance!.Configuration.Anime));
+        serviceCollection.AddSingleton(_ => new Func<Configuration.CacheConfig>(() => JellyPlayPlugin.Instance!.Configuration.Cache));
+        serviceCollection.AddSingleton(_ => new Func<Configuration.RowsConfig>(() => JellyPlayPlugin.Instance!.Configuration.Rows));
 
         // Push notifications (plugin is the push server; fire-and-forget).
         // FcmTokenProvider mints OAuth2 tokens for the fcm transport from the
@@ -50,11 +62,20 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<Services.Push.FcmTokenProvider>();
         serviceCollection.AddSingleton<Services.Push.PushDispatcher>();
 
+        // Device registry: registration contract (push attach/preserve/detach,
+        // FCM gate) and owner-scoped listing behind one module.
+        serviceCollection.AddSingleton(sp => new Services.Devices.DeviceRegistryService(
+            sp.GetRequiredService<JellyPlayDatabase>(),
+            sp.GetRequiredService<Func<Configuration.PushConfig>>()));
+
         // Persistence — plugin instance owns the lazy database singleton
         serviceCollection.AddSingleton(_ => JellyPlayPlugin.Instance!.Database);
 
         // Cache infrastructure
-        serviceCollection.AddSingleton<FileCacheStore>();
+        serviceCollection.AddSingleton(sp => new FileCacheStore(
+            sp.GetRequiredService<ILogger<Services.Cache.FileCacheStore>>(),
+            cacheDirectory: System.IO.Path.Combine(JellyPlayPlugin.Instance!.DataDirectory, "cache"),
+            maxSizeMegabytes: () => JellyPlayPlugin.Instance!.Configuration.Cache.MaxSizeMegabytes));
 
         // Settings sync
         serviceCollection.AddSingleton<SettingsService>();
@@ -83,6 +104,12 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddScoped<IEventConsumer<global::MediaBrowser.Controller.Library.PlaybackProgressEventArgs>, Services.Analytics.PlaybackProgressAnalyticsConsumer>();
 
         // Seerr bridge
+        serviceCollection.AddSingleton<Services.Seerr.HttpClientSeerrSender>();
+        serviceCollection.AddSingleton<Services.Seerr.SeerrSender>(sp =>
+        {
+            var impl = sp.GetRequiredService<Services.Seerr.HttpClientSeerrSender>();
+            return (request, cookieContainer, cancellationToken) => impl.SendAsync(request, cookieContainer, cancellationToken);
+        });
         serviceCollection.AddSingleton<SeerrSessionService>();
         serviceCollection.AddSingleton<SeerrProxyService>();
         serviceCollection.AddSingleton<SeerrWebhookProvisioner>();

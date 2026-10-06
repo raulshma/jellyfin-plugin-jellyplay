@@ -43,9 +43,6 @@ public sealed class PushDispatcher
     /// <summary>Per-endpoint budget; a slow distributor must not hold the background worker.</summary>
     public const int TimeoutSeconds = 10;
 
-    private const string NtfyKind = "ntfy";
-    private const string GenericKind = "generic";
-    private const string FcmKind = "fcm";
     private const string NtfyKindHeader = "X-JellyPlay-Kind";
     private const string NtfyItemIdHeader = "X-JellyPlay-ItemId";
     private const string FcmSendUrlPrefix = "https://fcm.googleapis.com/v1/projects/";
@@ -75,14 +72,10 @@ public sealed class PushDispatcher
     }
 
     /// <summary>Registration gate: kind must be "generic"|"ntfy"|"fcm" and the endpoint a non-blank value (an FCM registration token for fcm).</summary>
-    public static bool IsValidRegistration(string? kind, string? endpoint)
-        => (string.Equals(kind, GenericKind, StringComparison.Ordinal)
-            || string.Equals(kind, NtfyKind, StringComparison.Ordinal)
-            || string.Equals(kind, FcmKind, StringComparison.Ordinal))
-           && !string.IsNullOrWhiteSpace(endpoint);
+    public static bool IsValidRegistration(string? kind, string? endpoint) => PushRegistrations.IsValidRegistration(kind, endpoint);
 
     /// <summary>The fcm kind additionally requires configured FCM credentials to be usable (400 push-kind-unavailable otherwise).</summary>
-    public static bool IsFcmKind(string? kind) => string.Equals(kind, FcmKind, StringComparison.Ordinal);
+    public static bool IsFcmKind(string? kind) => PushRegistrations.IsFcmKind(kind);
 
     /// <summary>
     /// Fire-and-forget fan-out to the push-registered devices of
@@ -330,7 +323,7 @@ public sealed class PushDispatcher
         return new AdminPushOverviewResponse(_config().Enabled, _config().FcmConfigured(), devices);
     }
 
-    private static bool IsNtfy(string? kind) => string.Equals(kind, NtfyKind, StringComparison.Ordinal);
+    private static bool IsNtfy(string? kind) => PushRegistrations.IsNtfyKind(kind);
 
     private static HttpClient CreateSharedClient()
     {

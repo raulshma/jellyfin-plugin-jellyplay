@@ -23,11 +23,13 @@ public class RowsController : ControllerBase
 {
     private readonly CustomRowsService _rows;
     private readonly SeasonalService _seasonal;
+    private readonly Func<Configuration.RowsConfig> _config;
 
-    public RowsController(CustomRowsService rows, SeasonalService seasonal)
+    public RowsController(CustomRowsService rows, SeasonalService seasonal, Func<Configuration.RowsConfig> config)
     {
         _rows = rows;
         _seasonal = seasonal;
+        _config = config;
     }
 
     /// <summary>
@@ -38,7 +40,7 @@ public class RowsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetRowTitles()
     {
-        var rows = JellyPlayPlugin.Instance!.Configuration.Rows.CustomRows
+        var rows = _config().CustomRows
             .Select(row => new { row.Title, row.Source, row.Limit })
             .ToList();
         return JellyPlayResponses.Camel(new { rows });
@@ -50,7 +52,7 @@ public class RowsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetRow([FromQuery, Required] string title)
     {
-        var definition = JellyPlayPlugin.Instance!.Configuration.Rows.CustomRows
+        var definition = _config().CustomRows
             .FirstOrDefault(row => string.Equals(row.Title, title, StringComparison.OrdinalIgnoreCase));
         if (definition is null)
         {

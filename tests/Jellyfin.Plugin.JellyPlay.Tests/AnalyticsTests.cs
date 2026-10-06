@@ -519,7 +519,7 @@ public sealed class AnalyticsMaintenanceTests : IDisposable
         => _db.InsertPlaybackSession(AnalyticsMigrationTests.Row(
             userId,
             itemId,
-            startedAt: DayMs(endedDaysAgo) - wallSeconds * 1000,
+            startedAt: PlaybackRecordingRules.MinuteBucket(DayMs(endedDaysAgo) - wallSeconds * 1000),
             endedAt: DayMs(endedDaysAgo),
             playMethod: playMethod));
 
@@ -570,7 +570,9 @@ public sealed class AnalyticsMaintenanceTests : IDisposable
         var todayKey = (Day: FixedNow.UtcDateTime.ToString("yyyy-MM-dd"), UserId: "u2");
         var row = _db.GetPlaybackRollups("2000-01-01", "2999-01-01").Single(candidate => candidate.UserId == "u2");
         Assert.Equal(todayKey.Day, row.Day);
-        Assert.Equal(100, row.PlaySeconds);
+        // StartedAt is stored minute-bucketed (the dedup key), so a session
+        // starting mid-minute plays up to 60s longer by EndedAt-StartedAt.
+        Assert.Equal(120, row.PlaySeconds);
     }
 
     [Fact]
@@ -655,7 +657,7 @@ public sealed class AnalyticsReportingTests : IDisposable
         => _db.InsertPlaybackSession(AnalyticsMigrationTests.Row(
             userId,
             itemId,
-            startedAt: DayMs(endedDaysAgo) - wallSeconds * 1000,
+            startedAt: PlaybackRecordingRules.MinuteBucket(DayMs(endedDaysAgo) - wallSeconds * 1000),
             endedAt: DayMs(endedDaysAgo),
             playMethod: playMethod,
             itemName: itemName,
@@ -683,7 +685,7 @@ public sealed class AnalyticsReportingTests : IDisposable
 
         Assert.Equal(30, overview.Days);
         Assert.Equal(4, overview.Totals.Plays);
-        Assert.Equal(1060, overview.Totals.PlaySeconds);
+        Assert.Equal(1080, overview.Totals.PlaySeconds);
         Assert.Equal(300, overview.Totals.TranscodeSeconds);
         Assert.Equal(2, overview.Totals.UniqueUsers);
         Assert.Equal(3, overview.Totals.UniqueItems);
@@ -691,7 +693,7 @@ public sealed class AnalyticsReportingTests : IDisposable
         Assert.Equal(2, overview.PerDay.Count);
         Assert.Equal(Yesterday, overview.PerDay[0].Day);
         Assert.Equal(1, overview.PerDay[0].Plays);
-        Assert.Equal(100, overview.PerDay[0].PlaySeconds);
+        Assert.Equal(120, overview.PerDay[0].PlaySeconds); // minute-bucketed StartedAt stretches a 100s session to 120s
         Assert.Equal(Today, overview.PerDay[1].Day);
         Assert.Equal(3, overview.PerDay[1].Plays);
         Assert.Equal(960, overview.PerDay[1].PlaySeconds);
@@ -701,7 +703,7 @@ public sealed class AnalyticsReportingTests : IDisposable
         Assert.Equal(2, users.Count);
         Assert.Equal("Alice", users[Alice].UserName); // resolved via the manager
         Assert.Equal(3, users[Alice].Plays);
-        Assert.Equal(1000, users[Alice].PlaySeconds);
+        Assert.Equal(1020, users[Alice].PlaySeconds); // minute-bucketed StartedAt stretch
         Assert.Equal(300, users[Alice].TranscodeSeconds);
         Assert.Equal(Bob, users[Bob].UserName); // unresolved guid falls back to the id
         Assert.Equal(1, users[Bob].Plays);
@@ -858,7 +860,7 @@ public sealed class AnalyticsMeTests : IDisposable
         => _db.InsertPlaybackSession(AnalyticsMigrationTests.Row(
             userId,
             itemId,
-            startedAt: DayMs(endedDaysAgo) - wallSeconds * 1000,
+            startedAt: PlaybackRecordingRules.MinuteBucket(DayMs(endedDaysAgo) - wallSeconds * 1000),
             endedAt: DayMs(endedDaysAgo),
             playMethod: playMethod,
             itemName: itemName));
@@ -882,14 +884,14 @@ public sealed class AnalyticsMeTests : IDisposable
 
         Assert.Equal(30, me.Days);
         Assert.Equal(3, me.Totals.Plays);
-        Assert.Equal(1000, me.Totals.PlaySeconds);
+        Assert.Equal(1020, me.Totals.PlaySeconds);
         Assert.Equal(300, me.Totals.TranscodeSeconds);
         Assert.Equal(2, me.Totals.UniqueItems); // i1 + i2, never Bob's
 
         Assert.Equal(2, me.PerDay.Count);
         Assert.Equal(Yesterday, me.PerDay[0].Day);
         Assert.Equal(1, me.PerDay[0].Plays);
-        Assert.Equal(100, me.PerDay[0].PlaySeconds);
+        Assert.Equal(120, me.PerDay[0].PlaySeconds); // minute-bucketed StartedAt stretches a 100s session to 120s
         Assert.Equal(Today, me.PerDay[1].Day);
         Assert.Equal(2, me.PerDay[1].Plays);
         Assert.Equal(900, me.PerDay[1].PlaySeconds);

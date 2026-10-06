@@ -24,21 +24,24 @@ public sealed record SeerrLoginResult(bool Success, string? Error);
 /// authorizes the QC secret against Jellyfin, then exchanges it for a Seerr
 /// session). Sessions persist per Jellyfin user — encrypted at rest with a
 /// plugin-held key (SecretBox) — and the client never touches the Seerr API key.
+/// All Seerr traffic crosses the <see cref="SeerrSender"/> transport seam.
 /// </summary>
 public sealed class SeerrSessionService
 {
-    private readonly IHttpClientFactory _httpFactory;
     private readonly JellyPlayDatabase _db;
     private readonly IQuickConnect _quickConnect;
     private readonly SecretBox _secretBox;
+    private readonly Func<SeerrConfig> _config;
+    private readonly SeerrSender _sender;
     private readonly ILogger<SeerrSessionService> _logger;
 
-    public SeerrSessionService(IHttpClientFactory httpFactory, JellyPlayDatabase db, IQuickConnect quickConnect, SecretBox secretBox, ILogger<SeerrSessionService> logger)
+    public SeerrSessionService(SeerrSender sender, JellyPlayDatabase db, IQuickConnect quickConnect, SecretBox secretBox, Func<SeerrConfig> config, ILogger<SeerrSessionService> logger)
     {
-        _httpFactory = httpFactory;
+        _sender = sender;
         _db = db;
         _quickConnect = quickConnect;
         _secretBox = secretBox;
+        _config = config;
         _logger = logger;
     }
 
@@ -46,29 +49,29 @@ public sealed class SeerrSessionService
     {
         get
         {
-            var config = JellyPlayPlugin.Instance!.Configuration.Seerr;
+            var config = _config();
             return !string.IsNullOrEmpty(config.ServerUrl) && !string.IsNullOrEmpty(config.ApiKey);
         }
     }
 
-    public string ServerUrl => JellyPlayPlugin.Instance!.Configuration.Seerr.ServerUrl.TrimEnd('/');
+    public string ServerUrl => _config().ServerUrl.TrimEnd('/');
 
     public async Task<SeerrLoginResult> LoginWithPassword(string jellyfinUserId, string username, string password)
     {
         try
         {
             var cookieContainer = new CookieContainer();
-            using var handler = new HttpClientHandler { CookieContainer = cookieContainer, AllowAutoRedirect = true };
-            using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
-
             using var content = JsonContent.Create(new { username, password });
-            using var response = await client.PostAsync($"{ServerUrl}/api/v1/auth/local", content);
+            using var response = await _sender(
+                new HttpRequestMessage(HttpMethod.Post, $"{ServerUrl}/api/v1/auth/local") { Content = content },
+                cookieContainer,
+                CancellationToken.None);
             if (!response.IsSuccessStatusCode)
             {
                 return new SeerrLoginResult(false, $"seerr-rejected ({(int)response.StatusCode})");
             }
 
-            await PersistSession(jellyfinUserId, cookieContainer, client);
+            await PersistSession(jellyfinUserId, cookieContainer);
             return new SeerrLoginResult(true, null);
         }
         catch (Exception ex)
@@ -89,19 +92,16 @@ public sealed class SeerrSessionService
             }
 
             var cookieContainer = new CookieContainer();
-            using var handler = new HttpClientHandler { CookieContainer = cookieContainer, AllowAutoRedirect = true };
-            using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
-
             using var content = JsonContent.Create(new { type = "jellyfin", credentials = quickConnectSecret });
             using var request = new HttpRequestMessage(HttpMethod.Post, $"{ServerUrl}/api/v1/auth/jellyfin") { Content = content };
-            request.Headers.Add("X-Api-Key", JellyPlayPlugin.Instance!.Configuration.Seerr.ApiKey);
-            using var response = await client.SendAsync(request);
+            request.Headers.Add("X-Api-Key", _config().ApiKey);
+            using var response = await _sender(request, cookieContainer, CancellationToken.None);
             if (!response.IsSuccessStatusCode)
             {
                 return new SeerrLoginResult(false, $"seerr-rejected ({(int)response.StatusCode})");
             }
 
-            await PersistSession(jellyfinUserId, cookieContainer, client);
+            await PersistSession(jellyfinUserId, cookieContainer);
             return new SeerrLoginResult(true, null);
         }
         catch (Exception ex)
@@ -111,7 +111,7 @@ public sealed class SeerrSessionService
         }
     }
 
-    private async Task PersistSession(string jellyfinUserId, CookieContainer cookieContainer, HttpClient client)
+    private async Task PersistSession(string jellyfinUserId, CookieContainer cookieContainer)
     {
         var cookies = cookieContainer.GetCookies(new Uri(ServerUrl))
             .Cast<Cookie>()
@@ -132,7 +132,7 @@ public sealed class SeerrSessionService
         // Warm-validation: confirm the session actually resolves a user.
         using var check = new HttpRequestMessage(HttpMethod.Get, $"{ServerUrl}/api/v1/auth/me");
         ApplyCookies(check, cookies);
-        using var checkResponse = await client.SendAsync(check);
+        using var checkResponse = await _sender(check, null, CancellationToken.None);
         if (checkResponse.IsSuccessStatusCode)
         {
             _logger.LogInformation("Seerr session established for {User}", jellyfinUserId);
@@ -152,7 +152,7 @@ public sealed class SeerrSessionService
             return false;
         }
 
-        var ttlMs = JellyPlayPlugin.Instance!.Configuration.Seerr.SessionTtlHours * 3_600_000L;
+        var ttlMs = _config().SessionTtlHours * 3_600_000L;
         if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - session.CreatedAt > ttlMs)
         {
             _db.DeleteSeerrSession(userId);

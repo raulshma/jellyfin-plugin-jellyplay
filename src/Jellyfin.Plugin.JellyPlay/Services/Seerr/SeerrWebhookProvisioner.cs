@@ -17,17 +17,19 @@ namespace Jellyfin.Plugin.JellyPlay.Services.Seerr;
 public sealed class SeerrWebhookProvisioner
 {
     private readonly IHttpClientFactory _httpFactory;
+    private readonly Func<SeerrConfig> _config;
     private readonly ILogger<SeerrWebhookProvisioner> _logger;
 
-    public SeerrWebhookProvisioner(IHttpClientFactory httpFactory, ILogger<SeerrWebhookProvisioner> logger)
+    public SeerrWebhookProvisioner(IHttpClientFactory httpFactory, Func<SeerrConfig> config, ILogger<SeerrWebhookProvisioner> logger)
     {
         _httpFactory = httpFactory;
+        _config = config;
         _logger = logger;
     }
 
     public async Task<bool> ProvisionAsync(string pluginWebhookBaseUrl)
     {
-        var config = JellyPlayPlugin.Instance!.Configuration.Seerr;
+        var config = _config();
         if (string.IsNullOrEmpty(config.ServerUrl) || string.IsNullOrEmpty(config.ApiKey) || !config.AutoProvisionWebhook)
         {
             return false;
@@ -91,17 +93,19 @@ public sealed class SeerrWebhookProvisioner
 public sealed class SeerrProvisioningHostedService : IHostedService
 {
     private readonly SeerrWebhookProvisioner _provisioner;
+    private readonly Func<SeerrConfig> _config;
     private readonly ILogger<SeerrProvisioningHostedService> _logger;
 
-    public SeerrProvisioningHostedService(SeerrWebhookProvisioner provisioner, ILogger<SeerrProvisioningHostedService> logger)
+    public SeerrProvisioningHostedService(SeerrWebhookProvisioner provisioner, Func<SeerrConfig> config, ILogger<SeerrProvisioningHostedService> logger)
     {
         _provisioner = provisioner;
+        _config = config;
         _logger = logger;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        var configured = JellyPlayPlugin.Instance?.Configuration.Seerr.JellyfinBaseUrl;
+        var configured = _config().JellyfinBaseUrl;
         if (string.IsNullOrWhiteSpace(configured))
         {
             // No blind localhost attempts: without an externally reachable base

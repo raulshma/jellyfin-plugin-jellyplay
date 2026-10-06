@@ -21,46 +21,34 @@ public class SettingsController : ControllerBase
 {
     private readonly SettingsService _settings;
     private readonly SseHub _hub;
-    private readonly Services.Admin.SettingsRateLimiter _rateLimiter;
     private readonly ILogger<SettingsController> _logger;
 
-    public SettingsController(SettingsService settings, SseHub hub, Services.Admin.SettingsRateLimiter rateLimiter, ILogger<SettingsController> logger)
+    public SettingsController(SettingsService settings, SseHub hub, ILogger<SettingsController> logger)
     {
         _settings = settings;
         _hub = hub;
-        _rateLimiter = rateLimiter;
         _logger = logger;
     }
 
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<SettingsSnapshotResponse> GetAll([FromQuery] string? profile)
+    public IActionResult GetAll([FromQuery] string? profile)
         => JellyPlayResponses.Camel(_settings.GetAll(User.GetUserId().ToString(), profile ?? JellyPlayDatabase.BaseProfile));
 
     [HttpGet("changed")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<SettingsSnapshotResponse> GetChanged(
+    public IActionResult GetChanged(
         [FromQuery, Required] long since,
         [FromQuery] string? profile,
         [FromQuery] string? deviceId)
         => JellyPlayResponses.Camel(_settings.GetChanged(User.GetUserId().ToString(), profile ?? JellyPlayDatabase.BaseProfile, since, deviceId));
 
     [HttpPost]
+    [RateLimit(typeof(Services.Admin.SettingsRateLimiter), "settings")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
-    public ActionResult<SettingsBatchResponse> ApplyBatch([FromBody, Required] SettingsBatchRequest request)
-    {
-        if (!_rateLimiter.Allow("settings:" + User.GetUserId(), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
-        {
-            return StatusCode(StatusCodes.Status429TooManyRequests, new { error = "rate-limited" });
-        }
-
-        return JellyPlayResponses.Camel(_settings.ApplyBatch(
-            User.GetUserId().ToString(),
-            request.Profile,
-            request.DeviceId ?? User.GetDeviceId(),
-            request.Writes));
-    }
+    public IActionResult ApplyBatch([FromBody, Required] SettingsBatchRequest request)
+        => ApplyBatchCore(request.Profile, request);
 
     [HttpDelete("{ns}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
@@ -90,14 +78,20 @@ public class SettingsController : ControllerBase
 
     [HttpGet("resolved/{profile?}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<SettingsSnapshotResponse> Resolve([FromRoute] string? profile)
+    public IActionResult Resolve([FromRoute] string? profile)
         => JellyPlayResponses.Camel(_settings.ResolveProfile(User.GetUserId().ToString(), profile ?? JellyPlayDatabase.BaseProfile));
 
+    /// <summary>Both mutating batch routes carry the same limiter — a per-profile route without it would be an open bypass.</summary>
     [HttpPost("profile/{profile}")]
+    [RateLimit(typeof(Services.Admin.SettingsRateLimiter), "settings")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<SettingsBatchResponse> SaveDeviceProfile(
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public IActionResult SaveDeviceProfile(
         [FromRoute, Required] string profile,
         [FromBody, Required] SettingsBatchRequest request)
+        => ApplyBatchCore(profile, request);
+
+    private IActionResult ApplyBatchCore(string? profile, SettingsBatchRequest request)
         => JellyPlayResponses.Camel(_settings.ApplyBatch(
             User.GetUserId().ToString(),
             profile,

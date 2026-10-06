@@ -42,62 +42,49 @@ public class JellyPlayController : ControllerBase
     ];
 
     private readonly SettingsService _settings;
+    private readonly Func<Configuration.PluginConfiguration> _config;
 
-    public JellyPlayController(SettingsService settings)
+    public JellyPlayController(SettingsService settings, Func<Configuration.PluginConfiguration> config)
     {
         _settings = settings;
+        _config = config;
     }
+
+    /// <summary>
+    /// Features that appear in <see cref="AllFeatures"/> only when their
+    /// configuration is present — one map instead of a removal cascade per
+    /// toggle. A null configuration removes every conditional feature.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, Func<PluginConfiguration, bool>> ConditionalFeatures =
+        new Dictionary<string, Func<PluginConfiguration, bool>>
+        {
+            [JellyPlayContract.Features.SeerrBridge] = c =>
+                !string.IsNullOrEmpty(c.Seerr.ServerUrl) && !string.IsNullOrEmpty(c.Seerr.ApiKey),
+            [JellyPlayContract.Features.Ratings] = c => c.Ratings.Enabled(),
+            [JellyPlayContract.Features.CustomRows] = c => c.Rows.Enabled,
+            [JellyPlayContract.Features.SeasonalRows] = c => c.Rows.SeasonalEnabled,
+            [JellyPlayContract.Features.AnimeMarkers] = c => c.Anime.Enabled,
+            [JellyPlayContract.Features.Newsletter] = c => !string.IsNullOrEmpty(c.Newsletter.SmtpHost),
+            [JellyPlayContract.Features.Push] = c => c.Push.Enabled,
+            [JellyPlayContract.Features.Analytics] = c => c.Analytics.Enabled
+        };
 
     /// <summary>The single bootstrap probe. Clients tolerate 404 (plugin absent) and feature-gate on the response.</summary>
     [HttpGet("capabilities")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<CapabilitiesResponse> GetCapabilities()
+    public IActionResult GetCapabilities()
     {
-        var config = JellyPlayPlugin.Instance?.Configuration;
-        var features = new List<string>(AllFeatures);
-        if (string.IsNullOrEmpty(config?.Seerr.ServerUrl) || string.IsNullOrEmpty(config.Seerr.ApiKey))
-        {
-            features.Remove(JellyPlayContract.Features.SeerrBridge);
-        }
-
-        if (config is null || !config.Ratings.Enabled())
-        {
-            features.Remove(JellyPlayContract.Features.Ratings);
-        }
-
-        if (config is null || !config.Rows.Enabled)
-        {
-            features.Remove(JellyPlayContract.Features.CustomRows);
-        }
-
-        if (config is null || !config.Rows.SeasonalEnabled)
-        {
-            features.Remove(JellyPlayContract.Features.SeasonalRows);
-        }
-
-        if (config is null || !config.Anime.Enabled)
-        {
-            features.Remove(JellyPlayContract.Features.AnimeMarkers);
-        }
-
-        if (string.IsNullOrEmpty(config?.Newsletter.SmtpHost))
-        {
-            features.Remove(JellyPlayContract.Features.Newsletter);
-        }
-
-        if (config is null || !config.Push.Enabled)
-        {
-            features.Remove(JellyPlayContract.Features.Push);
-        }
-
-        if (config is null || !config.Analytics.Enabled)
-        {
-            features.Remove(JellyPlayContract.Features.Analytics);
-        }
+        var config = _config();
+        var features = AllFeatures
+            .Where(f => config is not null
+                && (!ConditionalFeatures.TryGetValue(f, out var isAvailable) || isAvailable(config)))
+            .ToList();
 
         return JellyPlayResponses.Camel(new CapabilitiesResponse(
             JellyPlayContract.ContractVersion,
-            typeof(JellyPlayPlugin).Assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version ?? "0.11.3",
+            typeof(JellyPlayPlugin).Assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version
+                ?? typeof(JellyPlayPlugin).Assembly.GetName().Version?.ToString()
+                ?? string.Empty,
             features,
             System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             ["", "desktop", "phone", "tv"]));
@@ -146,15 +133,15 @@ public class JellyPlayController : ControllerBase
     /// </summary>
     [HttpGet("dashboard-strings")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<IReadOnlyDictionary<string, string>> GetDashboardStrings([FromQuery] string? lang)
+    public IActionResult GetDashboardStrings([FromQuery] string? lang)
         => JellyPlayResponses.Camel(Helpers.DashboardStrings.All(Helpers.DashboardStrings.ResolveCulture(lang)));
 
     [HttpGet("config/yaml")]
     [Authorize(Policy = Policies.RequiresElevation)]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<object> GetConfigYaml()
+    public IActionResult GetConfigYaml()
     {
-        var config = JellyPlayPlugin.Instance!.Configuration;
+        var config = _config();
         var yaml = new SerializerBuilder()
             .WithNamingConvention(CamelCaseNamingConvention.Instance)
             .Build()
@@ -165,7 +152,7 @@ public class JellyPlayController : ControllerBase
     [HttpPost("config/yaml")]
     [Authorize(Policy = Policies.RequiresElevation)]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<object> SetConfigYaml([FromBody] ConfigYamlRequest request)
+    public IActionResult SetConfigYaml([FromBody] ConfigYamlRequest request)
     {
         try
         {
@@ -174,8 +161,10 @@ public class JellyPlayController : ControllerBase
                 .IgnoreUnmatchedProperties()
                 .Build();
             var config = deserializer.Deserialize<PluginConfiguration>(request.Value);
-            var instance = JellyPlayPlugin.Instance!;
-            instance.UpdateConfiguration(config);
+            // The one remaining Instance read in a controller: persisting the
+            // YAML round-trip is plugin-instance lifecycle (SaveConfiguration),
+            // not a config read.
+            JellyPlayPlugin.Instance!.UpdateConfiguration(config);
             return JellyPlayResponses.Camel(new { error = false, message = string.Empty });
         }
         catch (System.Exception ex)
@@ -186,6 +175,3 @@ public class JellyPlayController : ControllerBase
 }
 
 public sealed record ConfigYamlRequest(string Value);
-
-/// <summary>Marker alias so GetGlobalDefaults can express JsonElement results cleanly.</summary>
-public sealed class JsonElementCompat;

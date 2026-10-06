@@ -1,5 +1,7 @@
 namespace Jellyfin.Plugin.JellyPlay.Services.Analytics;
 
+using Jellyfin.Plugin.JellyPlay.Storage;
+
 /// <summary>
 /// The pure anti-noise/dedup rules for playback recording. Every decision is
 /// expressed here so tests can pin them without a host: a session must have
@@ -16,8 +18,8 @@ public static class PlaybackRecordingRules
     /// <summary>Sessions with less watch progress than this are scrub-away noise.</summary>
     public const long MinPositionSeconds = 60;
 
-    /// <summary>StartedAt is truncated to this bucket; one row max per (UserId, ItemId, bucket).</summary>
-    public const long MinuteBucketMs = 60_000;
+    /// <summary>StartedAt is truncated to this bucket; one row max per (UserId, ItemId, bucket). Canonical value lives with the unique index (JellyPlayDatabase.MinuteBucketMs).</summary>
+    public const long MinuteBucketMs = JellyPlayDatabase.MinuteBucketMs;
 
     /// <summary>An in-flight session with no progress for longer than this is abandoned and closed on the next observed event.</summary>
     public const long StaleSessionGraceMs = 10 * MinuteBucketMs;

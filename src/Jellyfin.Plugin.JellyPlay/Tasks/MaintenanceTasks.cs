@@ -17,11 +17,13 @@ namespace Jellyfin.Plugin.JellyPlay.Tasks;
 public sealed class ChangeLogPruneTask : IScheduledTask
 {
     private readonly JellyPlayDatabase _db;
+    private readonly Func<Configuration.SyncConfig> _config;
     private readonly ILogger<ChangeLogPruneTask> _logger;
 
-    public ChangeLogPruneTask(JellyPlayDatabase db, ILogger<ChangeLogPruneTask> logger)
+    public ChangeLogPruneTask(JellyPlayDatabase db, Func<Configuration.SyncConfig> config, ILogger<ChangeLogPruneTask> logger)
     {
         _db = db;
+        _config = config;
         _logger = logger;
     }
 
@@ -35,7 +37,7 @@ public sealed class ChangeLogPruneTask : IScheduledTask
 
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
-        var config = JellyPlayPlugin.Instance!.Configuration.Sync;
+        var config = _config();
         var changeLogRows = await Task.Run(() => _db.PruneChangeLog(config.ChangeLogRetentionDays), cancellationToken);
         progress.Report(50);
         var historyRows = await Task.Run(() => _db.PruneSyncHistory(config.HistoryRetentionDays), cancellationToken);
@@ -170,7 +172,7 @@ public sealed class CacheMaintenanceTask : IScheduledTask
 
     public Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
-        var result = _cache.Sweep(FileCacheStore.ConfiguredMaxTotalBytes(), FileCacheStore.DefaultMaxEntryAge);
+        var result = _cache.Sweep(_cache.MaxTotalBytes(), FileCacheStore.DefaultMaxEntryAge);
         _logger.LogInformation("JellyPlay cache maintenance finished: {Deleted} entries removed, {Bytes} bytes reclaimed",
             result.DeletedFiles, result.BytesReclaimed);
         progress.Report(100);

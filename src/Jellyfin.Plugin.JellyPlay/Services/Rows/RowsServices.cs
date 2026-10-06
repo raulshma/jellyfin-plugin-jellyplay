@@ -28,14 +28,16 @@ public sealed partial class CustomRowsService
     private readonly IHttpClientFactory _httpFactory;
     private readonly FileCacheStore _cache;
     private readonly ILibraryManager _libraryManager;
+    private readonly Func<RatingsConfig> _config;
     private readonly CircuitBreaker _breaker = new();
     private readonly ILogger<CustomRowsService> _logger;
 
-    public CustomRowsService(IHttpClientFactory httpFactory, FileCacheStore cache, ILibraryManager libraryManager, ILogger<CustomRowsService> logger)
+    public CustomRowsService(IHttpClientFactory httpFactory, FileCacheStore cache, ILibraryManager libraryManager, Func<RatingsConfig> config, ILogger<CustomRowsService> logger)
     {
         _httpFactory = httpFactory;
         _cache = cache;
         _libraryManager = libraryManager;
+        _config = config;
         _logger = logger;
     }
 
@@ -188,7 +190,7 @@ public sealed partial class CustomRowsService
     /// <summary>MDBList official lists (needs key; top list endpoint returns structured JSON).</summary>
     private async Task<List<RowItem>?> FetchMdbListAsync(string listSlug)
     {
-        var apiKey = JellyPlayPlugin.Instance!.Configuration.Ratings.MdbListApiKey;
+        var apiKey = _config().MdbListApiKey;
         if (string.IsNullOrEmpty(apiKey))
         {
             return null;
@@ -239,7 +241,7 @@ public sealed partial class CustomRowsService
     /// <summary>TMDB official lists (GET /list/{id}, v3 api key from the ratings config — same client/pattern as TmdbRatingsService).</summary>
     private async Task<List<RowItem>?> FetchTmdbListAsync(string listId)
     {
-        var apiKey = JellyPlayPlugin.Instance!.Configuration.Ratings.TmdbApiKey;
+        var apiKey = _config().TmdbApiKey;
         if (string.IsNullOrEmpty(apiKey))
         {
             return null;
@@ -334,7 +336,7 @@ public sealed partial class CustomRowsService
         }
     }
 
-    private static TimeSpan CacheTtl => TimeSpan.FromHours(JellyPlayPlugin.Instance!.Configuration.Ratings.CacheTtlHours);
+    private TimeSpan CacheTtl => TimeSpan.FromHours(_config().CacheTtlHours);
 }
 
 /// <summary>Seasonal holiday rows via TMDB keyword discovery, cached per keyword.</summary>
@@ -344,19 +346,21 @@ public sealed class SeasonalService
 
     private readonly IHttpClientFactory _httpFactory;
     private readonly FileCacheStore _cache;
+    private readonly Func<RatingsConfig> _config;
     private readonly CircuitBreaker _breaker = new();
     private readonly ILogger<SeasonalService> _logger;
 
-    public SeasonalService(IHttpClientFactory httpFactory, FileCacheStore cache, ILogger<SeasonalService> logger)
+    public SeasonalService(IHttpClientFactory httpFactory, FileCacheStore cache, Func<RatingsConfig> config, ILogger<SeasonalService> logger)
     {
         _httpFactory = httpFactory;
         _cache = cache;
+        _config = config;
         _logger = logger;
     }
 
     public async Task<RowResult?> GetSeasonalRow(string? keyword)
     {
-        var tmdbKey = JellyPlayPlugin.Instance!.Configuration.Ratings.TmdbApiKey;
+        var tmdbKey = _config().TmdbApiKey;
         if (string.IsNullOrEmpty(tmdbKey))
         {
             return null;

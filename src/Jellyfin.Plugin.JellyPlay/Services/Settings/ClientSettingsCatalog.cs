@@ -71,6 +71,15 @@ public static class ClientSettingsCatalog
     public const int CatalogSchema = 1;
 
     /// <summary>
+    /// Load-time backstop mirroring the generator's denylist: secrets and
+    /// device identity must never be advertised even if the generator's own
+    /// guard regressed — a catalog carrying them fails the load rather than
+    /// ship. The generator (derived from the client's SyncExcludedKeys sets)
+    /// remains the policy source; this list covers only the critical few.
+    /// </summary>
+    private static readonly string[] SecretKeyDenylist = ["pin_hash", "active_server_id", "active_user_id", "device_id"];
+
+    /// <summary>
     /// The known client settings, loaded once from the embedded
     /// Resources/jellyplay-settings-catalog.json artifact. Secrets and device
     /// identity keys are structurally absent from the generator's allowlist —
@@ -168,6 +177,16 @@ public static class ClientSettingsCatalog
         {
             throw new InvalidOperationException(
                 "Embedded settings catalog has duplicate ids: " + string.Join(", ", duplicates.Select(group => group.Key)));
+        }
+
+        var leaked = settings
+            .Where(entry => SecretKeyDenylist.Contains(entry.Key, StringComparer.Ordinal))
+            .Select(entry => entry.Ns + "/" + entry.Key)
+            .ToList();
+        if (leaked.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "Embedded settings catalog carries denylisted keys: " + string.Join(", ", leaked));
         }
 
         return settings

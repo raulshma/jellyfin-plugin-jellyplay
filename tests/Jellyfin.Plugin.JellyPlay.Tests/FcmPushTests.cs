@@ -14,6 +14,7 @@ using Jellyfin.Plugin.JellyPlay.Api;
 using Jellyfin.Plugin.JellyPlay.Configuration;
 using Jellyfin.Plugin.JellyPlay.Realtime;
 using Jellyfin.Plugin.JellyPlay.Services.Admin;
+using Jellyfin.Plugin.JellyPlay.Services.Devices;
 using Jellyfin.Plugin.JellyPlay.Services.Events;
 using Jellyfin.Plugin.JellyPlay.Services.Push;
 using Jellyfin.Plugin.JellyPlay.Storage;
@@ -631,9 +632,7 @@ public sealed class FcmRegistrationApiTests : IDisposable
         var controller = new EventsController(
             hub,
             events,
-            _db,
-            new BroadcastRateLimiter(),
-            withPushConfig ? () => _pushConfig : null);
+            new DeviceRegistryService(_db, () => _pushConfig));
         var context = new DefaultHttpContext
         {
             User = new ClaimsPrincipal(new ClaimsIdentity(

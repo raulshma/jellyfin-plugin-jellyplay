@@ -25,19 +25,24 @@ public class SeerrController : ControllerBase
     private readonly SeerrWebhookProvisioner _provisioner;
     private readonly Services.Events.EventService _events;
     private readonly Services.Admin.WebhookRateLimiter _webhookRateLimiter;
+    private readonly Func<Configuration.SeerrConfig> _config;
+    private readonly TimeProvider _clock;
 
     public SeerrController(
         SeerrSessionService sessions,
         SeerrProxyService proxy,
         SeerrWebhookProvisioner provisioner,
         Services.Events.EventService events,
-        Services.Admin.WebhookRateLimiter webhookRateLimiter)
+        Services.Admin.WebhookRateLimiter webhookRateLimiter,
+        Func<Configuration.SeerrConfig> config)
     {
         _sessions = sessions;
         _proxy = proxy;
         _provisioner = provisioner;
         _events = events;
         _webhookRateLimiter = webhookRateLimiter;
+        _config = config;
+        _clock = TimeProvider.System;
     }
 
     [HttpPost("login")]
@@ -107,17 +112,18 @@ public class SeerrController : ControllerBase
     /// </summary>
     [HttpPost("webhook")]
     [AllowAnonymous]
+    [RequestSizeLimit(256 * 1024)] // anonymous inbound — cap the unauthenticated read before parsing
     [ApiExplorerSettings(IgnoreApi = true)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> Webhook()
     {
-        var config = JellyPlayPlugin.Instance!.Configuration.Seerr;
+        var config = _config();
         var clientKey = Services.Admin.WebhookSecurity.ClientIpKey(HttpContext, config.TrustProxyHeaders);
-        if (!_webhookRateLimiter.Allow(clientKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
+        if (!_webhookRateLimiter.Allow(clientKey, _clock.GetUtcNow().ToUnixTimeMilliseconds()))
         {
-            return StatusCode(StatusCodes.Status429TooManyRequests, new { error = "rate-limited" });
+            return this.JellyPlayError(StatusCodes.Status429TooManyRequests, "rate-limited");
         }
 
         var secret = Request.Headers["X-JellyPlay-Webhook-Secret"].ToString();
@@ -154,7 +160,7 @@ public class SeerrController : ControllerBase
     [Authorize(Policy = Policies.RequiresElevation)]
     public IActionResult WebhookInfo()
     {
-        var config = JellyPlayPlugin.Instance!.Configuration.Seerr;
+        var config = _config();
         var fromConfig = !string.IsNullOrWhiteSpace(config.JellyfinBaseUrl);
         var baseUrl = fromConfig ? config.JellyfinBaseUrl.TrimEnd('/') : RequestBaseUrl();
         return JellyPlayResponses.Camel(new
@@ -177,6 +183,8 @@ public class SeerrController : ControllerBase
     public async Task<IActionResult> Reprovision()
     {
         var baseUrl = RequestBaseUrl();
+        // The one remaining Instance read in a controller: persisting the
+        // derived base URL is plugin-instance lifecycle (SaveConfiguration).
         var instance = JellyPlayPlugin.Instance!;
         instance.Configuration.Seerr.JellyfinBaseUrl = baseUrl;
         instance.SaveConfiguration(instance.Configuration);
@@ -184,6 +192,7 @@ public class SeerrController : ControllerBase
         var ok = await _provisioner.ProvisionAsync(baseUrl);
         return ok
             ? JellyPlayResponses.Camel(new { provisioned = true, baseUrl, baseUrlSource = "request" })
+            // Pinned response shape in docs/CONTRACT.md — not the generic error body.
             : StatusCode(StatusCodes.Status502BadGateway, new { provisioned = false, baseUrl, baseUrlSource = "request" });
     }
 

@@ -25,7 +25,7 @@ public class MessagesController : ControllerBase
 
     [HttpGet("messages")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<IReadOnlyList<MessageDto>> GetInbox()
+    public IActionResult GetInbox()
         => JellyPlayResponses.Camel(new { messages = _messages.GetInbox(User.GetUserId().ToString(), User.IsAdmin()) });
 
     [HttpPost("messages/{messageId}/read")]
@@ -39,7 +39,7 @@ public class MessagesController : ControllerBase
     [HttpGet("admin/messages")]
     [Authorize(Policy = Policies.RequiresElevation)]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<IReadOnlyList<MessageRow>> GetAll() => JellyPlayResponses.Camel(new { messages = _messages.GetAll() });
+    public IActionResult GetAll() => JellyPlayResponses.Camel(new { messages = _messages.GetAll() });
 
     [HttpPost("admin/messages")]
     [Authorize(Policy = Policies.RequiresElevation)]

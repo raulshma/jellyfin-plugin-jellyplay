@@ -32,7 +32,7 @@ public class SyncController : ControllerBase
     /// </summary>
     [HttpGet("status")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<SyncStatusResponse> GetStatus()
+    public IActionResult GetStatus()
         => JellyPlayResponses.Camel(_insights.GetStatus(User.GetUserId().ToString()));
 
     /// <summary>
@@ -43,7 +43,7 @@ public class SyncController : ControllerBase
     /// </summary>
     [HttpGet("history")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<SyncHistoryResponse> GetHistory(
+    public IActionResult GetHistory(
         [FromQuery] long? since,
         [FromQuery] int limit = SyncInsightsService.DefaultHistoryLimit)
         => JellyPlayResponses.Camel(_insights.GetHistory(User.GetUserId().ToString(), since, limit));
@@ -58,7 +58,7 @@ public class SyncController : ControllerBase
     [HttpGet("history/{seq}/keys")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public ActionResult<SyncHistoryKeysResponse> GetHistoryKeys(
+    public IActionResult GetHistoryKeys(
         [FromRoute, Required] long seq,
         [FromQuery] int limit = SyncInsightsService.DefaultKeysLimit)
     {
@@ -89,6 +89,6 @@ public class SyncAdminController : ControllerBase
     /// </summary>
     [HttpGet("overview")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<AdminSyncOverviewResponse> GetOverview()
+    public IActionResult GetOverview()
         => JellyPlayResponses.Camel(_insights.GetAdminOverview(guid => _users.GetUserById(guid)?.Username));
 }

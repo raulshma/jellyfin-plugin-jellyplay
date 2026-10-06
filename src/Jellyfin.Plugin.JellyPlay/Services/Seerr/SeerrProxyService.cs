@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,13 +14,15 @@ namespace Jellyfin.Plugin.JellyPlay.Services.Seerr;
 /// instance with the user's stored session (or the admin API key only for
 /// explicit server-scoped calls). The plugin is the auth boundary — the Seerr
 /// API key never reaches the client. Also owns the session validation probe
-/// used by the seerr/validate endpoint.
+/// used by the seerr/validate endpoint. Outbound traffic crosses the
+/// <see cref="SeerrSender"/> transport seam; request rewriting is a pure
+/// internal step so the auth boundary is testable without a host.
 /// </summary>
 public sealed class SeerrProxyService
 {
     private static readonly TimeSpan ValidationCacheTtl = TimeSpan.FromSeconds(60);
 
-    private readonly IHttpClientFactory _httpFactory;
+    private readonly SeerrSender _sender;
     private readonly SeerrSessionService _sessions;
     private readonly ILogger<SeerrProxyService> _logger;
     private readonly ConcurrentDictionary<string, (long At, bool Valid)> _validationCache = new();
@@ -29,9 +32,9 @@ public sealed class SeerrProxyService
         "Accept", "Content-Type", "Accept-Language"
     ];
 
-    public SeerrProxyService(IHttpClientFactory httpFactory, SeerrSessionService sessions, ILogger<SeerrProxyService> logger)
+    public SeerrProxyService(SeerrSender sender, SeerrSessionService sessions, ILogger<SeerrProxyService> logger)
     {
-        _httpFactory = httpFactory;
+        _sender = sender;
         _sessions = sessions;
         _logger = logger;
     }
@@ -65,14 +68,13 @@ public sealed class SeerrProxyService
     {
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, $"{_sessions.ServerUrl}/api/v1/auth/me");
+            using var request = BuildOutboundRequest(HttpMethod.Get, "/api/v1/auth/me", string.Empty);
             if (!_sessions.TryApplySession(userId, request))
             {
                 return false;
             }
 
-            using var client = _httpFactory.CreateClient("JellyPlayHttpClient");
-            using var response = await client.SendAsync(request, cancellationToken);
+            using var response = await _sender(request, null, cancellationToken);
             return response.IsSuccessStatusCode;
         }
         catch (Exception ex)
@@ -92,8 +94,7 @@ public sealed class SeerrProxyService
 
         var request = context.Request;
         var method = new HttpMethod(request.Method);
-        using var outbound = new HttpRequestMessage(method, $"{_sessions.ServerUrl}/api/v1/{path}{request.QueryString}");
-
+        var outbound = BuildOutboundRequest(method, $"/api/v1/{path}", request.QueryString.ToString());
         foreach (var header in ForwardedHeaders)
         {
             if (request.Headers.TryGetValue(header, out var values))
@@ -111,12 +112,9 @@ public sealed class SeerrProxyService
             }
         }
 
-        if (_sessions.TryApplySession(userId, outbound))
+        if (!_sessions.TryApplySession(userId, outbound))
         {
-            // user session
-        }
-        else
-        {
+            outbound.Dispose();
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             await context.Response.WriteAsJsonAsync(new { error = "seerr-not-linked" }, cancellationToken);
             return;
@@ -124,9 +122,7 @@ public sealed class SeerrProxyService
 
         try
         {
-            using var client = _httpFactory.CreateClient("JellyPlayHttpClient");
-            client.Timeout = Timeout.InfiniteTimeSpan;
-            using var response = await client.SendAsync(outbound, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            using var response = await _sender(outbound, null, cancellationToken);
 
             context.Response.StatusCode = (int)response.StatusCode;
             foreach (var header in response.Headers)
@@ -152,5 +148,13 @@ public sealed class SeerrProxyService
                 context.Response.StatusCode = StatusCodes.Status502BadGateway;
             }
         }
+        finally
+        {
+            outbound.Dispose();
+        }
     }
+
+    /// <summary>Pure request rewrite: absolute URL against the configured Seerr instance. No session, no transport.</summary>
+    internal HttpRequestMessage BuildOutboundRequest(HttpMethod method, string pathAndQuery, string queryString)
+        => new(method, $"{_sessions.ServerUrl}{pathAndQuery}{queryString}");
 }

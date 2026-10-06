@@ -37,18 +37,20 @@ public sealed class MdbListService
     private readonly IHttpClientFactory _httpFactory;
     private readonly FileCacheStore _cache;
     private readonly CircuitBreaker _breaker = new();
+    private readonly Func<RatingsConfig> _config;
     private readonly ILogger<MdbListService> _logger;
 
-    public MdbListService(IHttpClientFactory httpFactory, FileCacheStore cache, ILogger<MdbListService> logger)
+    public MdbListService(IHttpClientFactory httpFactory, FileCacheStore cache, Func<RatingsConfig> config, ILogger<MdbListService> logger)
     {
         _httpFactory = httpFactory;
         _cache = cache;
+        _config = config;
         _logger = logger;
     }
 
     public bool IsConfigured => !string.IsNullOrEmpty(ApiKey);
 
-    private static string ApiKey => JellyPlayPlugin.Instance!.Configuration.Ratings.MdbListApiKey;
+    private string ApiKey => _config().MdbListApiKey;
 
     public async Task<RatingsResult?> GetRatings(string imdbId)
     {
@@ -134,7 +136,7 @@ public sealed class MdbListService
         _cache.Invalidate($"mdblist:{imdbId}");
     }
 
-    private static int TtlHours => JellyPlayPlugin.Instance!.Configuration.Ratings.CacheTtlHours;
+    private int TtlHours => _config().CacheTtlHours;
 }
 
 /// <summary>TMDB episode/season ratings + next-episode air date.</summary>
@@ -144,16 +146,18 @@ public sealed class TmdbRatingsService
     private readonly IHttpClientFactory _httpFactory;
     private readonly FileCacheStore _cache;
     private readonly CircuitBreaker _breaker = new();
+    private readonly Func<RatingsConfig> _config;
     private readonly ILogger<TmdbRatingsService> _logger;
 
-    public TmdbRatingsService(IHttpClientFactory httpFactory, FileCacheStore cache, ILogger<TmdbRatingsService> logger)
+    public TmdbRatingsService(IHttpClientFactory httpFactory, FileCacheStore cache, Func<RatingsConfig> config, ILogger<TmdbRatingsService> logger)
     {
         _httpFactory = httpFactory;
         _cache = cache;
+        _config = config;
         _logger = logger;
     }
 
-    private static string? ApiKey => JellyPlayPlugin.Instance!.Configuration.Ratings.TmdbApiKey;
+    private string? ApiKey => _config().TmdbApiKey;
 
     public bool IsConfigured => !string.IsNullOrEmpty(ApiKey);
 
@@ -250,7 +254,7 @@ public sealed class TmdbRatingsService
         }
     }
 
-    private static int Ttl => JellyPlayPlugin.Instance!.Configuration.Ratings.CacheTtlHours;
+    private int Ttl => _config().CacheTtlHours;
 }
 
 /// <summary>
@@ -264,16 +268,18 @@ public sealed partial class ImdbChartsService
     private readonly IHttpClientFactory _httpFactory;
     private readonly FileCacheStore _cache;
     private readonly CircuitBreaker _breaker = new(failureThreshold: 2, openWindow: TimeSpan.FromHours(6));
+    private readonly Func<RatingsConfig> _config;
     private readonly ILogger<ImdbChartsService> _logger;
 
-    public ImdbChartsService(IHttpClientFactory httpFactory, FileCacheStore cache, ILogger<ImdbChartsService> logger)
+    public ImdbChartsService(IHttpClientFactory httpFactory, FileCacheStore cache, Func<RatingsConfig> config, ILogger<ImdbChartsService> logger)
     {
         _httpFactory = httpFactory;
         _cache = cache;
+        _config = config;
         _logger = logger;
     }
 
-    public bool IsEnabled => JellyPlayPlugin.Instance!.Configuration.Ratings.EnableImdbCharts;
+    public bool IsEnabled => _config().EnableImdbCharts;
 
     public async Task<ImdbChart?> GetTop250()
     {

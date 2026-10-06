@@ -18,10 +18,12 @@ public interface INewsletterSender
 /// <summary>Sends the newsletter over SMTP (MailKit — System.Net.Mail.SmtpClient is deprecated). Credentials come from plugin config.</summary>
 public sealed class SmtpNewsletterSender : INewsletterSender
 {
+    private readonly Func<NewsletterConfig> _config;
     private readonly ILogger<SmtpNewsletterSender> _logger;
 
-    public SmtpNewsletterSender(ILogger<SmtpNewsletterSender> logger)
+    public SmtpNewsletterSender(Func<NewsletterConfig> config, ILogger<SmtpNewsletterSender> logger)
     {
+        _config = config;
         _logger = logger;
     }
 
@@ -61,8 +63,7 @@ public sealed class SmtpNewsletterSender : INewsletterSender
         }
     }
 
-    private static NewsletterConfig NewsletterSettings()
-        => JellyPlayPlugin.Instance!.Configuration.Newsletter;
+    private NewsletterConfig NewsletterSettings() => _config();
 }
 
 /// <summary>
@@ -75,17 +76,20 @@ public sealed class NewsletterService
     private readonly INewsletterSender _sender;
     private readonly IUserManager _userManager;
     private readonly ILibraryManager _libraryManager;
+    private readonly Func<NewsletterConfig> _config;
     private readonly ILogger<NewsletterService> _logger;
 
     public NewsletterService(
         INewsletterSender sender,
         IUserManager userManager,
         ILibraryManager libraryManager,
+        Func<NewsletterConfig> config,
         ILogger<NewsletterService> logger)
     {
         _sender = sender;
         _userManager = userManager;
         _libraryManager = libraryManager;
+        _config = config;
         _logger = logger;
     }
 
@@ -94,7 +98,7 @@ public sealed class NewsletterService
     public Task SendAsync() => SendAsync(testOnly: false);
 
     /// <summary>True when the SMTP settings carry everything a send needs.</summary>
-    public bool IsConfigured => IsSmtpConfigured(JellyPlayPlugin.Instance!.Configuration.Newsletter);
+    public bool IsConfigured => IsSmtpConfigured(_config());
 
     /// <summary>Pure configured-check so the 400-mapping contract is unit-testable without the host.</summary>
     public static bool IsSmtpConfigured(NewsletterConfig config)
@@ -102,7 +106,7 @@ public sealed class NewsletterService
 
     private async Task SendAsync(bool testOnly)
     {
-        var config = JellyPlayPlugin.Instance!.Configuration.Newsletter;
+        var config = _config();
         if (!IsSmtpConfigured(config))
         {
             throw new InvalidOperationException("Newsletter SMTP is not configured.");

@@ -14,6 +14,7 @@ using Jellyfin.Plugin.JellyPlay.Api;
 using Jellyfin.Plugin.JellyPlay.Configuration;
 using Jellyfin.Plugin.JellyPlay.Realtime;
 using Jellyfin.Plugin.JellyPlay.Services.Admin;
+using Jellyfin.Plugin.JellyPlay.Services.Devices;
 using Jellyfin.Plugin.JellyPlay.Services.Events;
 using Jellyfin.Plugin.JellyPlay.Services.Messages;
 using Jellyfin.Plugin.JellyPlay.Services.Push;
@@ -292,7 +293,8 @@ public sealed class DeviceRegistrationApiTests : IDisposable
             () => new EventsConfig(),
             () => new List<string>(),
             NullLogger<EventService>.Instance);
-        var controller = new EventsController(hub, events, _db, new BroadcastRateLimiter());
+        var devices = new DeviceRegistryService(_db, () => new PushConfig());
+        var controller = new EventsController(hub, events, devices);
         var context = new DefaultHttpContext
         {
             User = new ClaimsPrincipal(new ClaimsIdentity(

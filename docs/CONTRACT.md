@@ -435,6 +435,8 @@ API: `GET/POST jellyplay/config/yaml` [admin]. The pages' `data-i18n` text
 resolves through:
 
 ```
+GET  jellyplay/config/yaml [admin]                 → { value: "<yaml of the full plugin configuration>" }
+POST jellyplay/config/yaml [admin]                 body { value } → { error, message } — round-trips the YAML through UpdateConfiguration (webhook secret auto-generated when blank)
 GET jellyplay/dashboard-strings?lang=  → { key: localizedString }   (en embedded; not feature-gated)
 ```
 

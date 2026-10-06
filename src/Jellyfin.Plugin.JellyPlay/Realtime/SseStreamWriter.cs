@@ -37,7 +37,15 @@ public static class SseStreamWriter
                     builder.Append("id: ").Append(evt.Id).Append('\n');
                     builder.Append("event: ").Append(evt.EventName).Append('\n');
                     builder.Append("retry: ").Append(evt.RetrySeconds).Append('\n');
-                    builder.Append("data: ").Append(evt.Data).Append("\n\n");
+                    // SSE carries one data: line per payload line — a raw
+                    // newline inside the payload would terminate the frame
+                    // early and corrupt the stream.
+                    foreach (var line in evt.Data.Replace("\r\n", "\n").Split('\n'))
+                    {
+                        builder.Append("data: ").Append(line).Append('\n');
+                    }
+
+                    builder.Append('\n');
                     await context.Response.WriteAsync(builder.ToString(), requestAborted).ConfigureAwait(false);
                     await context.Response.Body.FlushAsync(requestAborted).ConfigureAwait(false);
                 }
