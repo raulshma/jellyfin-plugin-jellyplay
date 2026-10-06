@@ -22,21 +22,23 @@ public sealed record SeerrLoginResult(bool Success, string? Error);
 /// <summary>
 /// Server-side Seerr SSO: password login or a Quick Connect bridge (the plugin
 /// authorizes the QC secret against Jellyfin, then exchanges it for a Seerr
-/// session). Sessions persist per Jellyfin user; the client never touches the
-/// Seerr API key.
+/// session). Sessions persist per Jellyfin user — encrypted at rest with a
+/// plugin-held key (SecretBox) — and the client never touches the Seerr API key.
 /// </summary>
 public sealed class SeerrSessionService
 {
     private readonly IHttpClientFactory _httpFactory;
     private readonly JellyPlayDatabase _db;
     private readonly IQuickConnect _quickConnect;
+    private readonly SecretBox _secretBox;
     private readonly ILogger<SeerrSessionService> _logger;
 
-    public SeerrSessionService(IHttpClientFactory httpFactory, JellyPlayDatabase db, IQuickConnect quickConnect, ILogger<SeerrSessionService> logger)
+    public SeerrSessionService(IHttpClientFactory httpFactory, JellyPlayDatabase db, IQuickConnect quickConnect, SecretBox secretBox, ILogger<SeerrSessionService> logger)
     {
         _httpFactory = httpFactory;
         _db = db;
         _quickConnect = quickConnect;
+        _secretBox = secretBox;
         _logger = logger;
     }
 
@@ -117,11 +119,15 @@ public sealed class SeerrSessionService
             .ToList();
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        _db.UpsertSeerrSession(new SeerrSessionRow(
-            jellyfinUserId,
-            JsonSerializer.Serialize(cookies),
-            now,
-            now));
+        var payload = _secretBox.Protect(JsonSerializer.Serialize(cookies));
+        if (payload is null)
+        {
+            // Fail closed: no key means no plaintext at rest, and no session.
+            _logger.LogError("Seerr session encryption key unavailable; session for {User} was NOT persisted", jellyfinUserId);
+            return;
+        }
+
+        _db.UpsertSeerrSession(new SeerrSessionRow(jellyfinUserId, payload, now, now));
 
         // Warm-validation: confirm the session actually resolves a user.
         using var check = new HttpRequestMessage(HttpMethod.Get, $"{ServerUrl}/api/v1/auth/me");
@@ -137,7 +143,7 @@ public sealed class SeerrSessionService
 
     public bool DeleteSession(string userId) => _db.DeleteSeerrSession(userId);
 
-    /// <summary>Loads the user's session cookies into a request; returns false when absent/expired.</summary>
+    /// <summary>Loads the user's session cookies into a request; returns false when absent/expired/undecryptable.</summary>
     public bool TryApplySession(string userId, HttpRequestMessage request)
     {
         var session = _db.GetSeerrSession(userId);
@@ -153,8 +159,33 @@ public sealed class SeerrSessionService
             return false;
         }
 
-        ApplyCookies(request, DeserializeCookies(session.CookiesJson));
+        var cookiesJson = DecodeCookies(session.CookiesPayload);
+        if (cookiesJson is null)
+        {
+            // Encrypted payload without a usable key (lost/corrupted key file):
+            // the session is unrecoverable — treat as absent, drop the row.
+            _logger.LogWarning("Seerr session payload for {User} could not be decrypted; treating as unlinked", userId);
+            _db.DeleteSeerrSession(userId);
+            return false;
+        }
+
+        ApplyCookies(request, DeserializeCookies(cookiesJson));
         return true;
+    }
+
+    /// <summary>
+    /// Payload → plaintext JSON. Versioned payloads decrypt via the SecretBox;
+    /// legacy plaintext rows (pre-encryption) pass through as UTF-8 and are
+    /// re-encrypted on the session's next write.
+    /// </summary>
+    private string? DecodeCookies(byte[] payload)
+    {
+        if (SecretBox.IsEncryptedPayload(payload))
+        {
+            return _secretBox.TryUnprotect(payload);
+        }
+
+        return System.Text.Encoding.UTF8.GetString(payload);
     }
 
     private static void ApplyCookies(HttpRequestMessage request, IEnumerable<(string Name, string Value)> cookies)

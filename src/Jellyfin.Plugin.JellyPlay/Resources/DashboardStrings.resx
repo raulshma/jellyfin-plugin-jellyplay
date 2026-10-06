@@ -225,4 +225,92 @@
   <data name="YamlStatusOk" xml:space="preserve">
     <value>Saved.</value>
   </data>
+
+  <!-- Custom rows editor -->
+  <data name="SectionCustomRows" xml:space="preserve">
+    <value>Custom rows</value>
+  </data>
+  <data name="CustomRowsDescription" xml:space="preserve">
+    <value>Home screen rows resolved from external lists. Each row needs a title (shown to clients), a source, an item limit, and the source-specific list identifier (letterboxd username/list slug, IMDb chart or ls-list id, MDBList list id, TMDB list id).</value>
+  </data>
+  <data name="CustomRowsEmpty" xml:space="preserve">
+    <value>No custom rows configured.</value>
+  </data>
+  <data name="CustomRowsAdd" xml:space="preserve">
+    <value>Add row</value>
+  </data>
+  <data name="CustomRowsSave" xml:space="preserve">
+    <value>Save rows</value>
+  </data>
+  <data name="CustomRowsSaved" xml:space="preserve">
+    <value>Custom rows saved.</value>
+  </data>
+  <data name="CustomRowsTitle" xml:space="preserve">
+    <value>Title</value>
+  </data>
+  <data name="CustomRowsLimit" xml:space="preserve">
+    <value>Limit</value>
+  </data>
+  <data name="CustomRowsRemove" xml:space="preserve">
+    <value>Remove</value>
+  </data>
+  <data name="CustomRowsInvalidTitle" xml:space="preserve">
+    <value>Every row needs a non-empty title.</value>
+  </data>
+  <data name="CustomRowsInvalidLimit" xml:space="preserve">
+    <value>Row "{0}" needs a limit of at least 1.</value>
+  </data>
+  <data name="CustomRowsListIdLetterboxd" xml:space="preserve">
+    <value>Letterboxd list slug (e.g. staffpicks)</value>
+  </data>
+  <data name="CustomRowsListIdImdb" xml:space="preserve">
+    <value>IMDb list id (ls…) or chart name</value>
+  </data>
+  <data name="CustomRowsListIdMdblist" xml:space="preserve">
+    <value>MDBList list id</value>
+  </data>
+  <data name="CustomRowsListIdTmdb" xml:space="preserve">
+    <value>TMDB list id (numeric)</value>
+  </data>
+
+  <!-- Anime series overrides editor -->
+  <data name="SectionAnimeOverrides" xml:space="preserve">
+    <value>Anime overrides</value>
+  </data>
+  <data name="AnimeOverridesDescription" xml:space="preserve">
+    <value>Map a Jellyfin series to its AniList / MyAnimeList ids, overriding the automatic provider-id derivation for anime markers. Each row needs the series id plus at least one provider id; the optional label is a note for other admins.</value>
+  </data>
+  <data name="AnimeOverridesEmpty" xml:space="preserve">
+    <value>No series overrides configured.</value>
+  </data>
+  <data name="AnimeOverridesAdd" xml:space="preserve">
+    <value>Add override</value>
+  </data>
+  <data name="AnimeOverridesSave" xml:space="preserve">
+    <value>Save overrides</value>
+  </data>
+  <data name="AnimeOverridesSaved" xml:space="preserve">
+    <value>Anime overrides saved.</value>
+  </data>
+  <data name="AnimeOverridesSeriesId" xml:space="preserve">
+    <value>Series id (Jellyfin item id)</value>
+  </data>
+  <data name="AnimeOverridesAniListId" xml:space="preserve">
+    <value>AniList id</value>
+  </data>
+  <data name="AnimeOverridesMalId" xml:space="preserve">
+    <value>MAL id</value>
+  </data>
+  <data name="AnimeOverridesLabel" xml:space="preserve">
+    <value>Label (optional)</value>
+  </data>
+  <data name="AnimeOverridesRemove" xml:space="preserve">
+    <value>Remove</value>
+  </data>
+  <data name="AnimeOverridesInvalidSeries" xml:space="preserve">
+    <value>Every override needs a non-empty series id.</value>
+  </data>
+  <data name="AnimeOverridesInvalidProvider" xml:space="preserve">
+    <value>Override "{0}" needs an AniList id or a MAL id.</value>
+  </data>
 </root>

@@ -18,6 +18,12 @@ public class PluginConfiguration : BasePluginConfiguration
     public NewsletterConfig Newsletter { get; set; } = new();
 
     public SyncConfig Sync { get; set; } = new();
+
+    public CacheConfig Cache { get; set; } = new();
+
+    public PushConfig Push { get; set; } = new();
+
+    public AnalyticsConfig Analytics { get; set; } = new();
 }
 
 public class EventsConfig
@@ -54,10 +60,25 @@ public class SeerrConfig
     /// <summary>Jellyfin-side API key used to provision the Seerr webhook (optional).</summary>
     public string JellyfinApiKey { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Externally reachable Jellyfin base URL used for the Seerr webhook
+    /// receiver (scheme://host[:port][/pathBase]). Empty disables startup
+    /// auto-provision; POST jellyplay/seerr/reprovision derives and persists it
+    /// from the incoming admin request.
+    /// </summary>
+    public string JellyfinBaseUrl { get; set; } = string.Empty;
+
     public bool AutoProvisionWebhook { get; set; } = true;
 
     /// <summary>Secret required on inbound webhook calls (header X-JellyPlay-Webhook-Secret).</summary>
     public string WebhookSecret { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Trust the X-Forwarded-For first hop when keying webhook rate limits.
+    /// Only enable behind a reverse proxy that overwrites (not appends to) the
+    /// header — otherwise clients can spoof their rate-limit identity.
+    /// </summary>
+    public bool TrustProxyHeaders { get; set; }
 
     public int SessionTtlHours { get; set; } = 24 * 30;
 }
@@ -108,6 +129,33 @@ public class AnimeConfig
         "https://raw.githubusercontent.com/Fribb/anime-lists/master/anime-list-full.json";
 
     public int RefreshIntervalHours { get; set; } = 24;
+
+    /// <summary>
+    /// Admin-managed provider-id mappings that override the automatic
+    /// derivation for one series (resolution precedence: override &gt;
+    /// provider-id auto-derive &gt; name-slug fallback).
+    /// </summary>
+    public List<AnimeSeriesOverride> SeriesOverrides { get; set; } = new();
+}
+
+/// <summary>
+/// An admin-defined provider-id pin for one Jellyfin series (matched by item
+/// id). At least one provider id must be set; <see cref="Label"/> is an
+/// optional admin-facing note and never used in resolution. Modeled after
+/// <see cref="CustomRowDefinition"/> so the YAML round-trip and the dashboard
+/// editor both work unchanged.
+/// </summary>
+public class AnimeSeriesOverride
+{
+    /// <summary>The Jellyfin series item id this override applies to.</summary>
+    public string SeriesId { get; set; } = string.Empty;
+
+    public string? AniListId { get; set; }
+
+    public string? MalId { get; set; }
+
+    /// <summary>Optional admin-facing note (not used in resolution).</summary>
+    public string? Label { get; set; }
 }
 
 public class NewsletterConfig
@@ -141,4 +189,50 @@ public class SyncConfig
     public int MaxKeysPerUser { get; set; } = 2000;
 
     public int ChangeLogRetentionDays { get; set; } = 30;
+
+    /// <summary>How long recorded sync operations (push/pull/reset) are kept before the daily prune deletes them.</summary>
+    public int HistoryRetentionDays { get; set; } = 30;
+}
+
+public class CacheConfig
+{
+    /// <summary>Total size cap (MB) for the plugin's file cache directory; the oldest entries are evicted first when exceeded.</summary>
+    public int MaxSizeMegabytes { get; set; } = 256;
+}
+
+/// <summary>
+/// Plugin-side push notifications: the plugin is the push server, fanning out
+/// new-media/broadcast/message notifications to device-registered ntfy and
+/// generic UnifiedPush HTTP endpoints, and (when configured) through Google
+/// FCM for Play-Store client builds. Fire-and-forget, no delivery guarantee.
+/// </summary>
+public class PushConfig
+{
+    /// <summary>Master switch; off (default) removes the "push" capability key and skips every dispatch.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>Firebase project id; the fcm push kind is only accepted when this AND the service-account key are set.</summary>
+    public string FcmProjectId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// RAW Firebase service-account key JSON (the full file content, pasted).
+    /// Server-held secret: it must never appear in any log or API response —
+    /// the admin overview reports only a boolean <c>fcmConfigured</c>.
+    /// </summary>
+    public string FcmServiceAccountJson { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Server-side playback activity recording (from host session events) and the
+/// admin reporting surface over it. The `analytics` feature key is only
+/// advertised while enabled; disabling stops recording and the daily
+/// maintenance pass purges all recorded history (raw + rollups).
+/// </summary>
+public class AnalyticsConfig
+{
+    /// <summary>Master switch; off (default) removes the "analytics" capability key and skips every recording pass.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>Raw playback-session rows older than this are pruned daily; the derived daily rollups are retained forever.</summary>
+    public int RawRetentionDays { get; set; } = 90;
 }

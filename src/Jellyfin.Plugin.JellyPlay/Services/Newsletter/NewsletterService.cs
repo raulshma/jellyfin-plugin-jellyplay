@@ -3,8 +3,10 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyPlay.Configuration;
+using MailKit.Security;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
+using MimeKit;
 
 namespace Jellyfin.Plugin.JellyPlay.Services.Newsletter;
 
@@ -13,7 +15,7 @@ public interface INewsletterSender
     Task SendAsync(string subject, string htmlBody, IReadOnlyList<string> recipients);
 }
 
-/// <summary>Sends the newsletter over SMTP (System.Net.Mail). Credentials come from plugin config.</summary>
+/// <summary>Sends the newsletter over SMTP (MailKit — System.Net.Mail.SmtpClient is deprecated). Credentials come from plugin config.</summary>
 public sealed class SmtpNewsletterSender : INewsletterSender
 {
     private readonly ILogger<SmtpNewsletterSender> _logger;
@@ -30,29 +32,33 @@ public sealed class SmtpNewsletterSender : INewsletterSender
             throw new InvalidOperationException("No newsletter recipients resolved.");
         }
 
-        using var message = new System.Net.Mail.MailMessage
-        {
-            Subject = subject,
-            Body = htmlBody,
-            IsBodyHtml = true,
-            From = new System.Net.Mail.MailAddress(
-                NewsletterSettings().FromAddress,
-                NewsletterSettings().FromName)
-        };
+        var settings = NewsletterSettings();
+        using var message = new MimeMessage();
+        message.From.Add(new MailboxAddress(settings.FromName, settings.FromAddress));
         foreach (var recipient in recipients.Where(address => !string.IsNullOrWhiteSpace(address)))
         {
-            message.To.Add(recipient);
+            message.To.Add(MailboxAddress.Parse(recipient));
         }
 
-        var settings = NewsletterSettings();
-        using var client = new System.Net.Mail.SmtpClient(settings.SmtpHost, settings.SmtpPort)
-        {
-            EnableSsl = settings.UseSsl,
-            Credentials = new System.Net.NetworkCredential(settings.SmtpUsername, settings.SmtpPassword)
-        };
+        message.Subject = subject;
+        message.Body = new BodyBuilder { HtmlBody = htmlBody }.ToMessageBody();
 
-        await client.SendMailAsync(message);
-        _logger.LogInformation("Newsletter '{Subject}' sent to {Count} recipients", subject, message.To.Count);
+        using var client = new MailKit.Net.Smtp.SmtpClient();
+        await client.ConnectAsync(settings.SmtpHost, settings.SmtpPort, settings.UseSsl ? SecureSocketOptions.StartTls : SecureSocketOptions.None);
+        try
+        {
+            if (!string.IsNullOrEmpty(settings.SmtpUsername))
+            {
+                await client.AuthenticateAsync(settings.SmtpUsername, settings.SmtpPassword);
+            }
+
+            await client.SendAsync(message);
+            _logger.LogInformation("Newsletter '{Subject}' sent to {Count} recipients", subject, message.To.Count);
+        }
+        finally
+        {
+            await client.DisconnectAsync(true);
+        }
     }
 
     private static NewsletterConfig NewsletterSettings()
@@ -87,10 +93,17 @@ public sealed class NewsletterService
 
     public Task SendAsync() => SendAsync(testOnly: false);
 
+    /// <summary>True when the SMTP settings carry everything a send needs.</summary>
+    public bool IsConfigured => IsSmtpConfigured(JellyPlayPlugin.Instance!.Configuration.Newsletter);
+
+    /// <summary>Pure configured-check so the 400-mapping contract is unit-testable without the host.</summary>
+    public static bool IsSmtpConfigured(NewsletterConfig config)
+        => !string.IsNullOrEmpty(config.SmtpHost) && !string.IsNullOrEmpty(config.FromAddress);
+
     private async Task SendAsync(bool testOnly)
     {
         var config = JellyPlayPlugin.Instance!.Configuration.Newsletter;
-        if (string.IsNullOrEmpty(config.SmtpHost) || string.IsNullOrEmpty(config.FromAddress))
+        if (!IsSmtpConfigured(config))
         {
             throw new InvalidOperationException("Newsletter SMTP is not configured.");
         }
@@ -127,7 +140,6 @@ public sealed class NewsletterService
         var rows = string.Join(string.Empty, items.Select(item =>
             $"<li><strong>{System.Net.WebUtility.HtmlEncode(item.Name)}</strong> — {item.GetType().Name}, added {item.DateCreated:yyyy-MM-dd}</li>"));
 
-        var serverName = _libraryManager.ToString();
         var html = $"""
             <html><body style="font-family:sans-serif">
             <h2>JellyPlay weekly digest</h2>

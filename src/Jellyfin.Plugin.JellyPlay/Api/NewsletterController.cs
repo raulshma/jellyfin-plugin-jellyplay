@@ -29,6 +29,11 @@ public class NewsletterController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Send()
     {
+        if (!_newsletter.IsConfigured)
+        {
+            return Unconfigured();
+        }
+
         await _newsletter.SendAsync();
         return NoContent();
     }
@@ -36,9 +41,19 @@ public class NewsletterController : ControllerBase
     [HttpPost("test")]
     [Authorize(Policy = Policies.RequiresElevation)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> SendTest()
     {
+        if (!_newsletter.IsConfigured)
+        {
+            return Unconfigured();
+        }
+
         await _newsletter.SendTestAsync();
         return NoContent();
     }
+
+    /// <summary>The CONTRACT.md 400 body for an unconfigured SMTP setup.</summary>
+    private ContentResult Unconfigured()
+        => JellyPlayResponses.Camel(new { error = "smtp-unconfigured" }, StatusCodes.Status400BadRequest);
 }

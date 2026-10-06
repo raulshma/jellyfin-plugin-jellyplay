@@ -24,13 +24,20 @@ public class SeerrController : ControllerBase
     private readonly SeerrProxyService _proxy;
     private readonly SeerrWebhookProvisioner _provisioner;
     private readonly Services.Events.EventService _events;
+    private readonly Services.Admin.WebhookRateLimiter _webhookRateLimiter;
 
-    public SeerrController(SeerrSessionService sessions, SeerrProxyService proxy, SeerrWebhookProvisioner provisioner, Services.Events.EventService events)
+    public SeerrController(
+        SeerrSessionService sessions,
+        SeerrProxyService proxy,
+        SeerrWebhookProvisioner provisioner,
+        Services.Events.EventService events,
+        Services.Admin.WebhookRateLimiter webhookRateLimiter)
     {
         _sessions = sessions;
         _proxy = proxy;
         _provisioner = provisioner;
         _events = events;
+        _webhookRateLimiter = webhookRateLimiter;
     }
 
     [HttpPost("login")]
@@ -62,9 +69,10 @@ public class SeerrController : ControllerBase
         });
     }
 
+    /// <summary>Re-validates the stored session against Seerr (GET auth/me with the stored cookies); 60s cache.</summary>
     [HttpGet("validate")]
-    public IActionResult Validate()
-        => JellyPlayResponses.Camel(new { valid = _sessions.GetSession(User.GetUserId().ToString()) is not null });
+    public async Task<IActionResult> Validate(CancellationToken cancellationToken)
+        => JellyPlayResponses.Camel(new { valid = await _proxy.ValidateUserSessionAsync(User.GetUserId().ToString(), cancellationToken) });
 
     [HttpDelete("logout")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
@@ -92,15 +100,29 @@ public class SeerrController : ControllerBase
         return _proxy.ProxyAsync(HttpContext, path, User.GetUserId().ToString(), cancellationToken);
     }
 
-    /// <summary>Inbound Seerr webhook (AllowAnonymous; secret header required).</summary>
+    /// <summary>
+    /// Inbound Seerr webhook (AllowAnonymous). Abuse containment first —
+    /// 30/min per remote client (429 when exceeded) — then the secret check,
+    /// compared in constant time.
+    /// </summary>
     [HttpPost("webhook")]
     [AllowAnonymous]
     [ApiExplorerSettings(IgnoreApi = true)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> Webhook()
     {
         var config = JellyPlayPlugin.Instance!.Configuration.Seerr;
+        var clientKey = Services.Admin.WebhookSecurity.ClientIpKey(HttpContext, config.TrustProxyHeaders);
+        if (!_webhookRateLimiter.Allow(clientKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
+        {
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { error = "rate-limited" });
+        }
+
         var secret = Request.Headers["X-JellyPlay-Webhook-Secret"].ToString();
-        if (string.IsNullOrEmpty(config.WebhookSecret) || secret != config.WebhookSecret)
+        if (string.IsNullOrEmpty(config.WebhookSecret)
+            || !Services.Admin.WebhookSecurity.SecretMatches(config.WebhookSecret, secret))
         {
             return Unauthorized();
         }
@@ -122,25 +144,49 @@ public class SeerrController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Effective webhook base URL (externally reachable Jellyfin address) and
+    /// where it came from: "config" when Seerr:JellyfinBaseUrl is set, otherwise
+    /// derived from this admin request ("request") — derivation is informational
+    /// until POST reprovision persists it.
+    /// </summary>
     [HttpGet("webhookInfo")]
     [Authorize(Policy = Policies.RequiresElevation)]
     public IActionResult WebhookInfo()
     {
         var config = JellyPlayPlugin.Instance!.Configuration.Seerr;
+        var fromConfig = !string.IsNullOrWhiteSpace(config.JellyfinBaseUrl);
+        var baseUrl = fromConfig ? config.JellyfinBaseUrl.TrimEnd('/') : RequestBaseUrl();
         return JellyPlayResponses.Camel(new
         {
             autoProvision = config.AutoProvisionWebhook,
             secretConfigured = !string.IsNullOrEmpty(config.WebhookSecret),
-            webhookPath = $"{JellyPlayContract.RoutePrefix}/seerr/webhook"
+            webhookPath = $"{JellyPlayContract.RoutePrefix}/seerr/webhook",
+            baseUrl,
+            baseUrlSource = fromConfig ? "config" : "request"
         });
     }
 
+    /// <summary>
+    /// Re-registers the webhook into Seerr. The base URL comes from the incoming
+    /// admin request (reverse-proxy path base included) and is persisted into
+    /// config so startup auto-provision works from then on.
+    /// </summary>
     [HttpPost("reprovision")]
     [Authorize(Policy = Policies.RequiresElevation)]
     public async Task<IActionResult> Reprovision()
     {
-        var baseUrl = $"{Request.Scheme}://{Request.Host}{Request.PathBase}";
+        var baseUrl = RequestBaseUrl();
+        var instance = JellyPlayPlugin.Instance!;
+        instance.Configuration.Seerr.JellyfinBaseUrl = baseUrl;
+        instance.SaveConfiguration(instance.Configuration);
+
         var ok = await _provisioner.ProvisionAsync(baseUrl);
-        return ok ? JellyPlayResponses.Camel(new { provisioned = true }) : StatusCode(StatusCodes.Status502BadGateway, new { provisioned = false });
+        return ok
+            ? JellyPlayResponses.Camel(new { provisioned = true, baseUrl, baseUrlSource = "request" })
+            : StatusCode(StatusCodes.Status502BadGateway, new { provisioned = false, baseUrl, baseUrlSource = "request" });
     }
+
+    private string RequestBaseUrl()
+        => $"{Request.Scheme}://{Request.Host}{Request.PathBase}".TrimEnd('/');
 }

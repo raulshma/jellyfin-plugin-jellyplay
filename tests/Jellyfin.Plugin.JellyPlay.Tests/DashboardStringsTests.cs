@@ -18,7 +18,15 @@ public class DashboardStringsTests
     [
         "PageTitle", "PageDescription", "SectionDefaults", "DefaultsDescription",
         "DefaultsModeSuggested", "DefaultsModeForced", "SectionBackup", "YamlPageTitle",
-        "MsgSaved", "DefaultsSaved", "DefaultsPushed", "BackupRestored"
+        "MsgSaved", "DefaultsSaved", "DefaultsPushed", "BackupRestored",
+        "SectionCustomRows", "CustomRowsDescription", "CustomRowsEmpty", "CustomRowsAdd",
+        "CustomRowsSave", "CustomRowsSaved", "CustomRowsTitle", "CustomRowsLimit",
+        "CustomRowsRemove", "CustomRowsInvalidTitle", "CustomRowsInvalidLimit",
+        "CustomRowsListIdLetterboxd", "CustomRowsListIdImdb", "CustomRowsListIdMdblist", "CustomRowsListIdTmdb",
+        "SectionAnimeOverrides", "AnimeOverridesDescription", "AnimeOverridesEmpty", "AnimeOverridesAdd",
+        "AnimeOverridesSave", "AnimeOverridesSaved", "AnimeOverridesSeriesId", "AnimeOverridesAniListId",
+        "AnimeOverridesMalId", "AnimeOverridesLabel", "AnimeOverridesRemove",
+        "AnimeOverridesInvalidSeries", "AnimeOverridesInvalidProvider"
     ];
 
     [Fact]

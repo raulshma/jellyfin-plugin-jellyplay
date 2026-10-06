@@ -87,7 +87,7 @@ public sealed class SeerrWebhookProvisioner
         """;
 }
 
-/// <summary>Runs webhook provisioning once at server start.</summary>
+/// <summary>Runs webhook provisioning once at server start — only when a base URL is configured.</summary>
 public sealed class SeerrProvisioningHostedService : IHostedService
 {
     private readonly SeerrWebhookProvisioner _provisioner;
@@ -101,14 +101,24 @@ public sealed class SeerrProvisioningHostedService : IHostedService
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        // Base URL unknown synchronously at startup; provisioning also triggers
-        // on first /seerr/webhookInfo admin call. Attempt with loopback default.
+        var configured = JellyPlayPlugin.Instance?.Configuration.Seerr.JellyfinBaseUrl;
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            // No blind localhost attempts: without an externally reachable base
+            // URL the provisioned webhook would be useless anyway. POST
+            // jellyplay/seerr/reprovision derives and persists the base URL
+            // from the incoming admin request.
+            _logger.LogWarning(
+                "Seerr webhook auto-provision skipped: Seerr:JellyfinBaseUrl is not configured. Set it in the dashboard, or call POST jellyplay/seerr/reprovision once from a reachable address.");
+            return Task.CompletedTask;
+        }
+
         _ = Task.Run(
             async () =>
             {
                 try
                 {
-                    await _provisioner.ProvisionAsync("http://localhost:8096");
+                    await _provisioner.ProvisionAsync(configured);
                 }
                 catch
                 {

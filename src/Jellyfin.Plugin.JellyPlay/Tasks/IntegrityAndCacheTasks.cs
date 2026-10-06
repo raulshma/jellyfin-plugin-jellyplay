@@ -43,6 +43,11 @@ public sealed class SettingsIntegrityTask : IScheduledTask
             _logger.LogInformation("JellyPlay database integrity OK ({Checked}), checkpointed {WalFrames} WAL frames",
                 result.Details, result.WalCheckpointedFrames);
         }
+        else if (result.Repaired)
+        {
+            _logger.LogError("JellyPlay database integrity FAILED ({Details}); the corrupt file was quarantined and a fresh database created. Clients re-sync their settings on next connect.",
+                result.Details);
+        }
         else
         {
             _logger.LogError("JellyPlay database INTEGRITY FAILURE: {Details}", result.Details);

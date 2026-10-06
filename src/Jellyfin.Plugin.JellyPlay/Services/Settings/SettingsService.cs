@@ -45,12 +45,19 @@ public sealed class SettingsService
         return ToSnapshot(userId, profile, _db.GetChangeLogHead(userId), rows);
     }
 
-    public SettingsSnapshotResponse GetChanged(string userId, string profile, long since)
+    public SettingsSnapshotResponse GetChanged(string userId, string profile, long since, string? deviceId)
     {
         var rows = _db.GetChangedSettings(userId, since)
             .Where(row => string.Equals(row.Profile, profile, StringComparison.Ordinal))
             .ToList();
-        return ToSnapshot(userId, profile, _db.GetChangeLogHead(userId), rows);
+        // Delta pulls are recorded (full GET settings reads are not): the
+        // history shows which device observed which change. The recorded
+        // range is (since, head] — exactly what the pull served (head can
+        // only advance between the read and this line, never shrink), so a
+        // zero-key pull still gets its (empty) range.
+        var head = _db.GetChangeLogHead(userId);
+        RecordOperation(userId, deviceId ?? string.Empty, "pull", rows.Count, 0, 0, null, since, head);
+        return ToSnapshot(userId, profile, head, rows);
     }
 
     public SettingsBatchResponse ApplyBatch(string userId, string? profile, string? deviceId, IReadOnlyList<SettingsWriteDto> writes)
@@ -74,6 +81,10 @@ public sealed class SettingsService
             mapped.Add(new SettingWrite(write.Ns, write.Key, write.SchemaVersion, write.UpdatedAt, deviceId, bytes));
         }
 
+        // The push's diff range: change-log head before/after the batch —
+        // (fromSeq, toSeq] is exactly what this batch appended (plus any
+        // concurrent write that landed inside the window).
+        var headBefore = _db.GetChangeLogHead(userId);
         var result = _db.UpsertSettings(userId, profile, mapped, Quotas);
 
         var applied = result.Applied
@@ -96,17 +107,31 @@ public sealed class SettingsService
             _hub.PublishToUser("settings", userId, "settings.changed", payload);
         }
 
+        // Approximate byte size of the batch: the serialized length of the keys that applied.
+        var appliedSet = result.Applied.Select(a => (a.Ns, a.Key)).ToHashSet();
+        var appliedBytes = serialized
+            .Where(pair => appliedSet.Contains((pair.Key.Ns, pair.Key.Key)))
+            .Sum(pair => (long)pair.Value.Length);
+        var head = _db.GetChangeLogHead(userId);
+        RecordOperation(userId, deviceId, "push", result.Applied.Count, result.Rejected.Count, appliedBytes, BuildRejectsJson(result.Rejected), headBefore, head);
+
         return new SettingsBatchResponse
         {
-            Head = _db.GetChangeLogHead(userId),
+            Head = head,
             Applied = applied,
             Rejected = rejected
         };
     }
 
-    public void ResetNamespace(string userId, string? profile, string ns)
+    public void ResetNamespace(string userId, string? profile, string ns, string? deviceId)
     {
-        _db.DeleteNamespace(userId, profile ?? JellyPlayDatabase.BaseProfile, ns);
+        var deleted = _db.DeleteNamespace(userId, profile ?? JellyPlayDatabase.BaseProfile, ns);
+        // Resets get a zero-width range at the head after the delete: the
+        // change log records no deletions, so there is no per-key diff — the
+        // keys endpoint renders these rows as "namespace reset" with an empty
+        // key list.
+        var headAfter = _db.GetChangeLogHead(userId);
+        RecordOperation(userId, deviceId ?? string.Empty, "reset", deleted, 0, 0, null, headAfter, headAfter);
         var payload = JsonSerializer.Serialize(new
         {
             type = "settings.reset",
@@ -117,11 +142,68 @@ public sealed class SettingsService
         _hub.PublishToUser("settings", userId, "settings.reset", payload);
     }
 
+    // ------------------------------------------------------------------
+    // Sync history recording (observability; never fails the operation)
+    // ------------------------------------------------------------------
+
+    /// <summary>RejectsJson is capped at this many entries per recorded operation.</summary>
+    internal const int MaxRecordedRejects = 10;
+
+    private static readonly System.Text.Json.JsonSerializerOptions RejectJsonOptions = new()
+    {
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+    };
+
+    /// <summary>Capped <c>[{ns,key,reason}]</c> JSON for a recorded operation; null when nothing was rejected.</summary>
+    internal static string? BuildRejectsJson(IReadOnlyList<RejectedSetting> rejected)
+    {
+        if (rejected.Count == 0)
+        {
+            return null;
+        }
+
+        return JsonSerializer.Serialize(
+            rejected.Take(MaxRecordedRejects).Select(r => new SyncRejectDto(r.Ns, r.Key, r.Reason)),
+            RejectJsonOptions);
+    }
+
+    /// <summary>
+    /// Appends one sync_history row (with the operation's change-log range:
+    /// push = head before/after the batch, pull = the requested since cursor
+    /// through the served head, reset = a zero-width range at the head after).
+    /// Best-effort by contract: an observability write must never fail (or
+    /// even slow-path-fail) the sync operation it observes, so every exception
+    /// is swallowed with a warning.
+    /// </summary>
+    private void RecordOperation(string userId, string deviceId, string op, int keysApplied, int keysRejected, long bytes, string? rejectsJson, long? fromSeq = null, long? toSeq = null)
+    {
+        try
+        {
+            _db.InsertSyncHistory(
+                userId,
+                deviceId,
+                op,
+                keysApplied,
+                keysRejected,
+                bytes,
+                rejectsJson,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                fromSeq,
+                toSeq);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "JellyPlay sync-history recording failed (user {UserId}, op {Op}) — ignoring", userId, op);
+        }
+    }
+
     /// <summary>
     /// Merges base settings with a device-profile overlay (profile wins) and then
     /// applies tri-state admin defaults: forced overrides everything, suggested
     /// fills keys the user has not set. This is what a client booting on a new
-    /// device asks for.
+    /// device asks for. The response additionally carries the ADDITIVE
+    /// <c>modes</c> map: the tri-state provenance per key after the user-scope
+    /// merge (forced / suggested / unset — see <see cref="SettingsSnapshotResponse.Modes"/>).
     /// </summary>
     public SettingsSnapshotResponse ResolveProfile(string userId, string profile)
     {
@@ -142,9 +224,12 @@ public sealed class SettingsService
         }
 
         var defaults = GetDefaultsMerged(userId);
+        var modes = new Dictionary<string, string>(StringComparer.Ordinal);
+
         foreach (var (ns, key, entry) in defaults.Forced)
         {
             merged[(ns, key)] = DefaultsToRow(userId, profile, ns, key, entry);
+            modes[DefaultModeKey(ns, key)] = "forced";
         }
 
         foreach (var (ns, key, entry) in defaults.Suggested)
@@ -152,11 +237,24 @@ public sealed class SettingsService
             if (!merged.ContainsKey((ns, key)))
             {
                 merged[(ns, key)] = DefaultsToRow(userId, profile, ns, key, entry);
+                modes[DefaultModeKey(ns, key)] = "suggested";
             }
         }
 
-        return ToSnapshot(userId, profile, _db.GetChangeLogHead(userId), merged.Values.ToList());
+        // Every remaining resolved key is user-owned (base or profile overlay):
+        // "unset" — including a suggested default that lost to an existing
+        // user value (the user's value wins, so the provenance is the user's).
+        foreach (var row in merged.Values)
+        {
+            modes.TryAdd(DefaultModeKey(row.Ns, row.Key), "unset");
+        }
+
+        var response = ToSnapshot(userId, profile, _db.GetChangeLogHead(userId), merged.Values.ToList());
+        response.Modes = modes;
+        return response;
     }
+
+    private static string DefaultModeKey(string ns, string key) => $"{ns}/{key}";
 
     public void SetDeviceProfile(string userId, string profile, string? deviceId, IReadOnlyList<SettingsWriteDto> writes)
         => ApplyBatch(userId, profile, deviceId, writes);

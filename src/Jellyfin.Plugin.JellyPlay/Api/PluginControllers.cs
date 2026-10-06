@@ -84,7 +84,9 @@ public class AnimeMarkersController : ControllerBase
     [HttpGet("animemarkers/series")]
     public async Task<IActionResult> GetSeriesMarkers([FromQuery, Required] string seriesId, [FromQuery] string? providerSeriesId)
     {
-        var result = await _markers.GetSeriesMarkers(seriesId, providerSeriesId ?? seriesId);
+        // providerSeriesId (when given) is preferred; otherwise the service
+        // derives the provider ids from the library item.
+        var result = await _markers.GetSeriesMarkers(seriesId, providerSeriesId);
         return result is null ? NotFound() : JellyPlayResponses.Camel(result);
     }
 

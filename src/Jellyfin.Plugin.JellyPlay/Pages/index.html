@@ -105,6 +105,28 @@
                 </div>
 
                 <div class="verticalSection" style="margin-top:2em">
+                    <h3 class="sectionTitle" data-i18n="SectionCustomRows">Custom rows</h3>
+                    <p class="sectionDescription" data-i18n="CustomRowsDescription">Home screen rows resolved from external lists. Each row needs a title (shown to clients), a source, an item limit, and the source-specific list identifier (letterboxd username/list slug, IMDb chart or ls-list id, MDBList list id, TMDB list id).</p>
+                    <div id="jellyplayRowsList" class="paperList"></div>
+                    <p class="sectionDescription" id="jellyplayRowsEmpty" data-i18n="CustomRowsEmpty" style="display:none">No custom rows configured.</p>
+                    <div style="margin-top:0.75em">
+                        <button is="emby-button" type="button" id="jellyplayRowsAdd" class="raised emby-button"><span data-i18n="CustomRowsAdd">Add row</span></button>
+                        <button is="emby-button" type="button" id="jellyplayRowsSave" class="raised button-submit emby-button"><span data-i18n="CustomRowsSave">Save rows</span></button>
+                    </div>
+                </div>
+
+                <div class="verticalSection" style="margin-top:2em">
+                    <h3 class="sectionTitle" data-i18n="SectionAnimeOverrides">Anime overrides</h3>
+                    <p class="sectionDescription" data-i18n="AnimeOverridesDescription">Map a Jellyfin series to its AniList / MyAnimeList ids, overriding the automatic provider-id derivation for anime markers. Each row needs the series id plus at least one provider id; the optional label is a note for other admins.</p>
+                    <div id="jellyplayAnimeOverridesList" class="paperList"></div>
+                    <p class="sectionDescription" id="jellyplayAnimeOverridesEmpty" data-i18n="AnimeOverridesEmpty" style="display:none">No series overrides configured.</p>
+                    <div style="margin-top:0.75em">
+                        <button is="emby-button" type="button" id="jellyplayAnimeOverridesAdd" class="raised emby-button"><span data-i18n="AnimeOverridesAdd">Add override</span></button>
+                        <button is="emby-button" type="button" id="jellyplayAnimeOverridesSave" class="raised button-submit emby-button"><span data-i18n="AnimeOverridesSave">Save overrides</span></button>
+                    </div>
+                </div>
+
+                <div class="verticalSection" style="margin-top:2em">
                     <h3 class="sectionTitle" data-i18n="SectionBackup">Backup &amp; restore</h3>
                     <button is="emby-button" type="button" id="jellyplayBackupDownload" class="raised emby-button"><span data-i18n="BackupDownload">Download backup</span></button>
                     <button is="emby-button" type="button" id="jellyplayBackupRestore" class="raised emby-button"><span data-i18n="BackupRestore">Restore backup…</span></button>

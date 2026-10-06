@@ -147,7 +147,7 @@ public sealed class ConfigBackupService
         var backup = new BackupPayload
         {
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            PluginVersion = typeof(JellyPlayPlugin).Assembly.GetName().Version?.ToString() ?? "1.0.0",
+            PluginVersion = typeof(JellyPlayPlugin).Assembly.GetName().Version?.ToString() ?? "0.11.3",
             AdminDefaults = _db.GetAllAdminDefaults().ToList(),
             Messages = _db.GetMessages().ToList()
         };

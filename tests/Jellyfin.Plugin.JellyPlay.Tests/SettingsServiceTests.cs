@@ -106,10 +106,109 @@ public sealed class SettingsServiceTests : IDisposable
     {
         _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1), Dto("ui", "b", 1), Dto("player", "c", 1) });
 
-        _service.ResetNamespace("u1", "", "ui");
+        _service.ResetNamespace("u1", "", "ui", "d1");
 
         var all = _service.GetAll("u1", "");
         var remaining = Assert.Single(all.Settings);
         Assert.Equal("player", remaining.Ns);
+    }
+
+    // ------------------------------------------------------------------
+    // Resolved-settings modes map (additive field, enables forced-lock UI)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void ResolveProfile_ModesMap_MixesForcedSuggestedUnset()
+    {
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "theme", 1, "\"user\""), Dto("ui", "locked", 1, "\"user\"") });
+        _service.SetAdminDefaults(
+            SettingsService.GlobalDefaultsScope,
+            JsonDocument.Parse(
+                "{\"ui/locked\":{\"mode\":\"forced\",\"value\":\"admin\"},\"player/skip\":{\"mode\":\"suggested\",\"value\":15}}")
+                .RootElement);
+
+        var resolved = _service.ResolveProfile("u1", "");
+
+        // forced replaces the user value; suggested fills the unset key; the
+        // plain user key (and the user's locked value before the override)
+        // reads as unset.
+        Assert.Equal("admin", resolved.Settings.Single(entry => entry.Key == "locked").Value.GetString());
+        Assert.Equal(
+            new Dictionary<string, string>
+            {
+                ["ui/locked"] = "forced",
+                ["player/skip"] = "suggested",
+                ["ui/theme"] = "unset"
+            },
+            resolved.Modes);
+    }
+
+    [Fact]
+    public void ResolveProfile_SuggestedLosingToUserValue_ModeStaysUnset()
+    {
+        // User scope wins: the suggested default does not apply, so the
+        // resolved value's provenance is the user's — "unset", not "suggested".
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("player", "skip", 1, "30") });
+        _service.SetAdminDefaults(
+            SettingsService.GlobalDefaultsScope,
+            JsonDocument.Parse("{\"player/skip\":{\"mode\":\"suggested\",\"value\":15}}").RootElement);
+
+        var resolved = _service.ResolveProfile("u1", "");
+
+        Assert.Equal(30, resolved.Settings.Single(entry => entry.Key == "skip").Value.GetInt32());
+        Assert.Equal("unset", resolved.Modes!["player/skip"]);
+    }
+
+    [Fact]
+    public void ResolveProfile_UserScopeDefaultWins_ModeComesFromUserScope()
+    {
+        // Global says suggested, the user-scope default says forced: the user
+        // scope wins for BOTH the mode and the semantics.
+        _service.SetAdminDefaults(
+            SettingsService.GlobalDefaultsScope,
+            JsonDocument.Parse("{\"ui/volume\":{\"mode\":\"suggested\",\"value\":50}}").RootElement);
+        _service.SetAdminDefaults(
+            "u1",
+            JsonDocument.Parse("{\"ui/volume\":{\"mode\":\"forced\",\"value\":80}}").RootElement);
+
+        var resolved = _service.ResolveProfile("u1", "");
+
+        Assert.Equal(80, resolved.Settings.Single(entry => entry.Key == "volume").Value.GetInt32());
+        Assert.Equal("forced", resolved.Modes!["ui/volume"]);
+
+        // And the reverse: a user-scope suggested downgrade loses to nothing —
+        // it replaces the global forced entry wholesale.
+        _service.SetAdminDefaults(
+            "u2",
+            JsonDocument.Parse("{\"ui/volume\":{\"mode\":\"suggested\",\"value\":40}}").RootElement);
+        _service.SetAdminDefaults(
+            SettingsService.GlobalDefaultsScope,
+            JsonDocument.Parse("{\"ui/volume\":{\"mode\":\"forced\",\"value\":90}}").RootElement);
+
+        var u2 = _service.ResolveProfile("u2", "");
+        Assert.Equal(40, u2.Settings.Single(entry => entry.Key == "volume").Value.GetInt32());
+        Assert.Equal("suggested", u2.Modes!["ui/volume"]);
+    }
+
+    [Fact]
+    public void ResolveProfile_ProfileOverlayKey_ModeIsUnset()
+    {
+        _service.ApplyBatch("u1", "tv", "d1", new[] { Dto("ui", "layout", 1, "\"tv\"") });
+
+        var resolved = _service.ResolveProfile("u1", "tv");
+
+        Assert.Equal("unset", resolved.Modes!["ui/layout"]);
+    }
+
+    [Fact]
+    public void PlainSnapshots_CarryNoModes()
+    {
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "theme", 1) });
+        _service.SetAdminDefaults(
+            SettingsService.GlobalDefaultsScope,
+            JsonDocument.Parse("{\"ui/locked\":{\"mode\":\"forced\",\"value\":\"x\"}}").RootElement);
+
+        Assert.Null(_service.GetAll("u1", "").Modes);
+        Assert.Null(_service.GetChanged("u1", "", 0, "d1").Modes);
     }
 }

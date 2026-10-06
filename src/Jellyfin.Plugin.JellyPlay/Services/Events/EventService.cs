@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyPlay.Api;
 using Jellyfin.Plugin.JellyPlay.Configuration;
 using Jellyfin.Plugin.JellyPlay.Realtime;
+using Jellyfin.Plugin.JellyPlay.Services.Push;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyPlay.Services.Events;
@@ -13,19 +14,30 @@ namespace Jellyfin.Plugin.JellyPlay.Services.Events;
 /// <summary>
 /// Publishes typed events onto the "events" SSE stream: new media, admin
 /// broadcasts, session/playback/lockout notices. Deduplicates re-fired events
-/// for the same logical key within the configured threshold.
+/// for the same logical key within the configured threshold. When push is
+/// enabled, new-media and broadcast also fan out to push-registered devices
+/// (same audiences as SSE; fire-and-forget, never blocking the publish).
 /// </summary>
 public sealed class EventService
 {
     private readonly SseHub _hub;
     private readonly Func<EventsConfig> _config;
+    private readonly Func<IReadOnlyList<string>> _adminUserIds;
+    private readonly PushDispatcher? _push;
     private readonly ILogger<EventService> _logger;
     private readonly ConcurrentDictionary<string, long> _recentEventKeys = new();
 
-    public EventService(SseHub hub, Func<EventsConfig> config, ILogger<EventService> logger)
+    public EventService(
+        SseHub hub,
+        Func<EventsConfig> config,
+        Func<IReadOnlyList<string>> adminUserIds,
+        ILogger<EventService> logger,
+        PushDispatcher? push = null)
     {
         _hub = hub;
         _config = config;
+        _adminUserIds = adminUserIds;
+        _push = push;
         _logger = logger;
     }
 
@@ -51,21 +63,21 @@ public sealed class EventService
             return 0;
         }
 
+        var title = group.Episodes.Count == 1
+            ? $"{group.SeriesName} — {first.Name}"
+            : $"{group.SeriesName} — {group.Episodes.Count} new episodes";
         var payload = JsonSerializer.Serialize(new NewMediaEventPayload(
             "new-media",
             first.ItemId.ToString(),
             group.SeriesId.ToString(),
             group.SeasonIndex,
-            group.Episodes.Count == 1
-                ? $"{group.SeriesName} — {first.Name}"
-                : $"{group.SeriesName} — {group.Episodes.Count} new episodes",
+            title,
             group.Episodes.Count,
             group.LibraryId,
             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
 
-        return config.NewMediaAudience == "admins"
-            ? _hub.PublishAll("events", "new-media", payload)
-            : _hub.PublishAll("events", "new-media", payload);
+        return DeliverNewMedia(config, payload, new PushMessage(
+            PushKinds.NewMedia, title, "New media added", first.ItemId.ToString()));
     }
 
     public int PublishNewMovie(Guid itemId, string title, string? libraryId)
@@ -91,13 +103,14 @@ public sealed class EventService
         var payload = JsonSerializer.Serialize(new NewMediaEventPayload(
             "new-media", itemId.ToString(), null, null, title, 1, libraryId,
             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
-        return _hub.PublishAll("events", "new-media", payload);
+        return DeliverNewMedia(_config(), payload, new PushMessage(PushKinds.NewMedia, title, "New media added"));
     }
 
     public int PublishBroadcast(string title, string body, string? url)
     {
         var payload = JsonSerializer.Serialize(new BroadcastEventPayload(
             "broadcast", title, body, url, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+        _push?.DispatchToUsers(new PushMessage(PushKinds.Broadcast, title, body), null);
         return _hub.PublishAll("events", "broadcast", payload);
     }
 
@@ -133,6 +146,31 @@ public sealed class EventService
         var payload = JsonSerializer.Serialize(new SimpleEventPayload("user-locked-out", username, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
         return _hub.PublishAll("events", "user-locked-out", payload);
     }
+
+    /// <summary>
+    /// Audience gate for new-media events: "admins" delivers only to admin
+    /// subscribers via PublishToUsers; anything else ("all") broadcasts. Push
+    /// fans out to the SAME resolved target set (admins' devices, or every
+    /// user's devices when null) — one audience resolution drives both.
+    /// </summary>
+    private int DeliverNewMedia(EventsConfig config, string payload, PushMessage push)
+    {
+        var targets = ResolveAudienceTargets(config.NewMediaAudience, _adminUserIds());
+        _push?.DispatchToUsers(push, targets);
+        return targets is null
+            ? _hub.PublishAll("events", "new-media", payload)
+            : _hub.PublishToUsers("events", targets, "new-media", payload);
+    }
+
+    /// <summary>
+    /// Resolves the new-media audience targets: null = broadcast to every
+    /// subscriber ("all"); otherwise the admin user ids ("admins").
+    /// Pure so the audience resolution is unit-testable without the host.
+    /// </summary>
+    internal static IReadOnlySet<string>? ResolveAudienceTargets(string? audience, IReadOnlyList<string> adminUserIds)
+        => string.Equals(audience, "admins", StringComparison.OrdinalIgnoreCase)
+            ? new HashSet<string>(adminUserIds, StringComparer.Ordinal)
+            : null;
 
     private bool ShouldEmit(string key, int thresholdSeconds)
     {

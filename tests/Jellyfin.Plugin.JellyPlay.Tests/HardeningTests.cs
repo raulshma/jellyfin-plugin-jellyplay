@@ -1,0 +1,498 @@
+using System;
+using System.IO;
+using System.Net;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyPlay.Realtime;
+using Jellyfin.Plugin.JellyPlay.Services.Admin;
+using Jellyfin.Plugin.JellyPlay.Services.Cache;
+using Jellyfin.Plugin.JellyPlay.Services.Seerr;
+using Jellyfin.Plugin.JellyPlay.Storage;
+using Jellyfin.Plugin.JellyPlay.Storage.Models;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging.Abstractions;
+using Xunit;
+
+namespace Jellyfin.Plugin.JellyPlay.Tests;
+
+/// <summary>Hardening: SSE keepalive frames keep idle proxies from reaping streams.</summary>
+public sealed class SseKeepaliveTests
+{
+    private static (DefaultHttpContext Context, MemoryStream Body) StreamContext()
+    {
+        var context = new DefaultHttpContext();
+        var body = new MemoryStream();
+        context.Response.Body = body;
+        return (context, body);
+    }
+
+    private static string BodyText(MemoryStream body) => Encoding.UTF8.GetString(body.ToArray());
+
+    [Fact]
+    public async Task IdleWriter_EmitsKeepaliveFrame_AfterInterval()
+    {
+        var hub = new SseHub(NullLogger<SseHub>.Instance);
+        var id = hub.Subscribe("alice", "events");
+        var (context, body) = StreamContext();
+        using var cts = new CancellationTokenSource(400);
+
+        await SseStreamWriter.WriteAsync(context, hub, id, TimeSpan.FromMilliseconds(100), cts.Token);
+
+        var text = BodyText(body);
+        Assert.Contains(": keepalive", text);
+        Assert.DoesNotContain("data:", text); // no events were published
+        Assert.False(hub.IsSubscribed(id)); // writer unsubscribed on exit
+    }
+
+    [Fact]
+    public async Task Keepalive_WaitsForQuiet_EventsStreamFirst()
+    {
+        var hub = new SseHub(NullLogger<SseHub>.Instance);
+        var id = hub.Subscribe("alice", "events");
+        hub.PublishAll("events", "new-media", "{\"x\":1}");
+        var (context, body) = StreamContext();
+        using var cts = new CancellationTokenSource(450);
+
+        await SseStreamWriter.WriteAsync(context, hub, id, TimeSpan.FromMilliseconds(100), cts.Token);
+
+        var text = BodyText(body);
+        Assert.Contains("event: new-media", text);
+        Assert.Contains("data: {\"x\":1}", text);
+        Assert.Contains("retry: ", text);
+        var keepaliveAt = text.IndexOf(": keepalive", StringComparison.Ordinal);
+        var dataAt = text.IndexOf("data:", StringComparison.Ordinal);
+        Assert.True(keepaliveAt > dataAt, "keepalive must come after the event, not before");
+        // Quiet interval is 100ms of a 450ms budget: more than one keepalive proves the loop continues.
+        Assert.True(text.Split(": keepalive", StringSplitOptions.None).Length - 1 >= 2);
+    }
+
+    [Fact]
+    public async Task Unsubscribe_TerminatesWriter_Promptly()
+    {
+        var hub = new SseHub(NullLogger<SseHub>.Instance);
+        var id = hub.Subscribe("alice", "events");
+        var (context, _) = StreamContext();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var writer = SseStreamWriter.WriteAsync(context, hub, id, TimeSpan.FromMilliseconds(100), cts.Token);
+        hub.Unsubscribe(id);
+        await writer.WaitAsync(TimeSpan.FromSeconds(2)); // would hang if the loop spun on a closed channel
+
+        Assert.Equal(0, hub.SubscriberCount);
+    }
+}
+
+/// <summary>Hardening: stepwise schema migrations via PRAGMA user_version, plus integrity quarantine.</summary>
+public sealed class DatabaseMigrationTests : IDisposable
+{
+    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-migration-" + Guid.NewGuid().ToString("N"));
+
+    public DatabaseMigrationTests()
+    {
+        Directory.CreateDirectory(_tempDir);
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            Directory.Delete(_tempDir, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+    }
+
+    private string DbPath => Path.Combine(_tempDir, "plugins", "JellyPlay", "jellyplay_plugin.db");
+
+    private static bool IndexExists(string dbPath, string indexName)
+    {
+        using var connection = new SqliteConnection($"Filename={dbPath}");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"select count(*) from sqlite_master where type = 'index' and name = '{indexName}'";
+        return Convert.ToInt64(command.ExecuteScalar()!) > 0;
+    }
+
+    private static int RawUserVersion(string dbPath)
+    {
+        using var connection = new SqliteConnection($"Filename={dbPath}");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "pragma user_version";
+        return Convert.ToInt32(command.ExecuteScalar()!);
+    }
+
+    private static SettingWrite Write(string ns, string key, long updatedAt)
+        => new(ns, key, 1, updatedAt, "d1", Encoding.UTF8.GetBytes("\"v\""));
+
+    [Fact]
+    public void FreshDatabase_IsCreatedAtCurrentVersion_WithMigratedIndexes()
+    {
+        using var db = new JellyPlayDatabase(_tempDir);
+
+        Assert.Equal(JellyPlayDatabase.CurrentSchemaVersion, db.UserVersion);
+        Assert.Equal(JellyPlayDatabase.CurrentSchemaVersion, RawUserVersion(DbPath));
+        Assert.True(IndexExists(DbPath, "idx_change_log_updated"));
+        Assert.True(db.CheckIntegrity().IntegrityOk);
+    }
+
+    [Fact]
+    public void V1Database_MigratesToCurrent_PreservesData_AndIsIdempotent()
+    {
+        // Build at the current version, write data, then roll the file back to a v1 state:
+        // v1 schema without the migrated index, user_version stamped 1.
+        string storedValue;
+        using (var first = new JellyPlayDatabase(_tempDir))
+        {
+            first.UpsertSettings("user1", JellyPlayDatabase.BaseProfile, new[] { Write("ui", "theme", 100) }, new JellyPlayDatabase.Quotas(1024, 4096, 10));
+            storedValue = Encoding.UTF8.GetString(Assert.Single(first.GetSettings("user1", "")).Value);
+        }
+
+        using (var raw = new SqliteConnection($"Filename={DbPath}"))
+        {
+            raw.Open();
+            using var downgrade = raw.CreateCommand();
+            downgrade.CommandText =
+                "drop index if exists idx_change_log_updated; " +
+                "alter table devices drop column PushKind; alter table devices drop column PushEndpoint; " +
+                "alter table devices drop column CreatedAt; " +
+                "alter table sync_history drop column FromSeq; alter table sync_history drop column ToSeq; " +
+                "pragma user_version = 1;";
+            downgrade.ExecuteNonQuery();
+        }
+
+        using (var second = new JellyPlayDatabase(_tempDir))
+        {
+            Assert.Equal(JellyPlayDatabase.CurrentSchemaVersion, second.UserVersion);
+            Assert.True(IndexExists(DbPath, "idx_change_log_updated"));
+            Assert.Equal(storedValue, Encoding.UTF8.GetString(Assert.Single(second.GetSettings("user1", "")).Value));
+        }
+
+        // Re-open: nothing left to migrate, version and index stable.
+        using (var third = new JellyPlayDatabase(_tempDir))
+        {
+            Assert.Equal(JellyPlayDatabase.CurrentSchemaVersion, third.UserVersion);
+            Assert.True(IndexExists(DbPath, "idx_change_log_updated"));
+            Assert.True(third.CheckIntegrity().IntegrityOk);
+        }
+    }
+
+    [Fact]
+    public void CorruptDatabase_IsQuarantined_AndRecreatedFresh()
+    {
+        using (var first = new JellyPlayDatabase(_tempDir))
+        {
+            first.UpsertSettings("user1", JellyPlayDatabase.BaseProfile, new[] { Write("ui", "a", 1), Write("ui", "b", 2) }, new JellyPlayDatabase.Quotas(1024, 4096, 10));
+            first.CheckIntegrity(); // runs wal_checkpoint(TRUNCATE): data lands in the main file
+        }
+
+        // Corrupt data pages (never the header or sqlite_master on page 1) so the
+        // schema DDL still loads but integrity_check fails.
+        using (var stream = new FileStream(DbPath, FileMode.Open, FileAccess.ReadWrite))
+        {
+            var garbage = new byte[256];
+            Array.Fill(garbage, (byte)0xFF);
+            foreach (var offset in new[] { 4096, 6144, 8192, 10240 })
+            {
+                if (offset < stream.Length)
+                {
+                    stream.Seek(offset, SeekOrigin.Begin);
+                    stream.Write(garbage);
+                }
+            }
+        }
+
+        using var repaired = new JellyPlayDatabase(_tempDir);
+        var result = repaired.CheckIntegrity();
+
+        Assert.False(result.IntegrityOk);
+        Assert.True(result.Repaired);
+        Assert.Equal(JellyPlayDatabase.CurrentSchemaVersion, repaired.UserVersion); // fresh database, fully migrated
+        Assert.True(IndexExists(DbPath, "idx_change_log_updated"));
+
+        // Quarantined copy exists alongside, and the fresh store works.
+        Assert.NotEmpty(Directory.GetFiles(Path.GetDirectoryName(DbPath)!, "*.corrupt-*"));
+        repaired.UpsertSettings("user2", JellyPlayDatabase.BaseProfile, new[] { Write("ui", "x", 1) }, new JellyPlayDatabase.Quotas(1024, 4096, 10));
+        Assert.Single(repaired.GetSettings("user2", ""));
+    }
+}
+
+/// <summary>Hardening: the file cache is size-capped with oldest-first eviction.</summary>
+public sealed class FileCacheSweepTests : IDisposable
+{
+    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-cache-" + Guid.NewGuid().ToString("N"));
+    private readonly FileCacheStore _store;
+
+    public FileCacheSweepTests()
+    {
+        Directory.CreateDirectory(_tempDir);
+        _store = new FileCacheStore(NullLogger<FileCacheStore>.Instance, _tempDir);
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            Directory.Delete(_tempDir, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+    }
+
+    private string Entry(string name, int bytes, DateTimeOffset written)
+    {
+        var path = Path.Combine(_tempDir, name);
+        File.WriteAllText(path, new string('a', bytes));
+        File.SetLastWriteTimeUtc(path, written.UtcDateTime);
+        return path;
+    }
+
+    [Fact]
+    public void Sweep_EvictsOldestFirst_UntilUnderCap()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var oldest = Entry("a.json", 100, now.AddMinutes(-40));
+        var older = Entry("b.json", 100, now.AddMinutes(-30));
+        var old = Entry("c.json", 100, now.AddMinutes(-20));
+        var kept = Entry("d.json", 100, now.AddMinutes(-10));
+
+        var result = _store.Sweep(maxTotalBytes: 150, maxEntryAge: TimeSpan.FromHours(1));
+
+        Assert.Equal(3, result.DeletedFiles);
+        Assert.Equal(300, result.BytesReclaimed);
+        Assert.False(File.Exists(oldest));
+        Assert.False(File.Exists(older));
+        Assert.False(File.Exists(old));
+        Assert.True(File.Exists(kept));
+    }
+
+    [Fact]
+    public void Sweep_PurgesExpiredEntries_EvenUnderCap()
+    {
+        var expired = Entry("stale.json", 50, DateTimeOffset.UtcNow.AddDays(-40));
+        var fresh = Entry("fresh.json", 50, DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        var result = _store.Sweep(maxTotalBytes: 1024 * 1024, maxEntryAge: TimeSpan.FromDays(30));
+
+        Assert.Equal(1, result.DeletedFiles);
+        Assert.False(File.Exists(expired));
+        Assert.True(File.Exists(fresh));
+    }
+
+    [Fact]
+    public void Sweep_UnderCapWithNothingExpired_DeletesNothing()
+    {
+        Entry("a.json", 10, DateTimeOffset.UtcNow.AddMinutes(-1));
+        Entry("b.json", 10, DateTimeOffset.UtcNow.AddMinutes(-2));
+
+        var result = _store.Sweep(maxTotalBytes: 1024 * 1024, maxEntryAge: TimeSpan.FromDays(30));
+
+        Assert.Equal(0, result.DeletedFiles);
+        Assert.Equal(0, result.BytesReclaimed);
+        Assert.Equal(2, Directory.GetFiles(_tempDir, "*.json").Length);
+    }
+
+    [Fact]
+    public void Set_ReadsBack_AndRespectsValue()
+    {
+        _store.Set("tmdb:123", new[] { "one", "two" });
+        var read = _store.Get<string[]>("tmdb:123", TimeSpan.FromMinutes(5));
+        Assert.Equal(new[] { "one", "two" }, read);
+        Assert.NotNull(_store.Get<string[]>("tmdb:123", TimeSpan.FromHours(24)));
+        Assert.Null(_store.Get<string[]>("tmdb:123", TimeSpan.Zero)); // expired = miss
+    }
+}
+
+/// <summary>Hardening: webhook secret comparison and rate-limit client identity.</summary>
+public sealed class WebhookSecurityTests
+{
+    [Theory]
+    [InlineData("s3cret", "s3cret", true)]
+    [InlineData("s3cret", "other", false)]
+    [InlineData("s3cret", "s3cer", false)]   // length mismatch must still be false
+    [InlineData("s3cret", "s3crett", false)] // presented longer
+    [InlineData("", "", true)]
+    [InlineData("", "x", false)]
+    public void SecretMatches_MatchesExactly(string? configured, string? presented, bool expected)
+    {
+        Assert.Equal(expected, WebhookSecurity.SecretMatches(configured, presented));
+    }
+
+    [Fact]
+    public void SecretMatches_HandlesNulls()
+    {
+        Assert.True(WebhookSecurity.SecretMatches(null, null));
+        Assert.False(WebhookSecurity.SecretMatches("real-secret", null));
+        Assert.False(WebhookSecurity.SecretMatches(null, "guess"));
+    }
+
+    private static HttpContext ContextWith(string? remoteIp, string? forwardedFor)
+    {
+        var context = new DefaultHttpContext();
+        if (remoteIp is not null)
+        {
+            context.Connection.RemoteIpAddress = IPAddress.Parse(remoteIp);
+        }
+
+        if (forwardedFor is not null)
+        {
+            context.Request.Headers["X-Forwarded-For"] = forwardedFor;
+        }
+
+        return context;
+    }
+
+    [Fact]
+    public void ClientIpKey_UsesRemoteAddress_ByDefault_EvenWhenForwardedHeaderPresent()
+    {
+        var context = ContextWith("203.0.113.7", "198.51.100.9, 10.0.0.1");
+        Assert.Equal("ip:203.0.113.7", WebhookSecurity.ClientIpKey(context, trustProxyHeaders: false));
+    }
+
+    [Fact]
+    public void ClientIpKey_TrustsForwardedFirstHop_OnlyWhenFlagSet()
+    {
+        var context = ContextWith("203.0.113.7", "198.51.100.9:5678, 10.0.0.1");
+        Assert.Equal("xff:198.51.100.9", WebhookSecurity.ClientIpKey(context, trustProxyHeaders: true));
+
+        var noPort = ContextWith("203.0.113.7", "198.51.100.9, 10.0.0.1");
+        Assert.Equal("xff:198.51.100.9", WebhookSecurity.ClientIpKey(noPort, trustProxyHeaders: true));
+    }
+
+    [Fact]
+    public void ClientIpKey_FallsBackToUnknown_WhenNoRemoteAddress()
+    {
+        Assert.Equal("ip:unknown", WebhookSecurity.ClientIpKey(ContextWith(null, null), trustProxyHeaders: false));
+    }
+
+    [Fact]
+    public void WebhookRateLimiter_AllowsThirtyPerMinutePerClient()
+    {
+        var limiter = new WebhookRateLimiter();
+        for (var hit = 0; hit < 30; hit++)
+        {
+            Assert.True(limiter.Allow("ip:203.0.113.7", 1_000 + hit));
+        }
+
+        Assert.False(limiter.Allow("ip:203.0.113.7", 1_031));
+        Assert.True(limiter.Allow("ip:198.51.100.9", 1_032)); // other clients unaffected
+        Assert.True(limiter.Allow("ip:203.0.113.7", 61_001)); // next window recovers
+    }
+}
+
+/// <summary>Hardening: Seerr cookies are AES-GCM encrypted at rest with a plugin-held key.</summary>
+public sealed class SecretBoxTests : IDisposable
+{
+    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-secretbox-" + Guid.NewGuid().ToString("N"));
+
+    public SecretBoxTests()
+    {
+        Directory.CreateDirectory(_tempDir);
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            Directory.Delete(_tempDir, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+    }
+
+    private static SecretBox Box() => new(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+
+    private const string CookieJson = """
+        [{"Name":"connect.sid","Value":"s%3Aabc.def"}]
+        """;
+
+    [Fact]
+    public void RoundTrip_ProtectAndUnprotect()
+    {
+        var box = Box();
+        var payload = box.Protect(CookieJson);
+
+        Assert.NotNull(payload);
+        Assert.True(SecretBox.IsEncryptedPayload(payload));
+        Assert.Equal(SecretBox.PayloadVersion, payload[0]);
+        Assert.Equal(CookieJson, box.TryUnprotect(payload));
+    }
+
+    [Fact]
+    public void Ciphertext_DoesNotContainPlaintext()
+    {
+        var payload = Box().Protect(CookieJson)!;
+        var needle = Encoding.UTF8.GetBytes("connect.sid");
+        Assert.Equal(-1, payload.AsSpan().IndexOf(needle));
+    }
+
+    [Fact]
+    public void LegacyPlaintext_IsNotMarkedEncrypted_AndIsRefusedByTheBox()
+    {
+        var legacy = Encoding.UTF8.GetBytes(CookieJson);
+        Assert.False(SecretBox.IsEncryptedPayload(legacy));
+        Assert.Null(Box().TryUnprotect(legacy)); // decryption never "succeeds" on plaintext
+    }
+
+    [Fact]
+    public void WrongKey_FailsToDecrypt()
+    {
+        var sealedPayload = Box().Protect(CookieJson);
+        Assert.Null(Box().TryUnprotect(sealedPayload));
+    }
+
+    [Fact]
+    public void TamperedPayload_FailsToDecrypt()
+    {
+        var box = Box();
+        var payload = box.Protect(CookieJson);
+        payload![^2] ^= 0xFF; // flip a tag byte
+
+        Assert.Null(box.TryUnprotect(payload));
+    }
+
+    [Fact]
+    public void BoxWithoutKey_IsInert()
+    {
+        var box = new SecretBox(null);
+        Assert.False(box.IsAvailable);
+        Assert.Null(box.Protect(CookieJson));
+        Assert.Null(box.TryUnprotect(Box().Protect(CookieJson)));
+    }
+
+    [Fact]
+    public void KeyTooShort_IsRejected()
+    {
+        Assert.Throws<ArgumentException>(() => new SecretBox(new byte[16]));
+    }
+
+    [Fact]
+    public void LoadOrCreate_PersistsKey_AcrossLoads()
+    {
+        var first = SecretBox.LoadOrCreate(_tempDir);
+        Assert.True(first.IsAvailable);
+        Assert.True(File.Exists(Path.Combine(_tempDir, SecretBox.KeyFileName)));
+
+        var payload = first.Protect(CookieJson);
+
+        var second = SecretBox.LoadOrCreate(_tempDir);
+        Assert.True(second.IsAvailable);
+        Assert.Equal(CookieJson, second.TryUnprotect(payload));
+    }
+
+    [Fact]
+    public void LoadOrCreate_WithUnusableDirectory_YieldsInertBox()
+    {
+        var fileAsDir = Path.Combine(_tempDir, "blocker");
+        File.WriteAllText(fileAsDir, "not a directory");
+
+        var box = SecretBox.LoadOrCreate(Path.Combine(fileAsDir, "sub"), NullLogger.Instance);
+        Assert.False(box.IsAvailable);
+        Assert.Null(box.Protect(CookieJson));
+    }
+}

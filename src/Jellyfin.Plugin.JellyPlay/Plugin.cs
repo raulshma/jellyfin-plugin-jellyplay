@@ -37,6 +37,27 @@ public class JellyPlayPlugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
     public static JellyPlayPlugin? Instance { get; private set; }
 
+    /// <summary>
+    /// Both config write paths funnel through here — the dashboard form via the
+    /// host's POST /Plugins/{id}/Configuration and the YAML editor via
+    /// POST jellyplay/config/yaml — so the dashboard's "auto-generate if empty"
+    /// promise for the Seerr webhook secret is enforced in one place.
+    /// </summary>
+    public override void UpdateConfiguration(BasePluginConfiguration configuration)
+    {
+        if (configuration is PluginConfiguration config
+            && string.IsNullOrWhiteSpace(config.Seerr.WebhookSecret))
+        {
+            config.Seerr.WebhookSecret = NormalizeWebhookSecret(null);
+        }
+
+        base.UpdateConfiguration(configuration);
+    }
+
+    /// <summary>Pure webhook-secret normalizer: keeps a real value, generates otherwise (unit-tested).</summary>
+    internal static string NormalizeWebhookSecret(string? candidate)
+        => string.IsNullOrWhiteSpace(candidate) ? Guid.NewGuid().ToString("N") : candidate;
+
     /// <inheritdoc />
     public IEnumerable<PluginPageInfo> GetPages()
     {

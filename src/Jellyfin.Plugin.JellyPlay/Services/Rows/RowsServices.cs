@@ -28,6 +28,7 @@ public sealed partial class CustomRowsService
     private readonly IHttpClientFactory _httpFactory;
     private readonly FileCacheStore _cache;
     private readonly ILibraryManager _libraryManager;
+    private readonly CircuitBreaker _breaker = new();
     private readonly ILogger<CustomRowsService> _logger;
 
     public CustomRowsService(IHttpClientFactory httpFactory, FileCacheStore cache, ILibraryManager libraryManager, ILogger<CustomRowsService> logger)
@@ -45,6 +46,7 @@ public sealed partial class CustomRowsService
             "letterboxd" => await FetchLetterboxdAsync(row.ListId),
             "imdb" => await FetchImdbListAsync(row.ListId),
             "mdblist" => await FetchMdbListAsync(row.ListId),
+            "tmdb" => await FetchTmdbListAsync(row.ListId),
             _ => null
         };
 
@@ -71,6 +73,13 @@ public sealed partial class CustomRowsService
             return cached;
         }
 
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (_breaker.IsOpen(now))
+        {
+            _logger.LogDebug("Letterboxd circuit open; skipping {List}", listSlug);
+            return null;
+        }
+
         try
         {
             var client = _httpFactory.CreateClient("JellyPlayHttpClient");
@@ -79,10 +88,12 @@ public sealed partial class CustomRowsService
             var html = await (await client.SendAsync(request)).Content.ReadAsStringAsync();
             var items = ParseLetterboxd(html);
             _cache.Set(cacheKey, items);
+            _breaker.RecordSuccess(now);
             return items;
         }
         catch (Exception ex)
         {
+            _breaker.RecordFailure(now);
             _logger.LogWarning(ex, "Letterboxd list fetch failed: {List}", listSlug);
             return null;
         }
@@ -122,6 +133,13 @@ public sealed partial class CustomRowsService
             return cached;
         }
 
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (_breaker.IsOpen(now))
+        {
+            _logger.LogDebug("IMDb list circuit open; skipping {List}", listId);
+            return null;
+        }
+
         try
         {
             var client = _httpFactory.CreateClient("JellyPlayHttpClient");
@@ -130,10 +148,12 @@ public sealed partial class CustomRowsService
             var html = await (await client.SendAsync(request)).Content.ReadAsStringAsync();
             var items = ParseImdbList(html);
             _cache.Set(cacheKey, items);
+            _breaker.RecordSuccess(now);
             return items;
         }
         catch (Exception ex)
         {
+            _breaker.RecordFailure(now);
             _logger.LogWarning(ex, "IMDb list fetch failed: {List}", listId);
             return null;
         }
@@ -181,6 +201,13 @@ public sealed partial class CustomRowsService
             return cached;
         }
 
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (_breaker.IsOpen(now))
+        {
+            _logger.LogDebug("MDBList circuit open; skipping {List}", listSlug);
+            return null;
+        }
+
         try
         {
             var client = _httpFactory.CreateClient("JellyPlayHttpClient");
@@ -198,13 +225,93 @@ public sealed partial class CustomRowsService
             }
 
             _cache.Set(cacheKey, items);
+            _breaker.RecordSuccess(now);
             return items;
         }
         catch (Exception ex)
         {
+            _breaker.RecordFailure(now);
             _logger.LogWarning(ex, "MDBList list fetch failed: {List}", listSlug);
             return null;
         }
+    }
+
+    /// <summary>TMDB official lists (GET /list/{id}, v3 api key from the ratings config — same client/pattern as TmdbRatingsService).</summary>
+    private async Task<List<RowItem>?> FetchTmdbListAsync(string listId)
+    {
+        var apiKey = JellyPlayPlugin.Instance!.Configuration.Ratings.TmdbApiKey;
+        if (string.IsNullOrEmpty(apiKey))
+        {
+            return null;
+        }
+
+        var cacheKey = $"tmdb-list:{listId}";
+        var cached = _cache.Get<List<RowItem>>(cacheKey, CacheTtl);
+        if (cached is not null)
+        {
+            return cached;
+        }
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (_breaker.IsOpen(now))
+        {
+            _logger.LogDebug("TMDB circuit open; skipping list {List}", listId);
+            return null;
+        }
+
+        try
+        {
+            var client = _httpFactory.CreateClient("JellyPlayHttpClient");
+            var json = await client.GetStringAsync($"https://api.themoviedb.org/3/list/{Uri.EscapeDataString(listId)}?api_key={apiKey}");
+            var items = ParseTmdbList(json);
+            _cache.Set(cacheKey, items);
+            _breaker.RecordSuccess(now);
+            return items;
+        }
+        catch (Exception ex)
+        {
+            _breaker.RecordFailure(now);
+            _logger.LogWarning(ex, "TMDB list fetch failed: {List}", listId);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// TMDB v3 list payload → row items. Entries carry movie fields (title /
+    /// release_date) or TV fields (name / first_air_date); both map onto the
+    /// same shape with the TMDB id for deep-linking.
+    /// </summary>
+    internal static List<RowItem> ParseTmdbList(string json)
+    {
+        var items = new List<RowItem>();
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("items", out var list) || list.ValueKind != JsonValueKind.Array)
+        {
+            return items;
+        }
+
+        foreach (var entry in list.EnumerateArray())
+        {
+            var title = entry.TryGetProperty("title", out var titleElement) && titleElement.ValueKind == JsonValueKind.String
+                ? titleElement.GetString()
+                : entry.TryGetProperty("name", out var nameElement) && nameElement.ValueKind == JsonValueKind.String
+                    ? nameElement.GetString()
+                    : null;
+            var date = entry.TryGetProperty("release_date", out var releaseDate) && releaseDate.ValueKind == JsonValueKind.String
+                ? releaseDate.GetString()
+                : entry.TryGetProperty("first_air_date", out var airDate) && airDate.ValueKind == JsonValueKind.String
+                    ? airDate.GetString()
+                    : null;
+            var tmdbId = entry.TryGetProperty("id", out var id) && id.TryGetInt32(out var tmdb) ? tmdb.ToString() : null;
+            if (string.IsNullOrEmpty(title))
+            {
+                continue;
+            }
+
+            items.Add(new RowItem(title, date is { Length: >= 4 } year ? year[..4] : null, null, tmdbId, null));
+        }
+
+        return items;
     }
 
     private string? FindLocalItem(RowItem item)
@@ -237,6 +344,7 @@ public sealed class SeasonalService
 
     private readonly IHttpClientFactory _httpFactory;
     private readonly FileCacheStore _cache;
+    private readonly CircuitBreaker _breaker = new();
     private readonly ILogger<SeasonalService> _logger;
 
     public SeasonalService(IHttpClientFactory httpFactory, FileCacheStore cache, ILogger<SeasonalService> logger)
@@ -267,6 +375,13 @@ public sealed class SeasonalService
             return new RowResult(TitleFor(kw), "tmdb", cached);
         }
 
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (_breaker.IsOpen(now))
+        {
+            _logger.LogDebug("TMDB circuit open; skipping seasonal row {Keyword}", kw);
+            return null;
+        }
+
         try
         {
             var client = _httpFactory.CreateClient("JellyPlayHttpClient");
@@ -291,10 +406,12 @@ public sealed class SeasonalService
             }
 
             _cache.Set(cacheKey, items);
+            _breaker.RecordSuccess(now);
             return new RowResult(TitleFor(kw), "tmdb", items);
         }
         catch (Exception ex)
         {
+            _breaker.RecordFailure(now);
             _logger.LogWarning(ex, "Seasonal row failed for keyword {Keyword}", kw);
             return null;
         }

@@ -28,7 +28,7 @@
     }
 
     function applyStrings() {
-        return api('GET', '/JellyPlay/dashboard-strings?lang=' + encodeURIComponent(navigator.language || '')).then(function (table) {
+        return api('GET', 'jellyplay/dashboard-strings?lang=' + encodeURIComponent(navigator.language || '')).then(function (table) {
             strings = table || {};
             document.querySelectorAll('[data-i18n]').forEach(function (element) {
                 const value = strings[element.getAttribute('data-i18n')];
@@ -40,7 +40,7 @@
     }
 
     function reload() {
-        api('GET', '/JellyPlay/config/yaml').then(function (res) {
+        api('GET', 'jellyplay/config/yaml').then(function (res) {
             editor.value = (res && res.value) || '';
             status.textContent = '';
         }).catch(function () {
@@ -51,7 +51,7 @@
     document.getElementById('yamlReload').addEventListener('click', reload);
 
     document.getElementById('yamlSave').addEventListener('click', function () {
-        api('POST', '/JellyPlay/config/yaml', { value: editor.value }).then(function (res) {
+        api('POST', 'jellyplay/config/yaml', { value: editor.value }).then(function (res) {
             if (res && res.error) {
                 status.textContent = fmt('MsgLoadFailed', 'Failed to load: {0}', res.message);
             } else {

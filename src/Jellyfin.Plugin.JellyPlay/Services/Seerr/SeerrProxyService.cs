@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,13 +12,17 @@ namespace Jellyfin.Plugin.JellyPlay.Services.Seerr;
 /// Catch-all Seerr proxy: streams client requests to the configured Seerr
 /// instance with the user's stored session (or the admin API key only for
 /// explicit server-scoped calls). The plugin is the auth boundary — the Seerr
-/// API key never reaches the client.
+/// API key never reaches the client. Also owns the session validation probe
+/// used by the seerr/validate endpoint.
 /// </summary>
 public sealed class SeerrProxyService
 {
+    private static readonly TimeSpan ValidationCacheTtl = TimeSpan.FromSeconds(60);
+
     private readonly IHttpClientFactory _httpFactory;
     private readonly SeerrSessionService _sessions;
     private readonly ILogger<SeerrProxyService> _logger;
+    private readonly ConcurrentDictionary<string, (long At, bool Valid)> _validationCache = new();
 
     private static readonly string[] ForwardedHeaders =
     [
@@ -29,6 +34,52 @@ public sealed class SeerrProxyService
         _httpFactory = httpFactory;
         _sessions = sessions;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Real validation of the user's stored Seerr session: GET /api/v1/auth/me
+    /// with the stored cookies — any 2xx is valid; 401/403/transport errors and
+    /// a missing/expired session are not. Cached 60s per user to keep the
+    /// dashboard's periodic checks cheap.
+    /// </summary>
+    public async Task<bool> ValidateUserSessionAsync(string userId, CancellationToken cancellationToken)
+    {
+        if (!_sessions.IsConfigured)
+        {
+            return false;
+        }
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (_validationCache.TryGetValue(userId, out var cached)
+            && now - cached.At < (long)ValidationCacheTtl.TotalMilliseconds)
+        {
+            return cached.Valid;
+        }
+
+        var valid = await ValidateOnceAsync(userId, cancellationToken);
+        _validationCache[userId] = (now, valid);
+        return valid;
+    }
+
+    private async Task<bool> ValidateOnceAsync(string userId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{_sessions.ServerUrl}/api/v1/auth/me");
+            if (!_sessions.TryApplySession(userId, request))
+            {
+                return false;
+            }
+
+            using var client = _httpFactory.CreateClient("JellyPlayHttpClient");
+            using var response = await client.SendAsync(request, cancellationToken);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Seerr session validation failed for {User}", userId);
+            return false;
+        }
     }
 
     public async Task ProxyAsync(HttpContext context, string path, string userId, CancellationToken cancellationToken)

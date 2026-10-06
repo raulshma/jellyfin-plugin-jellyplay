@@ -110,6 +110,40 @@ public sealed class SseHub
         return EmptySequence();
     }
 
+    /// <summary>
+    /// Waits up to <paramref name="timeout"/> for the subscriber's next event.
+    /// Returns null when the window elapses (writer should emit a keepalive
+    /// frame) or when the subscriber is gone. Producer-side drop semantics of
+    /// the bounded channel are untouched — this only reads.
+    /// </summary>
+    public async Task<SseEvent?> WaitForEventAsync(Guid subscriberId, TimeSpan timeout, System.Threading.CancellationToken cancellationToken)
+    {
+        if (!_subscribers.TryGetValue(subscriberId, out var subscriber))
+        {
+            return null;
+        }
+
+        using var linked = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        linked.CancelAfter(timeout);
+        try
+        {
+            if (await subscriber.Channel.Reader.WaitToReadAsync(linked.Token).ConfigureAwait(false)
+                && subscriber.Channel.Reader.TryRead(out var evt))
+            {
+                return evt;
+            }
+
+            return null;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Keepalive window elapsed; the outer cancellation token is still live.
+            return null;
+        }
+    }
+
+    public bool IsSubscribed(Guid subscriberId) => _subscribers.ContainsKey(subscriberId);
+
     private static async IAsyncEnumerable<SseEvent> EmptySequence()
     {
         await Task.CompletedTask;

@@ -80,20 +80,11 @@ public sealed class TranscodeInsightsService
 
     /// <summary>
     /// The host's [Flags] TranscodeReason decomposed into its named bits —
-    /// a raw numeric flag word is unreadable on a dashboard row.
+    /// a raw numeric flag word is unreadable on a dashboard row. The logic
+    /// lives in the shared helper (the analytics recorder needs it too).
     /// </summary>
     private static string[]? Reasons(TranscodeReason reasons)
-    {
-        if (reasons == 0)
-        {
-            return null;
-        }
-
-        return Enum.GetValues<TranscodeReason>()
-            .Where(value => value != 0 && reasons.HasFlag(value))
-            .Select(value => value.ToString())
-            .ToArray();
-    }
+        => Helpers.TranscodeReasonNames.Decompose(reasons);
 
     public IReadOnlyList<ActiveTranscodeDto> GetMine(string userName)
         => GetActiveTranscodes().Where(transcode => string.Equals(transcode.UserName, userName, StringComparison.OrdinalIgnoreCase)).ToList();

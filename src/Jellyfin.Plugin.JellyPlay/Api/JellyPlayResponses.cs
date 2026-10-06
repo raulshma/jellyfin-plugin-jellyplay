@@ -27,6 +27,14 @@ public static class JellyPlayResponses
         StatusCode = 200,
     };
 
+    /// <summary>camelCase JSON with a non-200 status (e.g. the newsletter 400 contract).</summary>
+    public static ContentResult Camel(object? payload, int statusCode) => new()
+    {
+        Content = JsonConvert.SerializeObject(payload ?? new object(), Settings),
+        ContentType = "application/json; charset=utf-8",
+        StatusCode = statusCode,
+    };
+
     /// <summary>Bare 200 for actions with no response body.</summary>
     public static ContentResult Camel() => new()
     {

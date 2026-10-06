@@ -41,8 +41,9 @@ public class SettingsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<SettingsSnapshotResponse> GetChanged(
         [FromQuery, Required] long since,
-        [FromQuery] string? profile)
-        => JellyPlayResponses.Camel(_settings.GetChanged(User.GetUserId().ToString(), profile ?? JellyPlayDatabase.BaseProfile, since));
+        [FromQuery] string? profile,
+        [FromQuery] string? deviceId)
+        => JellyPlayResponses.Camel(_settings.GetChanged(User.GetUserId().ToString(), profile ?? JellyPlayDatabase.BaseProfile, since, deviceId));
 
     [HttpPost]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -65,7 +66,7 @@ public class SettingsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public IActionResult ResetNamespace([FromRoute, Required] string ns, [FromQuery] string? profile)
     {
-        _settings.ResetNamespace(User.GetUserId().ToString(), profile, ns);
+        _settings.ResetNamespace(User.GetUserId().ToString(), profile, ns, User.GetDeviceId());
         return NoContent();
     }
 

@@ -35,5 +35,7 @@ public static class JellyPlayContract
         public const string UserRatings = "user-ratings";
         public const string Bookmarks = "bookmarks";
         public const string Transcodes = "transcodes";
+        public const string Push = "push";
+        public const string Analytics = "analytics";
     }
 }

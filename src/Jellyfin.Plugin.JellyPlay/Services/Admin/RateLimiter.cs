@@ -83,3 +83,11 @@ public sealed class BroadcastRateLimiter : RateLimiter
     {
     }
 }
+
+/// <summary>Anonymous Seerr webhook intake: 30/min per remote client.</summary>
+public sealed class WebhookRateLimiter : RateLimiter
+{
+    public WebhookRateLimiter() : base(limit: 30, windowMs: 60_000)
+    {
+    }
+}

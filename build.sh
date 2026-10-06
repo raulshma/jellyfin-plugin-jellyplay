@@ -33,6 +33,11 @@ cp dist/publish/Jellyfin.Plugin.JellyPlay.dll "$STAGE/"
 cp dist/publish/YamlDotNet*.dll "$STAGE/" 2>/dev/null || true
 cp dist/publish/Microsoft.Data.Sqlite*.dll "$STAGE/" 2>/dev/null || true
 cp dist/publish/SQLitePCLRaw.*.dll "$STAGE/" 2>/dev/null || true
+# MailKit/MimeKit (+ its BouncyCastle dependency) are not host-provided either;
+# re-added defensively in case the exclude pattern above ever broadens.
+cp dist/publish/MailKit*.dll "$STAGE/" 2>/dev/null || true
+cp dist/publish/MimeKit*.dll "$STAGE/" 2>/dev/null || true
+cp dist/publish/BouncyCastle*.dll "$STAGE/" 2>/dev/null || true
 
 rm -f "dist/Jellyfin.Plugin.JellyPlay.zip"
 (cd "$STAGE" && zip -q -r ../Jellyfin.Plugin.JellyPlay.zip .)

@@ -3,6 +3,7 @@ using System.ComponentModel.DataAnnotations;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyPlay.Api;
+using Jellyfin.Plugin.JellyPlay.Configuration;
 using Jellyfin.Plugin.JellyPlay.Helpers;
 using Jellyfin.Plugin.JellyPlay.Realtime;
 using Jellyfin.Plugin.JellyPlay.Services.Events;
@@ -25,19 +26,27 @@ public class EventsController : ControllerBase
     private readonly EventService _events;
     private readonly JellyPlayDatabase _db;
     private readonly Services.Admin.BroadcastRateLimiter _rateLimiter;
+    private readonly Func<PushConfig>? _pushConfig;
     private readonly TimeProvider _clock;
 
-    public EventsController(SseHub hub, EventService events, JellyPlayDatabase db, Services.Admin.BroadcastRateLimiter rateLimiter)
+    public EventsController(
+        SseHub hub,
+        EventService events,
+        JellyPlayDatabase db,
+        Services.Admin.BroadcastRateLimiter rateLimiter,
+        Func<PushConfig>? pushConfig = null)
     {
         _hub = hub;
         _events = events;
         _db = db;
         _rateLimiter = rateLimiter;
+        _pushConfig = pushConfig;
         _clock = TimeProvider.System;
     }
 
     [HttpPost("devices")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public IActionResult RegisterDevice([FromBody, Required] DeviceRegistrationRequest request)
     {
         var deviceId = string.IsNullOrEmpty(request.DeviceId) ? User.GetDeviceId() : request.DeviceId;
@@ -46,13 +55,41 @@ public class EventsController : ControllerBase
             return BadRequest(new { error = "deviceId-required" });
         }
 
+        // Present push block = validate + overwrite (idempotent re-registration
+        // when the distributor rotates endpoints); absent = preserve. Endpoint
+        // URLs are secrets and only ever round-trip to their owner.
+        string? pushKind = null;
+        string? pushEndpoint = null;
+        if (request.Push is not null)
+        {
+            if (!Services.Push.PushDispatcher.IsValidRegistration(request.Push.Kind, request.Push.Endpoint))
+            {
+                return BadRequest(new { error = "invalid-push-registration" });
+            }
+
+            // fcm needs configured FCM credentials (project id + service-account key).
+            if (Services.Push.PushDispatcher.IsFcmKind(request.Push.Kind)
+                && (_pushConfig is null || !_pushConfig().FcmConfigured()))
+            {
+                return BadRequest(new { error = "push-kind-unavailable" });
+            }
+
+            pushKind = request.Push.Kind;
+            pushEndpoint = request.Push.Endpoint.Trim();
+        }
+
+        var existing = _db.GetDeviceById(deviceId);
+        var now = _clock.GetUtcNow().ToUnixTimeMilliseconds();
         _db.UpsertDevice(new DeviceRow(
             deviceId,
             User.GetUserId().ToString(),
             request.Name,
             request.Platform,
             request.AppVersion,
-            _clock.GetUtcNow().ToUnixTimeMilliseconds()));
+            now,
+            pushKind ?? existing?.PushKind,
+            pushEndpoint ?? existing?.PushEndpoint,
+            existing?.CreatedAt ?? now));
         return NoContent();
     }
 
@@ -62,9 +99,22 @@ public class EventsController : ControllerBase
     public IActionResult UnregisterDevice([FromRoute, Required] string deviceId)
         => _db.DeleteDevice(User.GetUserId().ToString(), deviceId) ? NoContent() : NotFound();
 
+    /// <summary>The caller's own devices; push blocks are included only here (never for another user).</summary>
     [HttpGet("devices")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public IActionResult GetDevices() => JellyPlayResponses.Camel(_db.GetDevices(User.GetUserId().ToString()));
+    public IActionResult GetDevices()
+        => JellyPlayResponses.Camel(_db.GetDevices(User.GetUserId().ToString())
+            .Select(row => new DeviceDto(
+                row.DeviceId,
+                row.UserId,
+                row.Name,
+                row.Platform,
+                row.AppVersion,
+                row.LastSeen,
+                row.PushKind is null || row.PushEndpoint is null
+                    ? null
+                    : new DevicePushDto(row.PushKind, row.PushEndpoint)))
+            .ToList());
 
     /// <summary>Admin broadcast to every connected client.</summary>
     [HttpPost("broadcast")]

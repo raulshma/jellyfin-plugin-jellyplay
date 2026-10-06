@@ -36,7 +36,9 @@ public class JellyPlayController : ControllerBase
         JellyPlayContract.Features.Recommendations,
         JellyPlayContract.Features.UserRatings,
         JellyPlayContract.Features.Bookmarks,
-        JellyPlayContract.Features.Transcodes
+        JellyPlayContract.Features.Transcodes,
+        JellyPlayContract.Features.Push,
+        JellyPlayContract.Features.Analytics
     ];
 
     private readonly SettingsService _settings;
@@ -83,9 +85,19 @@ public class JellyPlayController : ControllerBase
             features.Remove(JellyPlayContract.Features.Newsletter);
         }
 
+        if (config is null || !config.Push.Enabled)
+        {
+            features.Remove(JellyPlayContract.Features.Push);
+        }
+
+        if (config is null || !config.Analytics.Enabled)
+        {
+            features.Remove(JellyPlayContract.Features.Analytics);
+        }
+
         return JellyPlayResponses.Camel(new CapabilitiesResponse(
             JellyPlayContract.ContractVersion,
-            typeof(JellyPlayPlugin).Assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version ?? "1.0.0",
+            typeof(JellyPlayPlugin).Assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version ?? "0.11.3",
             features,
             System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             ["", "desktop", "phone", "tv"]));

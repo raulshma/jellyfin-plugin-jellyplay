@@ -64,6 +64,18 @@
         return text;
     }
 
+    // fmt's argument convention substitutes the fallback into {0}; use this
+    // variant when the message itself carries {n} placeholders:
+    // alertFmt(key, fallbackWithPlaceholders, value0, value1, ...).
+    function alertFmt() {
+        var args = Array.prototype.slice.call(arguments);
+        var text = strings[args[0]] || args[1];
+        for (var i = 2; i < args.length; i++) {
+            text = String(text).replace('{' + (i - 2) + '}', String(args[i]));
+        }
+        window.Dashboard.alert(text);
+    }
+
     function alertText(key, fallback) {
         window.Dashboard.alert(fmt.apply(null, arguments));
     }
@@ -124,6 +136,9 @@
             });
             window.ApiClient.updatePluginConfiguration(PLUGIN_ID, config).then(function () {
                 alertText('MsgSaved', 'Settings saved.');
+                // The server may have filled in a generated webhook secret —
+                // re-read the config so the form shows the stored value.
+                load();
             });
         });
         return false;
@@ -150,7 +165,7 @@
             // that LOOKS like structured JSON but fails to parse is a typo —
             // keep it as a string but tell the admin.
             if (/^[\[{]/.test(text)) {
-                alertText('DefaultsInvalidJson', '"{0}" is not valid JSON — saved as a plain string.', text);
+                alertFmt('DefaultsInvalidJson', '"{0}" is not valid JSON — saved as a plain string.', text);
             }
             return text;
         }
@@ -238,7 +253,7 @@
             alertText('DefaultsSaved', 'Defaults saved.');
             return loadDefaults();
         }).catch(function (error) {
-            alertText('MsgLoadFailed', 'Failed to load: {0}', error && error.message || error);
+            alertFmt('MsgLoadFailed', 'Failed to load: {0}', error && error.message || error);
         });
     });
 
@@ -248,7 +263,292 @@
                 .replace('{0}', outcome && outcome.keysPushed !== undefined ? outcome.keysPushed : '?')
                 .replace('{1}', outcome && outcome.users !== undefined ? outcome.users : '?'));
         }).catch(function (error) {
-            alertText('MsgLoadFailed', 'Failed to load: {0}', error && error.message || error);
+            alertFmt('MsgLoadFailed', 'Failed to load: {0}', error && error.message || error);
+        });
+    });
+
+    // ── custom rows ──
+
+    // One entry per supported row source (must match RowsServices' switch).
+    // needsId drives the list-id field's visibility; hintKey/hint is its
+    // placeholder (resx first, static en fallback).
+    var ROW_SOURCES = [
+        { value: 'letterboxd', needsId: true, hintKey: 'CustomRowsListIdLetterboxd', hint: 'Letterboxd list slug (e.g. staffpicks)' },
+        { value: 'imdb', needsId: true, hintKey: 'CustomRowsListIdImdb', hint: 'IMDb list id (ls…) or chart name' },
+        { value: 'mdblist', needsId: true, hintKey: 'CustomRowsListIdMdblist', hint: 'MDBList list id' },
+        { value: 'tmdb', needsId: true, hintKey: 'CustomRowsListIdTmdb', hint: 'TMDB list id (numeric)' }
+    ];
+
+    function rowsList() { return document.getElementById('jellyplayRowsList'); }
+    function rowsEmptyLabel() { return document.getElementById('jellyplayRowsEmpty'); }
+
+    function sourceInfo(value) {
+        var match = null;
+        ROW_SOURCES.forEach(function (candidate) {
+            if (candidate.value === value) { match = candidate; }
+        });
+        return match;
+    }
+
+    function applyListIdVisibility(row) {
+        var info = sourceInfo(row.querySelector('select').value) || ROW_SOURCES[0];
+        var listIdInput = row.querySelector('input[data-role="row-listid"]');
+        listIdInput.style.display = info.needsId ? '' : 'none';
+        listIdInput.placeholder = strings[info.hintKey] || info.hint;
+    }
+
+    function addRowRow(definition) {
+        var row = document.createElement('div');
+        row.className = 'customRowRow';
+        row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
+
+        var titleInput = document.createElement('input');
+        titleInput.type = 'text';
+        titleInput.className = 'emby-input';
+        titleInput.placeholder = strings.CustomRowsTitle || 'Title';
+        titleInput.value = (definition && definition.Title) || '';
+        titleInput.style.flex = '2 1 auto';
+
+        var sourceSelect = document.createElement('select');
+        sourceSelect.className = 'emby-select';
+        sourceSelect.style.flex = '0 0 auto';
+        ROW_SOURCES.forEach(function (source) {
+            var option = document.createElement('option');
+            option.value = source.value;
+            option.textContent = source.value;
+            sourceSelect.appendChild(option);
+        });
+        var storedSource = (definition && definition.Source) || 'letterboxd';
+        sourceSelect.value = sourceInfo(storedSource) ? storedSource : 'letterboxd';
+
+        var limitInput = document.createElement('input');
+        limitInput.type = 'number';
+        limitInput.min = '1';
+        limitInput.className = 'emby-input';
+        limitInput.placeholder = strings.CustomRowsLimit || 'Limit';
+        limitInput.value = definition && definition.Limit !== undefined ? definition.Limit : 20;
+        limitInput.style.flex = '0 0 90px';
+
+        var listIdInput = document.createElement('input');
+        listIdInput.type = 'text';
+        listIdInput.className = 'emby-input';
+        listIdInput.setAttribute('data-role', 'row-listid');
+        listIdInput.value = (definition && definition.ListId) || '';
+        listIdInput.style.flex = '2 1 auto';
+
+        var removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'emby-button';
+        removeButton.textContent = strings.CustomRowsRemove || 'Remove';
+        removeButton.addEventListener('click', function () { row.remove(); refreshRowsEmptyLabel(); });
+
+        sourceSelect.addEventListener('change', function () { applyListIdVisibility(row); });
+
+        row.appendChild(titleInput);
+        row.appendChild(sourceSelect);
+        row.appendChild(limitInput);
+        row.appendChild(listIdInput);
+        row.appendChild(removeButton);
+        rowsList().appendChild(row);
+        applyListIdVisibility(row);
+        refreshRowsEmptyLabel();
+    }
+
+    function refreshRowsEmptyLabel() {
+        var empty = rowsList().children.length === 0;
+        rowsEmptyLabel().style.display = empty ? '' : 'none';
+    }
+
+    // Collects and validates the editor rows. Fully blank rows are dropped
+    // silently; a row with content but no title, or a limit below 1, aborts
+    // the whole save (nothing is written half-way).
+    function collectRows() {
+        var rows = [];
+        var children = rowsList().children;
+        for (var i = 0; i < children.length; i++) {
+            var inputs = children[i].querySelectorAll('input, select');
+            var title = inputs[0].value.trim();
+            var source = inputs[1].value;
+            var limit = Number(inputs[2].value);
+            var listId = inputs[3].value.trim();
+
+            if (title.length === 0 && listId.length === 0 && inputs[2].value === '') {
+                continue;
+            }
+
+            if (title.length === 0) {
+                alertFmt('CustomRowsInvalidTitle', 'Every row needs a non-empty title.');
+                return null;
+            }
+
+            if (!(limit >= 1)) {
+                alertFmt('CustomRowsInvalidLimit', 'Row "{0}" needs a limit of at least 1.', title);
+                return null;
+            }
+
+            rows.push({ Title: title, Source: source, ListId: listId, Limit: Math.floor(limit) });
+        }
+
+        return rows;
+    }
+
+    function loadRows() {
+        return window.ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
+            rowsList().innerHTML = '';
+            var rows = (config && config.Rows && config.Rows.CustomRows) || [];
+            rows.forEach(function (row) {
+                addRowRow(row);
+            });
+            refreshRowsEmptyLabel();
+        });
+    }
+
+    document.getElementById('jellyplayRowsAdd').addEventListener('click', function () {
+        addRowRow(null);
+    });
+
+    document.getElementById('jellyplayRowsSave').addEventListener('click', function () {
+        var rows = collectRows();
+        if (rows === null) { return; }
+        // Round-trip the WHOLE config object: unrelated sections survive.
+        window.ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
+            if (!config.Rows) { config.Rows = {}; }
+            config.Rows.CustomRows = rows;
+            window.ApiClient.updatePluginConfiguration(PLUGIN_ID, config).then(function () {
+                alertText('CustomRowsSaved', 'Custom rows saved.');
+                loadRows();
+            });
+        }).catch(function (error) {
+            alertFmt('MsgLoadFailed', 'Failed to load: {0}', error && error.message || error);
+        });
+    });
+
+    // ── anime series overrides ──
+
+    function animeOverridesList() { return document.getElementById('jellyplayAnimeOverridesList'); }
+    function animeOverridesEmptyLabel() { return document.getElementById('jellyplayAnimeOverridesEmpty'); }
+
+    function addAnimeOverrideRow(entry) {
+        var row = document.createElement('div');
+        row.className = 'animeOverrideRow';
+        row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
+
+        var seriesIdInput = document.createElement('input');
+        seriesIdInput.type = 'text';
+        seriesIdInput.className = 'emby-input';
+        seriesIdInput.placeholder = strings.AnimeOverridesSeriesId || 'Series id (Jellyfin item id)';
+        seriesIdInput.value = (entry && entry.SeriesId) || '';
+        seriesIdInput.style.flex = '2 1 auto';
+
+        var aniListInput = document.createElement('input');
+        aniListInput.type = 'text';
+        aniListInput.className = 'emby-input';
+        aniListInput.setAttribute('data-role', 'override-anilist');
+        aniListInput.placeholder = strings.AnimeOverridesAniListId || 'AniList id';
+        aniListInput.value = (entry && entry.AniListId) || '';
+        aniListInput.style.flex = '1 1 auto';
+
+        var malInput = document.createElement('input');
+        malInput.type = 'text';
+        malInput.className = 'emby-input';
+        malInput.setAttribute('data-role', 'override-mal');
+        malInput.placeholder = strings.AnimeOverridesMalId || 'MAL id';
+        malInput.value = (entry && entry.MalId) || '';
+        malInput.style.flex = '1 1 auto';
+
+        var labelInput = document.createElement('input');
+        labelInput.type = 'text';
+        labelInput.className = 'emby-input';
+        labelInput.placeholder = strings.AnimeOverridesLabel || 'Label (optional)';
+        labelInput.value = (entry && entry.Label) || '';
+        labelInput.style.flex = '2 1 auto';
+
+        var removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'emby-button';
+        removeButton.textContent = strings.AnimeOverridesRemove || 'Remove';
+        removeButton.addEventListener('click', function () { row.remove(); refreshAnimeOverridesEmptyLabel(); });
+
+        row.appendChild(seriesIdInput);
+        row.appendChild(aniListInput);
+        row.appendChild(malInput);
+        row.appendChild(labelInput);
+        row.appendChild(removeButton);
+        animeOverridesList().appendChild(row);
+        refreshAnimeOverridesEmptyLabel();
+    }
+
+    function refreshAnimeOverridesEmptyLabel() {
+        var empty = animeOverridesList().children.length === 0;
+        animeOverridesEmptyLabel().style.display = empty ? '' : 'none';
+    }
+
+    // Collects and validates the editor rows. Fully blank rows are dropped
+    // silently; a row with content but no series id, or no provider id at
+    // all, aborts the whole save (nothing is written half-way).
+    function collectAnimeOverrides() {
+        var overrides = [];
+        var children = animeOverridesList().children;
+        for (var i = 0; i < children.length; i++) {
+            var inputs = children[i].querySelectorAll('input');
+            var seriesId = inputs[0].value.trim();
+            var aniListId = inputs[1].value.trim();
+            var malId = inputs[2].value.trim();
+            var label = inputs[3].value.trim();
+
+            if (seriesId.length === 0 && aniListId.length === 0 && malId.length === 0 && label.length === 0) {
+                continue;
+            }
+
+            if (seriesId.length === 0) {
+                alertFmt('AnimeOverridesInvalidSeries', 'Every override needs a non-empty series id.');
+                return null;
+            }
+
+            if (aniListId.length === 0 && malId.length === 0) {
+                alertFmt('AnimeOverridesInvalidProvider', 'Override "{0}" needs an AniList id or a MAL id.', seriesId);
+                return null;
+            }
+
+            var entry = { SeriesId: seriesId };
+            if (aniListId.length > 0) { entry.AniListId = aniListId; }
+            if (malId.length > 0) { entry.MalId = malId; }
+            if (label.length > 0) { entry.Label = label; }
+            overrides.push(entry);
+        }
+
+        return overrides;
+    }
+
+    function loadAnimeOverrides() {
+        return window.ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
+            animeOverridesList().innerHTML = '';
+            var overrides = (config && config.Anime && config.Anime.SeriesOverrides) || [];
+            overrides.forEach(function (entry) {
+                addAnimeOverrideRow(entry);
+            });
+            refreshAnimeOverridesEmptyLabel();
+        });
+    }
+
+    document.getElementById('jellyplayAnimeOverridesAdd').addEventListener('click', function () {
+        addAnimeOverrideRow(null);
+    });
+
+    document.getElementById('jellyplayAnimeOverridesSave').addEventListener('click', function () {
+        var overrides = collectAnimeOverrides();
+        if (overrides === null) { return; }
+        // Round-trip the WHOLE config object: unrelated sections survive; only
+        // Anime.SeriesOverrides is touched.
+        window.ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
+            if (!config.Anime) { config.Anime = {}; }
+            config.Anime.SeriesOverrides = overrides;
+            window.ApiClient.updatePluginConfiguration(PLUGIN_ID, config).then(function () {
+                alertText('AnimeOverridesSaved', 'Anime overrides saved.');
+                loadAnimeOverrides();
+            });
+        }).catch(function (error) {
+            alertFmt('MsgLoadFailed', 'Failed to load: {0}', error && error.message || error);
         });
     });
 
@@ -265,7 +565,7 @@
             link.click();
             URL.revokeObjectURL(link.href);
         }).catch(function (error) {
-            alertText('MsgLoadFailed', 'Failed to load: {0}', error && error.message || error);
+            alertFmt('MsgLoadFailed', 'Failed to load: {0}', error && error.message || error);
         });
     });
 
@@ -294,5 +594,7 @@
     applyStrings().then(function () {
         load();
         loadDefaults();
+        loadRows();
+        loadAnimeOverrides();
     });
 })();
