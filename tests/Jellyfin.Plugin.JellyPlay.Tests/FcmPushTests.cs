@@ -659,7 +659,8 @@ public sealed class FcmRegistrationApiTests : IDisposable
         };
         if (kind is not null)
         {
-            request.Push = new DevicePushRegistration { Kind = kind, Endpoint = endpoint ?? string.Empty };
+            request.Push = System.Text.Json.JsonSerializer.SerializeToElement(
+                new DevicePushRegistration { Kind = kind, Endpoint = endpoint ?? string.Empty });
         }
 
         return request;

@@ -154,7 +154,7 @@ with the Firebase SDK; the device's endpoint is its FCM registration token.
 **Registration** (additive on the device registry):
 
 ```
-POST jellyplay/devices   body { deviceId?, name, platform, appVersion, push?: { kind: "generic"|"ntfy"|"fcm", endpoint } }
+POST jellyplay/devices   body { deviceId?, name, platform, appVersion, push?: { kind: "generic"|"ntfy"|"fcm", endpoint } | null }
                          → 204 | 400 {error: "deviceId-required"} | 400 {error: "invalid-push-registration"}
                          | 400 {error: "push-kind-unavailable"} (kind "fcm" but FCM not configured)
 DELETE jellyplay/devices/{deviceId}                    → 204/404 (unchanged; removes the registration with the row)
@@ -165,7 +165,11 @@ GET    jellyplay/devices                               → [{deviceId, userId, n
   non-blank `endpoint` (the full publish URL; for `fcm` the FCM registration
   token) → validated and **overwritten**; re-POSTing the same `deviceId`
   re-registers idempotently (distributors may rotate endpoints). POSTing
-  without a `push` block preserves any existing registration. Invalid kind or
+  without a `push` block preserves any existing registration. An explicit
+  JSON `null` (`"push": null`) **detaches**: the push registration is
+  cleared server-side while the device row survives (the client's
+  toggle-off / distributor-revoked path — unlike DELETE, which removes the
+  whole row). Invalid kind or
   blank endpoint → 400 `invalid-push-registration`; kind `fcm` while FCM is
   unconfigured → 400 `push-kind-unavailable`.
 - `GET jellyplay/devices` returns only the requesting user's own devices, and

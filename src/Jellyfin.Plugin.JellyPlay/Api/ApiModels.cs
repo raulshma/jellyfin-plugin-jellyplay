@@ -156,16 +156,18 @@ public sealed class DeviceRegistrationRequest
     public string AppVersion { get; set; } = string.Empty;
 
     /// <summary>
-    /// Optional push registration ("generic" | "ntfy" + full publish URL).
-    /// Present = validate and overwrite; absent = preserve any existing one.
+    /// Optional push registration, bound raw so the three wire shapes stay
+    /// distinguishable: object = validate and overwrite; absent = preserve any
+    /// existing one; explicit JSON null = detach (clear the registration, keep
+    /// the device row).
     /// </summary>
-    public DevicePushRegistration? Push { get; set; }
+    public JsonElement? Push { get; set; }
 }
 
 /// <summary>Inbound push registration block of <see cref="DeviceRegistrationRequest"/>.</summary>
 public sealed class DevicePushRegistration
 {
-    /// <summary>"generic" (raw JSON POST) | "ntfy" (ntfy publish URL).</summary>
+    /// <summary>"generic" (raw JSON POST) | "ntfy" (ntfy publish URL) | "fcm".</summary>
     public string Kind { get; set; } = string.Empty;
 
     /// <summary>Full publish endpoint URL (secret; only ever echoed to its owner).</summary>

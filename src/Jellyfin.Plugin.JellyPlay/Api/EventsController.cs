@@ -1,5 +1,6 @@
 using System;
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyPlay.Api;
@@ -29,6 +30,12 @@ public class EventsController : ControllerBase
     private readonly Func<PushConfig>? _pushConfig;
     private readonly TimeProvider _clock;
 
+    /// <summary>Camel-case-insensitive binding for the raw push element (matches ASP.NET's body binding).</summary>
+    internal static class DeviceJson
+    {
+        public static readonly JsonSerializerOptions Options = new() { PropertyNameCaseInsensitive = true };
+    }
+
     public EventsController(
         SseHub hub,
         EventService events,
@@ -55,27 +62,31 @@ public class EventsController : ControllerBase
             return BadRequest(new { error = "deviceId-required" });
         }
 
-        // Present push block = validate + overwrite (idempotent re-registration
-        // when the distributor rotates endpoints); absent = preserve. Endpoint
-        // URLs are secrets and only ever round-trip to their owner.
+        // Push wire shapes (see DeviceRegistrationRequest.Push): object =
+        // validate + overwrite (idempotent re-registration when the distributor
+        // rotates endpoints); absent = preserve; explicit JSON null = detach
+        // (clear the registration, keep the device row). Endpoint URLs are
+        // secrets and only ever round-trip to their owner.
         string? pushKind = null;
         string? pushEndpoint = null;
-        if (request.Push is not null)
+        if (request.Push is { ValueKind: JsonValueKind.Object } pushElement)
         {
-            if (!Services.Push.PushDispatcher.IsValidRegistration(request.Push.Kind, request.Push.Endpoint))
+            var push = pushElement.Deserialize<DevicePushRegistration>(DeviceJson.Options);
+            if (push is null
+                || !Services.Push.PushDispatcher.IsValidRegistration(push.Kind, push.Endpoint))
             {
                 return BadRequest(new { error = "invalid-push-registration" });
             }
 
             // fcm needs configured FCM credentials (project id + service-account key).
-            if (Services.Push.PushDispatcher.IsFcmKind(request.Push.Kind)
+            if (Services.Push.PushDispatcher.IsFcmKind(push.Kind)
                 && (_pushConfig is null || !_pushConfig().FcmConfigured()))
             {
                 return BadRequest(new { error = "push-kind-unavailable" });
             }
 
-            pushKind = request.Push.Kind;
-            pushEndpoint = request.Push.Endpoint.Trim();
+            pushKind = push.Kind;
+            pushEndpoint = push.Endpoint.Trim();
         }
 
         var existing = _db.GetDeviceById(deviceId);
@@ -87,8 +98,8 @@ public class EventsController : ControllerBase
             request.Platform,
             request.AppVersion,
             now,
-            pushKind ?? existing?.PushKind,
-            pushEndpoint ?? existing?.PushEndpoint,
+            request.Push.HasValue ? pushKind : existing?.PushKind,
+            request.Push.HasValue ? pushEndpoint : existing?.PushEndpoint,
             existing?.CreatedAt ?? now));
         return NoContent();
     }

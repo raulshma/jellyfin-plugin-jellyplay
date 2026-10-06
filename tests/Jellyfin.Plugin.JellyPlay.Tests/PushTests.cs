@@ -307,7 +307,7 @@ public sealed class DeviceRegistrationApiTests : IDisposable
         return controller;
     }
 
-    private static DeviceRegistrationRequest Request(string deviceId, string? kind = null, string? endpoint = null)
+    private static DeviceRegistrationRequest Request(string deviceId, string? kind = null, string? endpoint = null, bool detach = false)
     {
         var request = new DeviceRegistrationRequest
         {
@@ -316,9 +316,14 @@ public sealed class DeviceRegistrationApiTests : IDisposable
             Platform = "android",
             AppVersion = "1.0"
         };
-        if (kind is not null)
+        if (detach)
         {
-            request.Push = new DevicePushRegistration { Kind = kind, Endpoint = endpoint ?? string.Empty };
+            request.Push = JsonSerializer.SerializeToElement((object?)null);
+        }
+        else if (kind is not null)
+        {
+            request.Push = JsonSerializer.SerializeToElement(
+                new DevicePushRegistration { Kind = kind, Endpoint = endpoint ?? string.Empty });
         }
 
         return request;
@@ -368,6 +373,21 @@ public sealed class DeviceRegistrationApiTests : IDisposable
 
         var row = Assert.Single(GetDevicesJson(controller));
         Assert.Equal("https://ntfy.sh/keep", row["push"]!["endpoint"]!.ToString());
+    }
+
+    [Fact]
+    public void RePost_WithExplicitPushNull_Detaches()
+    {
+        var controller = Controller(UserA, "d1");
+        controller.RegisterDevice(Request("d1", "ntfy", "https://ntfy.sh/gone"));
+        controller.RegisterDevice(Request("d1", detach: true)); // the client's push-off wire shape
+
+        var row = Assert.Single(GetDevicesJson(controller));
+        Assert.Null(row["push"]); // registration cleared...
+        var stored = _db.GetDeviceById("d1");
+        Assert.NotNull(stored); // ...but the device row survives (unlike DELETE)
+        Assert.Null(stored!.PushKind);
+        Assert.Null(stored.PushEndpoint);
     }
 
     [Theory]

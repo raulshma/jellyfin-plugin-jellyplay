@@ -107,10 +107,20 @@ public class JellyPlayController : ControllerBase
     [HttpGet("defaults")]
     [Authorize(Policy = Policies.RequiresElevation)]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<JsonElementCompat> GetGlobalDefaults()
+    public IActionResult GetGlobalDefaults()
     {
+        // The stored payload is already JSON — stream it through untouched.
+        // Handing a System.Text.Json JsonElement to the plugin's Newtonsoft
+        // gate would serialize the element's own properties ({"valueKind":1}).
         var raw = _settings.GetAdminDefaultsRaw(SettingsService.GlobalDefaultsScope);
-        return JellyPlayResponses.Camel(raw is null ? new { } : (object)raw.Value);
+        return raw is null
+            ? JellyPlayResponses.Camel(new { })
+            : new ContentResult
+            {
+                Content = raw.Value.GetRawText(),
+                ContentType = "application/json; charset=utf-8",
+                StatusCode = StatusCodes.Status200OK
+            };
     }
 
     [HttpPost("defaults")]

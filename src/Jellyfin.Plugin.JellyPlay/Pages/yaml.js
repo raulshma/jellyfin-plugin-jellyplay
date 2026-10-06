@@ -9,9 +9,14 @@
 
     let strings = {};
 
+    // fmt(key, fallback) resolves the localized text; template substitutes
+    // {0}/{1}/... with real values (fmt deliberately does not do both).
     function fmt(key, fallback) {
-        let text = strings[key] || fallback;
-        for (let i = 1; i < arguments.length; i++) {
+        return strings[key] || fallback;
+    }
+
+    function template(text) {
+        for (var i = 1; i < arguments.length; i++) {
             text = String(text).replace('{' + (i - 1) + '}', String(arguments[i]));
         }
         return text;
@@ -53,12 +58,12 @@
     document.getElementById('yamlSave').addEventListener('click', function () {
         api('POST', 'jellyplay/config/yaml', { value: editor.value }).then(function (res) {
             if (res && res.error) {
-                status.textContent = fmt('MsgLoadFailed', 'Failed to load: {0}', res.message);
+                status.textContent = template(fmt('MsgLoadFailed', 'Failed to load: {0}'), res.message);
             } else {
                 status.textContent = fmt('YamlStatusOk', 'Saved.');
             }
         }).catch(function (e) {
-            status.textContent = fmt('MsgLoadFailed', 'Failed to load: {0}', e);
+            status.textContent = template(fmt('MsgLoadFailed', 'Failed to load: {0}'), e);
         });
     });
 

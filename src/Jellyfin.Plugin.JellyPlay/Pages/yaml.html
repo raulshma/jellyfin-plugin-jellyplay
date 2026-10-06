@@ -17,7 +17,9 @@
                 <pre id="yamlStatus" style="white-space:pre-wrap"></pre>
             </div>
         </div>
+        <!-- Bump v whenever yaml.js changes: the config page endpoints send no
+             cache headers, so browsers would otherwise keep running stale JS. -->
+        <script type="text/javascript" src="configurationpage?name=JellyPlayYaml.js&amp;v=2"></script>
     </div>
-    <script type="text/javascript" src="configurationpage?name=JellyPlayYaml.js"></script>
 </body>
 </html>

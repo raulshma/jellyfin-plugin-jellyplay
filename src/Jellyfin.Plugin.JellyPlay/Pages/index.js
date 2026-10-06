@@ -80,6 +80,17 @@
         window.Dashboard.alert(fmt.apply(null, arguments));
     }
 
+    // Every config write round-trips the WHOLE config object, so concurrent
+    // saves would silently drop each other's section (last write wins).
+    // Serialize them: each queued job starts only after the previous write
+    // (and its post-save reload) has settled.
+    var configWriteChain = Promise.resolve();
+    function enqueueConfigWrite(job) {
+        var run = function () { return job(); };
+        configWriteChain = configWriteChain.then(run, run);
+        return configWriteChain;
+    }
+
     // ── i18n ──
 
     function applyStrings() {
@@ -127,22 +138,87 @@
 
     form.addEventListener('submit', function (event) {
         event.preventDefault();
-        window.ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
-            Object.keys(fields).forEach(function (id) {
-                var element = document.getElementById(id);
-                if (!element) { return; }
-                var value = element.type === 'checkbox' ? element.checked : element.value;
-                setPath(config, fields[id], element.type === 'number' ? Number(value) : value);
-            });
-            window.ApiClient.updatePluginConfiguration(PLUGIN_ID, config).then(function () {
-                alertText('MsgSaved', 'Settings saved.');
-                // The server may have filled in a generated webhook secret —
-                // re-read the config so the form shows the stored value.
-                load();
+        enqueueConfigWrite(function () {
+            return window.ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
+                Object.keys(fields).forEach(function (id) {
+                    var element = document.getElementById(id);
+                    if (!element) { return; }
+                    var value = element.type === 'checkbox' ? element.checked : element.value;
+                    setPath(config, fields[id], element.type === 'number' ? Number(value) : value);
+                });
+                return window.ApiClient.updatePluginConfiguration(PLUGIN_ID, config).then(function () {
+                    alertText('MsgSaved', 'Settings saved.');
+                    // The server may have filled in a generated webhook secret —
+                    // re-read the config so the form shows the stored value.
+                    load();
+                });
             });
         });
         return false;
     });
+
+    // ── editor row scaffolding ──
+    // Shared by the defaults/rows/anime editors. Fields are labeled and flex
+    // based; emby-input/emby-select CSS forces width:100%, so every field is
+    // wrapped in a .jellyplay-field that owns the sizing and the control
+    // fills it. Rows wrap on narrow viewports instead of overflowing.
+
+    function ensureRowStyles() {
+        if (document.getElementById('jellyplayRowStyles')) { return; }
+        var style = document.createElement('style');
+        style.id = 'jellyplayRowStyles';
+        style.textContent = [
+            '.jellyplay-rows { margin-bottom: .5em; }',
+            '.jellyplay-row { display:flex; flex-wrap:wrap; gap:10px 14px; align-items:flex-end; margin:0 0 12px; padding:12px 14px; background:rgba(255,255,255,.05); border-radius:.35em; }',
+            '.jellyplay-field { display:flex; flex-direction:column; gap:4px; flex:1 1 190px; min-width:150px; }',
+            '.jellyplay-field.narrow { flex:0 1 140px; min-width:110px; }',
+            '.jellyplay-field.fixed { flex:0 0 110px; min-width:0; }',
+            '.jellyplay-field-label { font-size:.82em; font-weight:500; color:rgba(255,255,255,.65); padding-left:2px; }',
+            '.jellyplay-field .emby-input, .jellyplay-field .emby-select { width:100%; min-width:0; flex:1 1 auto; }',
+            '.jellyplay-row .jellyplay-remove { flex:0 0 auto; margin:0 0 2px; }',
+            '@media (max-width:40em) { .jellyplay-field, .jellyplay-field.narrow { flex-basis:100%; } .jellyplay-field.fixed { flex:1 1 40%; } }'
+        ].join('\n');
+        document.head.appendChild(style);
+    }
+
+    function fieldLabel(text) {
+        var label = document.createElement('label');
+        label.className = 'jellyplay-field-label';
+        label.textContent = text;
+        return label;
+    }
+
+    function fieldControl(tag, className, placeholder) {
+        var control = document.createElement(tag);
+        control.className = className;
+        if (placeholder) { control.placeholder = placeholder; }
+        return control;
+    }
+
+    // Adds <div class="jellyplay-field [narrow|fixed]"><label/><control/></div>.
+    // Controls stay in DOM order, which collect*() rely on.
+    function appendField(row, labelText, options) {
+        var wrap = document.createElement('div');
+        wrap.className = 'jellyplay-field' + (options.variant ? ' ' + options.variant : '');
+        wrap.appendChild(fieldLabel(labelText));
+        var control = fieldControl(options.tag, options.className, options.placeholder);
+        if (options.type) { control.type = options.type; }
+        if (options.min !== undefined) { control.min = options.min; }
+        if (options.value !== undefined && options.value !== null) { control.value = options.value; }
+        wrap.appendChild(control);
+        row.appendChild(wrap);
+        return control;
+    }
+
+    function removeButton(row, onChange, textKey) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'raised emby-button jellyplay-remove';
+        button.textContent = strings[textKey] || strings.DefaultsRemove || 'Remove';
+        button.addEventListener('click', function () { row.remove(); onChange(); });
+        row.appendChild(button);
+        return button;
+    }
 
     // ── tri-state client defaults ──
 
@@ -172,20 +248,17 @@
     }
 
     function addDefaultRow(key, entry) {
+        ensureRowStyles();
         var row = document.createElement('div');
-        row.className = 'defaultsRow';
-        row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
+        row.className = 'jellyplay-row';
 
-        var keyInput = document.createElement('input');
-        keyInput.type = 'text';
-        keyInput.className = 'emby-input';
-        keyInput.placeholder = 'namespace/key';
-        keyInput.value = key || '';
-        keyInput.style.flex = '2 1 auto';
+        appendField(row, strings.DefaultsColumnKey || 'Key', {
+            tag: 'input', className: 'emby-input', placeholder: 'namespace/key', value: key || ''
+        });
 
-        var modeSelect = document.createElement('select');
-        modeSelect.className = 'emby-select';
-        modeSelect.style.flex = '0 0 auto';
+        var modeSelect = appendField(row, strings.DefaultsColumnMode || 'Mode', {
+            tag: 'select', className: 'emby-select', variant: 'narrow'
+        });
         [['suggested', 'DefaultsModeSuggested'], ['forced', 'DefaultsModeForced']].forEach(function (pair) {
             var option = document.createElement('option');
             option.value = pair[0];
@@ -194,23 +267,12 @@
         });
         modeSelect.value = (entry && entry.mode === 'forced') ? 'forced' : 'suggested';
 
-        var valueInput = document.createElement('input');
-        valueInput.type = 'text';
-        valueInput.className = 'emby-input';
-        valueInput.placeholder = 'value (JSON)';
-        valueInput.value = entry && entry.value !== undefined ? formatValue(entry.value) : '';
-        valueInput.style.flex = '2 1 auto';
+        appendField(row, strings.DefaultsColumnValue || 'Value (JSON)', {
+            tag: 'input', className: 'emby-input', placeholder: 'value (JSON)',
+            value: entry && entry.value !== undefined ? formatValue(entry.value) : undefined
+        });
 
-        var removeButton = document.createElement('button');
-        removeButton.type = 'button';
-        removeButton.className = 'emby-button';
-        removeButton.textContent = strings.DefaultsRemove || 'Remove';
-        removeButton.addEventListener('click', function () { row.remove(); refreshDefaultsEmptyLabel(); });
-
-        row.appendChild(keyInput);
-        row.appendChild(modeSelect);
-        row.appendChild(valueInput);
-        row.appendChild(removeButton);
+        removeButton(row, refreshDefaultsEmptyLabel);
         defaultsList().appendChild(row);
         refreshDefaultsEmptyLabel();
     }
@@ -293,25 +355,24 @@
     function applyListIdVisibility(row) {
         var info = sourceInfo(row.querySelector('select').value) || ROW_SOURCES[0];
         var listIdInput = row.querySelector('input[data-role="row-listid"]');
-        listIdInput.style.display = info.needsId ? '' : 'none';
+        var field = listIdInput.parentNode;
+        field.style.display = info.needsId ? '' : 'none';
         listIdInput.placeholder = strings[info.hintKey] || info.hint;
     }
 
     function addRowRow(definition) {
+        ensureRowStyles();
         var row = document.createElement('div');
-        row.className = 'customRowRow';
-        row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
+        row.className = 'jellyplay-row';
 
-        var titleInput = document.createElement('input');
-        titleInput.type = 'text';
-        titleInput.className = 'emby-input';
-        titleInput.placeholder = strings.CustomRowsTitle || 'Title';
-        titleInput.value = (definition && definition.Title) || '';
-        titleInput.style.flex = '2 1 auto';
+        appendField(row, strings.CustomRowsTitle || 'Title', {
+            tag: 'input', className: 'emby-input', placeholder: strings.CustomRowsTitle || 'Title',
+            value: (definition && definition.Title) || ''
+        });
 
-        var sourceSelect = document.createElement('select');
-        sourceSelect.className = 'emby-select';
-        sourceSelect.style.flex = '0 0 auto';
+        var sourceSelect = appendField(row, strings.CustomRowsColumnSource || 'Source', {
+            tag: 'select', className: 'emby-select', variant: 'narrow'
+        });
         ROW_SOURCES.forEach(function (source) {
             var option = document.createElement('option');
             option.value = source.value;
@@ -321,34 +382,22 @@
         var storedSource = (definition && definition.Source) || 'letterboxd';
         sourceSelect.value = sourceInfo(storedSource) ? storedSource : 'letterboxd';
 
-        var limitInput = document.createElement('input');
-        limitInput.type = 'number';
-        limitInput.min = '1';
-        limitInput.className = 'emby-input';
-        limitInput.placeholder = strings.CustomRowsLimit || 'Limit';
-        limitInput.value = definition && definition.Limit !== undefined ? definition.Limit : 20;
-        limitInput.style.flex = '0 0 90px';
+        appendField(row, strings.CustomRowsLimit || 'Limit', {
+            tag: 'input', className: 'emby-input', type: 'number', min: '1', variant: 'fixed',
+            placeholder: strings.CustomRowsLimit || 'Limit',
+            value: definition && definition.Limit !== undefined ? definition.Limit : 20
+        });
 
-        var listIdInput = document.createElement('input');
-        listIdInput.type = 'text';
-        listIdInput.className = 'emby-input';
+        var listIdInput = appendField(row, strings.CustomRowsColumnListId || 'List ID', {
+            tag: 'input', className: 'emby-input',
+            placeholder: strings.CustomRowsListIdLetterboxd || 'List id',
+            value: (definition && definition.ListId) || ''
+        });
         listIdInput.setAttribute('data-role', 'row-listid');
-        listIdInput.value = (definition && definition.ListId) || '';
-        listIdInput.style.flex = '2 1 auto';
 
-        var removeButton = document.createElement('button');
-        removeButton.type = 'button';
-        removeButton.className = 'emby-button';
-        removeButton.textContent = strings.CustomRowsRemove || 'Remove';
-        removeButton.addEventListener('click', function () { row.remove(); refreshRowsEmptyLabel(); });
+        removeButton(row, refreshRowsEmptyLabel, 'CustomRowsRemove');
 
         sourceSelect.addEventListener('change', function () { applyListIdVisibility(row); });
-
-        row.appendChild(titleInput);
-        row.appendChild(sourceSelect);
-        row.appendChild(limitInput);
-        row.appendChild(listIdInput);
-        row.appendChild(removeButton);
         rowsList().appendChild(row);
         applyListIdVisibility(row);
         refreshRowsEmptyLabel();
@@ -410,16 +459,18 @@
     document.getElementById('jellyplayRowsSave').addEventListener('click', function () {
         var rows = collectRows();
         if (rows === null) { return; }
-        // Round-trip the WHOLE config object: unrelated sections survive.
-        window.ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
-            if (!config.Rows) { config.Rows = {}; }
-            config.Rows.CustomRows = rows;
-            window.ApiClient.updatePluginConfiguration(PLUGIN_ID, config).then(function () {
-                alertText('CustomRowsSaved', 'Custom rows saved.');
-                loadRows();
+        enqueueConfigWrite(function () {
+            // Round-trip the WHOLE config object: unrelated sections survive.
+            return window.ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
+                if (!config.Rows) { config.Rows = {}; }
+                config.Rows.CustomRows = rows;
+                return window.ApiClient.updatePluginConfiguration(PLUGIN_ID, config).then(function () {
+                    alertText('CustomRowsSaved', 'Custom rows saved.');
+                    loadRows();
+                });
+            }).catch(function (error) {
+                alertFmt('MsgLoadFailed', 'Failed to load: {0}', error && error.message || error);
             });
-        }).catch(function (error) {
-            alertFmt('MsgLoadFailed', 'Failed to load: {0}', error && error.message || error);
         });
     });
 
@@ -429,51 +480,35 @@
     function animeOverridesEmptyLabel() { return document.getElementById('jellyplayAnimeOverridesEmpty'); }
 
     function addAnimeOverrideRow(entry) {
+        ensureRowStyles();
         var row = document.createElement('div');
-        row.className = 'animeOverrideRow';
-        row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
+        row.className = 'jellyplay-row';
 
-        var seriesIdInput = document.createElement('input');
-        seriesIdInput.type = 'text';
-        seriesIdInput.className = 'emby-input';
-        seriesIdInput.placeholder = strings.AnimeOverridesSeriesId || 'Series id (Jellyfin item id)';
-        seriesIdInput.value = (entry && entry.SeriesId) || '';
-        seriesIdInput.style.flex = '2 1 auto';
+        appendField(row, strings.AnimeOverridesSeriesId || 'Series id', {
+            tag: 'input', className: 'emby-input', placeholder: strings.AnimeOverridesSeriesId || 'Series id (Jellyfin item id)',
+            value: (entry && entry.SeriesId) || ''
+        });
 
-        var aniListInput = document.createElement('input');
-        aniListInput.type = 'text';
-        aniListInput.className = 'emby-input';
+        var aniListInput = appendField(row, strings.AnimeOverridesAniListId || 'AniList id', {
+            tag: 'input', className: 'emby-input', variant: 'narrow',
+            placeholder: strings.AnimeOverridesAniListId || 'AniList id',
+            value: (entry && entry.AniListId) || ''
+        });
         aniListInput.setAttribute('data-role', 'override-anilist');
-        aniListInput.placeholder = strings.AnimeOverridesAniListId || 'AniList id';
-        aniListInput.value = (entry && entry.AniListId) || '';
-        aniListInput.style.flex = '1 1 auto';
 
-        var malInput = document.createElement('input');
-        malInput.type = 'text';
-        malInput.className = 'emby-input';
+        var malInput = appendField(row, strings.AnimeOverridesMalId || 'MAL id', {
+            tag: 'input', className: 'emby-input', variant: 'narrow',
+            placeholder: strings.AnimeOverridesMalId || 'MAL id',
+            value: (entry && entry.MalId) || ''
+        });
         malInput.setAttribute('data-role', 'override-mal');
-        malInput.placeholder = strings.AnimeOverridesMalId || 'MAL id';
-        malInput.value = (entry && entry.MalId) || '';
-        malInput.style.flex = '1 1 auto';
 
-        var labelInput = document.createElement('input');
-        labelInput.type = 'text';
-        labelInput.className = 'emby-input';
-        labelInput.placeholder = strings.AnimeOverridesLabel || 'Label (optional)';
-        labelInput.value = (entry && entry.Label) || '';
-        labelInput.style.flex = '2 1 auto';
+        appendField(row, strings.AnimeOverridesLabel || 'Label', {
+            tag: 'input', className: 'emby-input', placeholder: strings.AnimeOverridesLabel || 'Label (optional)',
+            value: (entry && entry.Label) || ''
+        });
 
-        var removeButton = document.createElement('button');
-        removeButton.type = 'button';
-        removeButton.className = 'emby-button';
-        removeButton.textContent = strings.AnimeOverridesRemove || 'Remove';
-        removeButton.addEventListener('click', function () { row.remove(); refreshAnimeOverridesEmptyLabel(); });
-
-        row.appendChild(seriesIdInput);
-        row.appendChild(aniListInput);
-        row.appendChild(malInput);
-        row.appendChild(labelInput);
-        row.appendChild(removeButton);
+        removeButton(row, refreshAnimeOverridesEmptyLabel, 'AnimeOverridesRemove');
         animeOverridesList().appendChild(row);
         refreshAnimeOverridesEmptyLabel();
     }
@@ -538,17 +573,19 @@
     document.getElementById('jellyplayAnimeOverridesSave').addEventListener('click', function () {
         var overrides = collectAnimeOverrides();
         if (overrides === null) { return; }
-        // Round-trip the WHOLE config object: unrelated sections survive; only
-        // Anime.SeriesOverrides is touched.
-        window.ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
-            if (!config.Anime) { config.Anime = {}; }
-            config.Anime.SeriesOverrides = overrides;
-            window.ApiClient.updatePluginConfiguration(PLUGIN_ID, config).then(function () {
-                alertText('AnimeOverridesSaved', 'Anime overrides saved.');
-                loadAnimeOverrides();
+        enqueueConfigWrite(function () {
+            // Round-trip the WHOLE config object: unrelated sections survive; only
+            // Anime.SeriesOverrides is touched.
+            return window.ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
+                if (!config.Anime) { config.Anime = {}; }
+                config.Anime.SeriesOverrides = overrides;
+                return window.ApiClient.updatePluginConfiguration(PLUGIN_ID, config).then(function () {
+                    alertText('AnimeOverridesSaved', 'Anime overrides saved.');
+                    loadAnimeOverrides();
+                });
+            }).catch(function (error) {
+                alertFmt('MsgLoadFailed', 'Failed to load: {0}', error && error.message || error);
             });
-        }).catch(function (error) {
-            alertFmt('MsgLoadFailed', 'Failed to load: {0}', error && error.message || error);
         });
     });
 

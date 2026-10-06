@@ -20,11 +20,11 @@
                         </div>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="NewMediaGroupingSeconds" data-i18n="EventsGroupingWindow">Episode grouping window (seconds)</label>
-                            <input id="NewMediaGroupingSeconds" name="NewMediaGroupingSeconds" type="number" min="10" max="600" is="emby-input" class="emby-input" />
+                            <input id="NewMediaGroupingSeconds" name="NewMediaGroupingSeconds" type="number" min="10" max="600" class="emby-input" />
                         </div>
                         <div class="selectContainer">
                             <label class="inputLabel inputLabelUnfocused" for="NewMediaAudience" data-i18n="EventsAudience">New media audience</label>
-                            <select id="NewMediaAudience" name="NewMediaAudience" is="emby-select" class="emby-select">
+                            <select id="NewMediaAudience" name="NewMediaAudience" class="emby-select">
                                 <option value="all" data-i18n="AudienceAll">All users</option>
                                 <option value="admins" data-i18n="AudienceAdmins">Admins only</option>
                             </select>
@@ -35,15 +35,15 @@
                         <h3 class="sectionTitle" data-i18n="SectionSeerr">Seerr bridge</h3>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="SeerrServerUrl" data-i18n="SeerrServerUrl">Seerr server URL</label>
-                            <input id="SeerrServerUrl" name="SeerrServerUrl" type="url" is="emby-input" class="emby-input" placeholder="http://jellyseerr:5055" />
+                            <input id="SeerrServerUrl" name="SeerrServerUrl" type="url" class="emby-input" placeholder="http://jellyseerr:5055" />
                         </div>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="SeerrApiKey" data-i18n="SeerrApiKey">Seerr API key</label>
-                            <input id="SeerrApiKey" name="SeerrApiKey" type="password" is="emby-input" class="emby-input" />
+                            <input id="SeerrApiKey" name="SeerrApiKey" type="password" class="emby-input" />
                         </div>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="WebhookSecret" data-i18n="SeerrWebhookSecret">Webhook secret (auto-generate if empty)</label>
-                            <input id="WebhookSecret" name="WebhookSecret" type="text" is="emby-input" class="emby-input" />
+                            <input id="WebhookSecret" name="WebhookSecret" type="text" class="emby-input" />
                         </div>
                     </div>
 
@@ -51,11 +51,11 @@
                         <h3 class="sectionTitle" data-i18n="SectionRatings">Ratings</h3>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="MdbListApiKey" data-i18n="RatingsMdbListKey">MDBList API key</label>
-                            <input id="MdbListApiKey" name="MdbListApiKey" type="password" is="emby-input" class="emby-input" />
+                            <input id="MdbListApiKey" name="MdbListApiKey" type="password" class="emby-input" />
                         </div>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="TmdbApiKey" data-i18n="RatingsTmdbKey">TMDB API key</label>
-                            <input id="TmdbApiKey" name="TmdbApiKey" type="password" is="emby-input" class="emby-input" />
+                            <input id="TmdbApiKey" name="TmdbApiKey" type="password" class="emby-input" />
                         </div>
                     </div>
 
@@ -63,27 +63,27 @@
                         <h3 class="sectionTitle" data-i18n="SectionNewsletter">Newsletter (SMTP)</h3>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="SmtpHost" data-i18n="SmtpHost">SMTP host</label>
-                            <input id="SmtpHost" name="SmtpHost" type="text" is="emby-input" class="emby-input" />
+                            <input id="SmtpHost" name="SmtpHost" type="text" class="emby-input" />
                         </div>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="SmtpPort" data-i18n="SmtpPort">SMTP port</label>
-                            <input id="SmtpPort" name="SmtpPort" type="number" is="emby-input" class="emby-input" />
+                            <input id="SmtpPort" name="SmtpPort" type="number" class="emby-input" />
                         </div>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="SmtpUsername" data-i18n="SmtpUsername">SMTP username</label>
-                            <input id="SmtpUsername" name="SmtpUsername" type="text" is="emby-input" class="emby-input" />
+                            <input id="SmtpUsername" name="SmtpUsername" type="text" class="emby-input" />
                         </div>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="SmtpPassword" data-i18n="SmtpPassword">SMTP password</label>
-                            <input id="SmtpPassword" name="SmtpPassword" type="password" is="emby-input" class="emby-input" />
+                            <input id="SmtpPassword" name="SmtpPassword" type="password" class="emby-input" />
                         </div>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="FromAddress" data-i18n="FromAddress">From address</label>
-                            <input id="FromAddress" name="FromAddress" type="email" is="emby-input" class="emby-input" />
+                            <input id="FromAddress" name="FromAddress" type="email" class="emby-input" />
                         </div>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="TestRecipient" data-i18n="TestRecipient">Test recipient</label>
-                            <input id="TestRecipient" name="TestRecipient" type="email" is="emby-input" class="emby-input" />
+                            <input id="TestRecipient" name="TestRecipient" type="email" class="emby-input" />
                         </div>
                     </div>
 
@@ -95,7 +95,7 @@
                 <div class="verticalSection" style="margin-top:2em">
                     <h3 class="sectionTitle" data-i18n="SectionDefaults">Client defaults</h3>
                     <p class="sectionDescription" data-i18n="DefaultsDescription">Tri-state defaults for the clients' synced settings, as "namespace/key". Suggested fills only what the user has not set; forced overrides the user. Save writes the map, Push applies it to user accounts (forced always, suggested only where the key is unset).</p>
-                    <div id="jellyplayDefaultsList" class="paperList"></div>
+                    <div id="jellyplayDefaultsList" class="jellyplay-rows"></div>
                     <p class="sectionDescription" id="jellyplayDefaultsEmpty" data-i18n="DefaultsEmpty" style="display:none">No defaults configured yet.</p>
                     <div style="margin-top:0.75em">
                         <button is="emby-button" type="button" id="jellyplayDefaultsAdd" class="raised emby-button"><span data-i18n="DefaultsAddKey">Add key</span></button>
@@ -107,7 +107,7 @@
                 <div class="verticalSection" style="margin-top:2em">
                     <h3 class="sectionTitle" data-i18n="SectionCustomRows">Custom rows</h3>
                     <p class="sectionDescription" data-i18n="CustomRowsDescription">Home screen rows resolved from external lists. Each row needs a title (shown to clients), a source, an item limit, and the source-specific list identifier (letterboxd username/list slug, IMDb chart or ls-list id, MDBList list id, TMDB list id).</p>
-                    <div id="jellyplayRowsList" class="paperList"></div>
+                    <div id="jellyplayRowsList" class="jellyplay-rows"></div>
                     <p class="sectionDescription" id="jellyplayRowsEmpty" data-i18n="CustomRowsEmpty" style="display:none">No custom rows configured.</p>
                     <div style="margin-top:0.75em">
                         <button is="emby-button" type="button" id="jellyplayRowsAdd" class="raised emby-button"><span data-i18n="CustomRowsAdd">Add row</span></button>
@@ -118,7 +118,7 @@
                 <div class="verticalSection" style="margin-top:2em">
                     <h3 class="sectionTitle" data-i18n="SectionAnimeOverrides">Anime overrides</h3>
                     <p class="sectionDescription" data-i18n="AnimeOverridesDescription">Map a Jellyfin series to its AniList / MyAnimeList ids, overriding the automatic provider-id derivation for anime markers. Each row needs the series id plus at least one provider id; the optional label is a note for other admins.</p>
-                    <div id="jellyplayAnimeOverridesList" class="paperList"></div>
+                    <div id="jellyplayAnimeOverridesList" class="jellyplay-rows"></div>
                     <p class="sectionDescription" id="jellyplayAnimeOverridesEmpty" data-i18n="AnimeOverridesEmpty" style="display:none">No series overrides configured.</p>
                     <div style="margin-top:0.75em">
                         <button is="emby-button" type="button" id="jellyplayAnimeOverridesAdd" class="raised emby-button"><span data-i18n="AnimeOverridesAdd">Add override</span></button>
@@ -139,7 +139,9 @@
                 </div>
             </div>
         </div>
+        <!-- Bump v whenever index.js changes: the config page endpoints send no
+             cache headers, so browsers would otherwise keep running stale JS. -->
+        <script type="text/javascript" src="configurationpage?name=JellyPlay.js&amp;v=2"></script>
     </div>
-    <script type="text/javascript" src="configurationpage?name=JellyPlay.js"></script>
 </body>
 </html>

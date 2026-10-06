@@ -1,3 +1,4 @@
+using System;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
@@ -14,10 +15,21 @@ namespace Jellyfin.Plugin.JellyPlay.Api;
 /// </summary>
 public static class JellyPlayResponses
 {
+    // CamelCase property names WITHOUT camelizing dictionary keys: the
+    // dashboard-strings table is keyed by resx identifiers ("PageTitle") that
+    // the config pages look up verbatim via data-i18n.
     private static readonly JsonSerializerSettings Settings = new()
     {
-        ContractResolver = new CamelCasePropertyNamesContractResolver(),
+        ContractResolver = new DefaultContractResolver
+        {
+            NamingStrategy = new CamelCaseNamingStrategy
+            {
+                ProcessDictionaryKeys = false,
+                OverrideSpecifiedNames = true
+            }
+        },
         NullValueHandling = NullValueHandling.Ignore,
+        Converters = { new SystemTextJsonElementConverter() }
     };
 
     public static ContentResult Camel(object? payload) => new()
@@ -40,4 +52,23 @@ public static class JellyPlayResponses
     {
         StatusCode = 200,
     };
+}
+
+/// <summary>
+/// Writes System.Text.Json elements through to the Newtonsoft writer
+/// verbatim. Without this, DTOs carrying JsonElement values (settings sync
+/// snapshots, admin defaults) would serialize as the struct's own properties
+/// ({"valueKind":1}) instead of the stored JSON.
+/// </summary>
+public sealed class SystemTextJsonElementConverter : JsonConverter
+{
+    public override bool CanConvert(Type objectType)
+        => objectType == typeof(System.Text.Json.JsonElement)
+            || objectType == typeof(System.Text.Json.JsonElement?);
+
+    public override void WriteJson(JsonWriter writer, object? value, JsonSerializer serializer)
+        => writer.WriteRawValue(((System.Text.Json.JsonElement)value!).GetRawText());
+
+    public override object? ReadJson(JsonReader reader, Type objectType, object? existingValue, JsonSerializer serializer)
+        => throw new NotSupportedException("System.Text.Json elements are write-only here; input binding uses the host serializer.");
 }
