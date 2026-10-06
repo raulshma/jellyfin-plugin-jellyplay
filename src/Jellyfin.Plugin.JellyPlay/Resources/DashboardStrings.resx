@@ -155,7 +155,7 @@
     <value>Client defaults</value>
   </data>
   <data name="DefaultsDescription" xml:space="preserve">
-    <value>Tri-state defaults for the clients' synced settings, as "namespace/key". Suggested fills only what the user has not set; forced overrides the user. Save writes the map, Push applies it to user accounts (forced always, suggested only where the key is unset).</value>
+    <value>Tri-state defaults for the clients' synced settings. Pick a key from the client's own preference catalog (or Custom… for keys newer than this plugin's catalog) — the value editor follows the key's type. Suggested fills only what the user has not set; forced overrides the user. Save writes the map, Push applies it to user accounts (forced always, suggested only where the key is unset).</value>
   </data>
   <data name="DefaultsEmpty" xml:space="preserve">
     <value>No defaults configured yet.</value>
@@ -178,11 +178,56 @@
   <data name="CustomRowsColumnListId" xml:space="preserve">
     <value>List ID</value>
   </data>
+  <data name="CustomRowsHintLetterboxd" xml:space="preserve">
+    <value>Paste a letterboxd list URL (letterboxd.com/user/list/slug) or the slug.</value>
+  </data>
+  <data name="CustomRowsHintImdb" xml:space="preserve">
+    <value>Paste an IMDb list URL (imdb.com/list/lsXXXXXXXX) or a chart name.</value>
+  </data>
+  <data name="CustomRowsHintMdblist" xml:space="preserve">
+    <value>Paste an MDBList list URL or the list id.</value>
+  </data>
+  <data name="CustomRowsHintTmdb" xml:space="preserve">
+    <value>Paste a TMDB list URL (themoviedb.org/list/XXXXXXXX) or the numeric list id.</value>
+  </data>
+  <data name="CustomRowsDuplicateTitle" xml:space="preserve">
+    <value>Duplicate title.</value>
+  </data>
+  <data name="CustomRowsTest" xml:space="preserve">
+    <value>Test</value>
+  </data>
+  <data name="CustomRowsTestOk" xml:space="preserve">
+    <value>OK — {0} item(s) resolved from your library.</value>
+  </data>
+  <data name="CustomRowsTestFail" xml:space="preserve">
+    <value>Could not resolve this list — check the id and try again.</value>
+  </data>
+  <data name="DefaultsInvalidKey" xml:space="preserve">
+    <value>Keys must look like namespace/key.</value>
+  </data>
+  <data name="DefaultsCustomKey" xml:space="preserve">
+    <value>Custom…</value>
+  </data>
+  <data name="DefaultsDuplicateKey" xml:space="preserve">
+    <value>Duplicate key.</value>
+  </data>
+  <data name="DefaultsInvalidValue" xml:space="preserve">
+    <value>Enter a value.</value>
+  </data>
+  <data name="DefaultsModeHint" xml:space="preserve">
+    <value>Suggested fills only what the user has not set; Forced overrides the user.</value>
+  </data>
+  <data name="EditorFixHighlighted" xml:space="preserve">
+    <value>Fix the highlighted fields.</value>
+  </data>
+  <data name="DefaultsRejected" xml:space="preserve">
+    <value>Save rejected: {0}</value>
+  </data>
   <data name="DefaultsColumnMode" xml:space="preserve">
     <value>Mode</value>
   </data>
   <data name="DefaultsColumnValue" xml:space="preserve">
-    <value>Value (JSON)</value>
+    <value>Value</value>
   </data>
   <data name="DefaultsRemove" xml:space="preserve">
     <value>Remove</value>

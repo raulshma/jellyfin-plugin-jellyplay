@@ -70,6 +70,24 @@ public class SettingsController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>
+    /// The known client settings catalog — GENERATED from the client's
+    /// PreferenceSpec declarations (embedded artifact; regenerate via the
+    /// client repo's :shared:core:datastore:generateSettingsCatalog task).
+    /// The dashboard renders its defaults editor from this (keys, types,
+    /// ranges, enum options) so admins never need to memorize setting ids;
+    /// clients may consume it too. Advisory — unknown keys remain legal on
+    /// the sync surface.
+    /// </summary>
+    [HttpGet("catalog")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public IActionResult GetCatalog()
+        => JellyPlayResponses.Camel(new
+        {
+            catalogSchema = Services.Settings.ClientSettingsCatalog.CatalogSchema,
+            settings = Services.Settings.ClientSettingsCatalog.KnownSettings
+        });
+
     [HttpGet("resolved/{profile?}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<SettingsSnapshotResponse> Resolve([FromRoute] string? profile)

@@ -265,8 +265,54 @@ public sealed class SettingsService
 
     public void SetAdminDefaults(string scope, JsonElement payload)
     {
+        var problems = ValidateAgainstCatalog(payload);
+        if (problems.Count > 0)
+        {
+            throw new SettingsCatalogValidationException(problems);
+        }
+
         var bytes = JsonSerializer.SerializeToUtf8Bytes(payload);
         _db.SetAdminDefaults(scope, bytes, _clock.GetTimestamp());
+    }
+
+    /// <summary>
+    /// Known keys are validated against the client settings catalog so the
+    /// dashboard cannot persist values the client would reject (wrong type,
+    /// out of range, off-enum). Unknown keys pass — the namespace is
+    /// client-defined and forward-compatible.
+    /// </summary>
+    internal static List<string> ValidateAgainstCatalog(JsonElement payload)
+    {
+        var problems = new List<string>();
+        if (payload.ValueKind != JsonValueKind.Object)
+        {
+            return problems;
+        }
+
+        foreach (var property in payload.EnumerateObject())
+        {
+            var separator = property.Name.IndexOf('/');
+            if (separator <= 0 || separator == property.Name.Length - 1)
+            {
+                continue;
+            }
+
+            var descriptor = ClientSettingsCatalog.Find(property.Name[..separator], property.Name[(separator + 1)..]);
+            if (descriptor is null
+                || property.Value.ValueKind != JsonValueKind.Object
+                || !property.Value.TryGetProperty("value", out var value))
+            {
+                continue;
+            }
+
+            var problem = ClientSettingsCatalog.ValidateValue(descriptor, value);
+            if (problem is not null)
+            {
+                problems.Add(problem);
+            }
+        }
+
+        return problems;
     }
 
     public JsonElement? GetAdminDefaultsRaw(string scope)

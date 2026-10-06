@@ -94,7 +94,7 @@
 
                 <div class="verticalSection" style="margin-top:2em">
                     <h3 class="sectionTitle" data-i18n="SectionDefaults">Client defaults</h3>
-                    <p class="sectionDescription" data-i18n="DefaultsDescription">Tri-state defaults for the clients' synced settings, as "namespace/key". Suggested fills only what the user has not set; forced overrides the user. Save writes the map, Push applies it to user accounts (forced always, suggested only where the key is unset).</p>
+                    <p class="sectionDescription" data-i18n="DefaultsDescription">Tri-state defaults for the clients' synced settings. Pick a key from the client's own preference catalog (or Custom… for keys newer than this plugin's catalog) — the value editor follows the key's type. Suggested fills only what the user has not set; forced overrides the user. Save writes the map, Push applies it to user accounts (forced always, suggested only where the key is unset).</p>
                     <div id="jellyplayDefaultsList" class="jellyplay-rows"></div>
                     <p class="sectionDescription" id="jellyplayDefaultsEmpty" data-i18n="DefaultsEmpty" style="display:none">No defaults configured yet.</p>
                     <div style="margin-top:0.75em">
@@ -141,7 +141,7 @@
         </div>
         <!-- Bump v whenever index.js changes: the config page endpoints send no
              cache headers, so browsers would otherwise keep running stale JS. -->
-        <script type="text/javascript" src="configurationpage?name=JellyPlay.js&amp;v=2"></script>
+        <script type="text/javascript" src="configurationpage?name=JellyPlay.js&amp;v=7"></script>
     </div>
 </body>
 </html>

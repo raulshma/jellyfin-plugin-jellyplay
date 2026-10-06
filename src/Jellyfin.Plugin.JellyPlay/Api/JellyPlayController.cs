@@ -128,8 +128,15 @@ public class JellyPlayController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public IActionResult SetGlobalDefaults([FromBody] System.Text.Json.JsonElement payload)
     {
-        _settings.SetAdminDefaults(SettingsService.GlobalDefaultsScope, payload);
-        return NoContent();
+        try
+        {
+            _settings.SetAdminDefaults(SettingsService.GlobalDefaultsScope, payload);
+            return NoContent();
+        }
+        catch (Services.Settings.SettingsCatalogValidationException ex)
+        {
+            return JellyPlayResponses.Camel(new { error = true, message = ex.Message, problems = ex.Problems }, 400);
+        }
     }
 
     /// <summary>

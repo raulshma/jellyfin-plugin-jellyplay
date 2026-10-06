@@ -37,6 +37,7 @@ Then install **JellyPlay** from the catalog and restart.
 - All routes live under `jellyplay/` (except the pre-existing client stubs at `newsletter/send`, `newsletter/test`).
 - Auth: standard Jellyfin `Authorization: MediaBrowser Token="..."` (user access token, or API key for the Seerr webhook route).
 - `GET jellyplay/capabilities` is the single bootstrap probe: `{ contractVersion, features[], pluginVersion }`. Clients must feature-gate on it and tolerate 404 (plugin absent).
+- `GET jellyplay/settings/catalog` serves the known client settings the dashboard's defaults editor renders from (keys, types, enum options, defaults).
 
 See `docs/CONTRACT.md` for the full API surface.
 
@@ -49,3 +50,10 @@ dotnet test
 ```
 
 Deploy to a local server for testing: `./local.sh <path-to-jellyfin-plugin-dir>`.
+
+The settings catalog (`src/Jellyfin.Plugin.JellyPlay/Resources/jellyplay-settings-catalog.json`)
+is GENERATED from the JellyPlay client's preference declarations — never edit
+it by hand. After a client release changes its settings, run the client
+repo's `./gradlew :shared:core:datastore:generateSettingsCatalog` and commit
+the refreshed artifact here (the client's `checkSettingsCatalog` task keeps
+the two in lockstep).

@@ -58,11 +58,11 @@ public sealed class SettingsServiceTests : IDisposable
         _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "theme", 1, "\"user\"") });
         _service.SetAdminDefaults(
             SettingsService.GlobalDefaultsScope,
-            JsonDocument.Parse("{\"ui/theme\":{\"mode\":\"forced\",\"value\":\"admin\"}}").RootElement);
+            JsonDocument.Parse("{\"ui/theme\":{\"mode\":\"forced\",\"value\":\"dark\"}}").RootElement);
 
         var resolved = _service.ResolveProfile("u1", "");
 
-        Assert.Equal("\"admin\"", resolved.Settings.Single(entry => entry.Key == "theme").Value.GetRawText());
+        Assert.Equal("\"dark\"", resolved.Settings.Single(entry => entry.Key == "theme").Value.GetRawText());
     }
 
     [Fact]
@@ -124,7 +124,7 @@ public sealed class SettingsServiceTests : IDisposable
         _service.SetAdminDefaults(
             SettingsService.GlobalDefaultsScope,
             JsonDocument.Parse(
-                "{\"ui/locked\":{\"mode\":\"forced\",\"value\":\"admin\"},\"player/skip\":{\"mode\":\"suggested\",\"value\":15}}")
+                "{\"ui/locked\":{\"mode\":\"forced\",\"value\":true},\"player/skip\":{\"mode\":\"suggested\",\"value\":15}}")
                 .RootElement);
 
         var resolved = _service.ResolveProfile("u1", "");
@@ -132,7 +132,7 @@ public sealed class SettingsServiceTests : IDisposable
         // forced replaces the user value; suggested fills the unset key; the
         // plain user key (and the user's locked value before the override)
         // reads as unset.
-        Assert.Equal("admin", resolved.Settings.Single(entry => entry.Key == "locked").Value.GetString());
+        Assert.True(resolved.Settings.Single(entry => entry.Key == "locked").Value.GetBoolean());
         Assert.Equal(
             new Dictionary<string, string>
             {
@@ -206,7 +206,7 @@ public sealed class SettingsServiceTests : IDisposable
         _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "theme", 1) });
         _service.SetAdminDefaults(
             SettingsService.GlobalDefaultsScope,
-            JsonDocument.Parse("{\"ui/locked\":{\"mode\":\"forced\",\"value\":\"x\"}}").RootElement);
+            JsonDocument.Parse("{\"ui/locked\":{\"mode\":\"forced\",\"value\":true}}").RootElement);
 
         Assert.Null(_service.GetAll("u1", "").Modes);
         Assert.Null(_service.GetChanged("u1", "", 0, "d1").Modes);

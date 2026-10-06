@@ -38,7 +38,21 @@ GET    jellyplay/settings/resolved/{profile}? → merged: forced-defaults > prof
                                               + additive `modes`: { "<ns>/<key>": "unset"|"suggested"|"forced" }
 POST   jellyplay/settings/profile/{profile}   → batch into a device profile
 GET    jellyplay/settings/stream              → SSE (events: settings.changed, settings.reset)
+GET    jellyplay/settings/catalog             → { catalogSchema, settings: [{ns, key, label, description, valueType, defaultValue, min, max, options}] }
 ```
+
+**Catalog**: the settings catalog is GENERATED, never hand-maintained — the
+client repo's `:shared:core:datastore:generateSettingsCatalog` Gradle task
+walks the client's `PreferenceSpec` declarations (the same rows the stores
+persist through) and writes the artifact embedded at
+`src/Jellyfin.Plugin.JellyPlay/Resources/jellyplay-settings-catalog.json`.
+The client's `checkSettingsCatalog` task (wired into `check`) fails when the
+committed artifact drifts from the declarations, so keys, types, enum
+vocabularies and defaults cannot silently diverge between client and plugin.
+The catalog is advisory: unknown keys stay legal on the sync surface (forward
+compatibility — a newer client against an older plugin), and secrets/identity
+keys are structurally excluded by the generator's allowlist policy.
+`catalogSchema` bumps only on breaking artifact-shape changes.
 
 **Resolved `modes`** (additive field on the resolved response only, no bump):
 the tri-state provenance per key for THIS user after the user-scope merge —

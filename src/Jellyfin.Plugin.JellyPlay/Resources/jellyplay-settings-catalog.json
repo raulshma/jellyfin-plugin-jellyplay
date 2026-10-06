@@ -1,0 +1,1270 @@
+{
+    "catalogSchema": 1,
+    "settings": [
+        {
+            "ns": "prefs",
+            "key": "dynamic_theming",
+            "label": "Dynamic Theming",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "theme_mode",
+            "label": "Theme Mode",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "SYSTEM",
+            "options": [
+                "SYSTEM",
+                "LIGHT",
+                "DARK",
+                "SCHEDULED"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "contrast_level",
+            "label": "Contrast Level",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "DEFAULT",
+                "MEDIUM",
+                "HIGH"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "oled_mode",
+            "label": "Oled Mode",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "performance_mode",
+            "label": "Performance Mode",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "accent_color_swatch",
+            "label": "Accent Color Swatch",
+            "description": "",
+            "valueType": "string",
+            "defaultValue": "dynamic"
+        },
+        {
+            "ns": "prefs",
+            "key": "color_style",
+            "label": "Color Style",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "TONAL_SPOT",
+            "options": [
+                "TONAL_SPOT",
+                "VIBRANT",
+                "EXPRESSIVE",
+                "MUTED",
+                "MONOCHROME"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "theme_variant",
+            "label": "Theme Variant",
+            "description": "",
+            "valueType": "string",
+            "defaultValue": "standard"
+        },
+        {
+            "ns": "prefs",
+            "key": "synthwave_mode",
+            "label": "Synthwave Mode",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "synthwave_accent",
+            "label": "Synthwave Accent",
+            "description": "",
+            "valueType": "string",
+            "defaultValue": "magenta"
+        },
+        {
+            "ns": "prefs",
+            "key": "soothing_mode",
+            "label": "Soothing Mode",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "soothing_accent",
+            "label": "Soothing Accent",
+            "description": "",
+            "valueType": "string",
+            "defaultValue": "ocean"
+        },
+        {
+            "ns": "prefs",
+            "key": "monochrome_mode",
+            "label": "Monochrome Mode",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "vivid_accent",
+            "label": "Vivid Accent",
+            "description": "",
+            "valueType": "string",
+            "defaultValue": "punch"
+        },
+        {
+            "ns": "prefs",
+            "key": "aurora_accent",
+            "label": "Aurora Accent",
+            "description": "",
+            "valueType": "string",
+            "defaultValue": "emerald"
+        },
+        {
+            "ns": "prefs",
+            "key": "sakura_accent",
+            "label": "Sakura Accent",
+            "description": "",
+            "valueType": "string",
+            "defaultValue": "rose"
+        },
+        {
+            "ns": "prefs",
+            "key": "vector_pop_accent",
+            "label": "Vector Pop Accent",
+            "description": "",
+            "valueType": "string",
+            "defaultValue": "cobalt"
+        },
+        {
+            "ns": "prefs",
+            "key": "show_advanced_settings",
+            "label": "Show Advanced Settings",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "reduce_motion_enabled",
+            "label": "Reduce Motion Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "blue_light_filter_enabled",
+            "label": "Blue Light Filter Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "blue_light_filter_strength",
+            "label": "Blue Light Filter Strength",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 0.30000001192092896
+        },
+        {
+            "ns": "prefs",
+            "key": "backdrop_theme_music_enabled",
+            "label": "Backdrop Theme Music Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "haptics_enabled",
+            "label": "Haptics Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "date_format_preference",
+            "label": "Date Format Preference",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "SYSTEM",
+            "options": [
+                "SYSTEM",
+                "US",
+                "ISO",
+                "EU",
+                "LONG",
+                "SHORT"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "app_font_scale",
+            "label": "App Font Scale",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "SMALL",
+                "DEFAULT",
+                "MEDIUM",
+                "LARGE",
+                "EXTRA_LARGE"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "scheduled_theme_start_hour",
+            "label": "Scheduled Theme Start Hour",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 22
+        },
+        {
+            "ns": "prefs",
+            "key": "scheduled_theme_end_hour",
+            "label": "Scheduled Theme End Hour",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 7
+        },
+        {
+            "ns": "prefs",
+            "key": "color_blind_mode",
+            "label": "Color Blind Mode",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "NONE",
+            "options": [
+                "NONE",
+                "PROTANOPIA",
+                "DEUTERANOPIA",
+                "TRITANOPIA"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "hand_mode",
+            "label": "Hand Mode",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "RIGHT",
+            "options": [
+                "RIGHT",
+                "LEFT"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "layout_mode",
+            "label": "Layout Mode",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "PHONE",
+                "TABLET"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "tv_overscan",
+            "label": "Tv Overscan",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "FIVE",
+            "options": [
+                "OFF",
+                "FIVE",
+                "TEN"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "preferred_player",
+            "label": "Preferred Player",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "preferred_external_player",
+            "label": "Preferred External Player",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "SYSTEM_CHOOSER",
+            "options": [
+                "SYSTEM_CHOOSER",
+                "MPV",
+                "MX_PLAYER_FREE",
+                "MX_PLAYER_PRO",
+                "VLC",
+                "MPV_KT"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "streaming_quality",
+            "label": "Streaming Quality",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "LOW_360P",
+                "SD_480P",
+                "HD_720P",
+                "FHD_1080P",
+                "UHD_4K"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "cellular_streaming_quality",
+            "label": "Cellular Streaming Quality",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "LOW_360P",
+                "SD_480P",
+                "HD_720P",
+                "FHD_1080P",
+                "UHD_4K"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "playback_mode",
+            "label": "Playback Mode",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "force_direct_play",
+            "label": "Force Direct Play",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "live_stream_option",
+            "label": "Live Stream Option",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "DIRECT_STREAM",
+                "TRANSCODE"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "offline_playback_preference",
+            "label": "Offline Playback Preference",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "PREFER_DOWNLOADED",
+            "options": [
+                "PREFER_DOWNLOADED",
+                "PREFER_STREAMING"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "decoder_mode",
+            "label": "Decoder Mode",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "HW_PREFERRED",
+            "options": [
+                "HW_PREFERRED",
+                "HW_ONLY",
+                "SW_ONLY"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_passthrough",
+            "label": "Audio Passthrough",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_passthrough_codecs",
+            "label": "Audio Passthrough Codecs",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "max_audio_channels",
+            "label": "Max Audio Channels",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "MONO",
+                "STEREO",
+                "FIVE_POINT_ONE",
+                "SEVEN_POINT_ONE"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "downmix_boost_db",
+            "label": "Downmix Boost Db",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 0.0
+        },
+        {
+            "ns": "prefs",
+            "key": "frame_rate_matching",
+            "label": "Frame Rate Matching",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "refresh_rate_mode",
+            "label": "Refresh Rate Mode",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "keep_screen_on_during_video",
+            "label": "Keep Screen On During Video",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "pause_on_audio_focus_loss",
+            "label": "Pause On Audio Focus Loss",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "duck_on_transient_focus_loss",
+            "label": "Duck On Transient Focus Loss",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "auto_play_countdown_sec",
+            "label": "Auto Play Countdown Sec",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 10
+        },
+        {
+            "ns": "prefs",
+            "key": "background_video_audio_enabled",
+            "label": "Background Video Audio Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "auto_enter_pip",
+            "label": "Auto Enter Pip",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "pgs_subtitle_direct_play",
+            "label": "Pgs Subtitle Direct Play",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "user_data_sync_enabled",
+            "label": "User Data Sync Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "android_tv_watch_next_enabled",
+            "label": "Android Tv Watch Next Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "home_mode",
+            "label": "Home Mode",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "VIDEO",
+            "options": [
+                "VIDEO",
+                "MUSIC"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "home_hero_enabled",
+            "label": "Home Hero Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "home_backdrop_enabled",
+            "label": "Home Backdrop Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "home_enabled_section_types",
+            "label": "Home Enabled Section Types",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "home_enabled_section_types_version",
+            "label": "Home Enabled Section Types Version",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 0
+        },
+        {
+            "ns": "prefs",
+            "key": "home_section_order",
+            "label": "Home Section Order",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "home_library_section_overrides",
+            "label": "Home Library Section Overrides",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "home_hidden_library_section_ids",
+            "label": "Home Hidden Library Section Ids",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "pinned_home_sections",
+            "label": "Pinned Home Sections",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "home_discover_rows",
+            "label": "Home Discover Rows",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "home_layout_presets",
+            "label": "Home Layout Presets",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "continue_watching_click_behavior",
+            "label": "Continue Watching Click Behavior",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "DETAILS",
+            "options": [
+                "DETAILS",
+                "PLAY",
+                "ASK"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "show_unwatched_badge",
+            "label": "Show Unwatched Badge",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "hide_watched_items",
+            "label": "Hide Watched Items",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "show_watched_checkmark",
+            "label": "Show Watched Checkmark",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "show_external_ratings",
+            "label": "Show External Ratings",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "merge_continue_watching_next_up",
+            "label": "Merge Continue Watching Next Up",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "next_up_max_days",
+            "label": "Next Up Max Days",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 0
+        },
+        {
+            "ns": "prefs",
+            "key": "next_up_rewatching",
+            "label": "Next Up Rewatching",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "classic_rows",
+            "label": "Classic Rows",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "next_up_excluded_series_ids",
+            "label": "Next Up Excluded Series Ids",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "hidden_cw_item_ids",
+            "label": "Hidden Cw Item Ids",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "last_viewed_season_by_series",
+            "label": "Last Viewed Season By Series",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "show_clock_on_home",
+            "label": "Show Clock On Home",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "show_settings_in_home_search",
+            "label": "Show Settings In Home Search",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "hide_top_header_on_scroll",
+            "label": "Hide Top Header On Scroll",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "home_ns_migrated",
+            "label": "Home Ns Migrated",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "video_seek_duration_ms",
+            "label": "Video Seek Duration Ms",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 10000.0
+        },
+        {
+            "ns": "prefs",
+            "key": "video_controls_timeout_ms",
+            "label": "Video Controls Timeout Ms",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 5000.0
+        },
+        {
+            "ns": "prefs",
+            "key": "video_hide_osd_on_pause",
+            "label": "Video Hide Osd On Pause",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "video_resume_on_headset_plug",
+            "label": "Video Resume On Headset Plug",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "video_default_orientation",
+            "label": "Video Default Orientation",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "SENSOR_LANDSCAPE",
+            "options": [
+                "SENSOR_LANDSCAPE",
+                "SENSOR_PORTRAIT",
+                "SENSOR",
+                "LOCKED_LANDSCAPE",
+                "LOCKED_PORTRAIT"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "video_default_aspect_ratio",
+            "label": "Video Default Aspect Ratio",
+            "description": "",
+            "valueType": "string",
+            "defaultValue": "AUTO"
+        },
+        {
+            "ns": "prefs",
+            "key": "video_gesture_mode",
+            "label": "Video Gesture Mode",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "video_gestures_enabled",
+            "label": "Video Gestures Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "video_gesture_indicator_side",
+            "label": "Video Gesture Indicator Side",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "OPPOSITE",
+            "options": [
+                "OPPOSITE",
+                "SAME"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "video_double_tap_hold_seek_enabled",
+            "label": "Video Double Tap Hold Seek Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "input_bindings",
+            "label": "Input Bindings",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "video_pass_out_protection_hours",
+            "label": "Video Pass Out Protection Hours",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 0
+        },
+        {
+            "ns": "prefs",
+            "key": "video_skip_back_on_resume_ms",
+            "label": "Video Skip Back On Resume Ms",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 0.0
+        },
+        {
+            "ns": "prefs",
+            "key": "video_hold_speed_enabled",
+            "label": "Video Hold Speed Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "video_hold_speed_multiplier",
+            "label": "Video Hold Speed Multiplier",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 2.0
+        },
+        {
+            "ns": "prefs",
+            "key": "video_default_speed",
+            "label": "Video Default Speed",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 1.0
+        },
+        {
+            "ns": "prefs",
+            "key": "video_autoplay_next",
+            "label": "Video Autoplay Next",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "still_watching_mode",
+            "label": "Still Watching Mode",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "OFF",
+            "options": [
+                "OFF",
+                "EPISODES",
+                "HOURS",
+                "BOTH"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "still_watching_episode_threshold",
+            "label": "Still Watching Episode Threshold",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 0
+        },
+        {
+            "ns": "prefs",
+            "key": "trailer_autoplay",
+            "label": "Trailer Autoplay",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "cinema_mode_enabled",
+            "label": "Cinema Mode Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "video_swipe_seek_max_ms",
+            "label": "Video Swipe Seek Max Ms",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 120000.0
+        },
+        {
+            "ns": "prefs",
+            "key": "video_remember_brightness",
+            "label": "Video Remember Brightness",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "video_brightness_level",
+            "label": "Video Brightness Level",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 0.5
+        },
+        {
+            "ns": "prefs",
+            "key": "video_remember_muted",
+            "label": "Video Remember Muted",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "video_muted",
+            "label": "Video Muted",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "video_auto_skip_intro",
+            "label": "Video Auto Skip Intro",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "video_auto_skip_outro",
+            "label": "Video Auto Skip Outro",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "trickplay_enabled",
+            "label": "Trickplay Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "trickplay_on_seek_gesture",
+            "label": "Trickplay On Seek Gesture",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "video_episode_browser_enabled",
+            "label": "Video Episode Browser Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "video_show_playback_metadata",
+            "label": "Video Show Playback Metadata",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "video_preload_buffer_size",
+            "label": "Video Preload Buffer Size",
+            "description": "",
+            "valueType": "enum",
+            "defaultValue": "MEDIUM",
+            "options": [
+                "LOW",
+                "MEDIUM",
+                "HIGH",
+                "UNLIMITED"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "video_cache_size_mb",
+            "label": "Video Cache Size Mb",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 1024
+        },
+        {
+            "ns": "prefs",
+            "key": "show_clock_in_player",
+            "label": "Show Clock In Player",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "show_time_remaining",
+            "label": "Show Time Remaining",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "tv_zoom_mode_percent",
+            "label": "Tv Zoom Mode Percent",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 0.0
+        },
+        {
+            "ns": "prefs",
+            "key": "incognito_mode_enabled",
+            "label": "Incognito Mode Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "segment_behaviors",
+            "label": "Segment Behaviors",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "skip_intro_enabled",
+            "label": "Skip Intro Enabled",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "skip_outro_enabled",
+            "label": "Skip Outro Enabled",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "auto_skip_intro",
+            "label": "Auto Skip Intro",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "auto_skip_outro",
+            "label": "Auto Skip Outro",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "skip_segments_on_seek",
+            "label": "Skip Segments On Seek",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "idle_ambient_enabled",
+            "label": "Idle Ambient Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "idle_ambient_timeout_min",
+            "label": "Idle Ambient Timeout Min",
+            "description": "",
+            "valueType": "number",
+            "defaultValue": 5.0
+        },
+        {
+            "ns": "prefs",
+            "key": "discord_presence_enabled",
+            "label": "Discord Presence Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "hooks_enabled",
+            "label": "Hooks Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "hooks_play_cmd",
+            "label": "Hooks Play Cmd",
+            "description": "",
+            "valueType": "string",
+            "defaultValue": ""
+        },
+        {
+            "ns": "prefs",
+            "key": "hooks_stop_cmd",
+            "label": "Hooks Stop Cmd",
+            "description": "",
+            "valueType": "string",
+            "defaultValue": ""
+        },
+        {
+            "ns": "prefs",
+            "key": "hooks_ended_cmd",
+            "label": "Hooks Ended Cmd",
+            "description": "",
+            "valueType": "string",
+            "defaultValue": ""
+        },
+        {
+            "ns": "prefs",
+            "key": "hooks_idle_cmd",
+            "label": "Hooks Idle Cmd",
+            "description": "",
+            "valueType": "string",
+            "defaultValue": ""
+        },
+        {
+            "ns": "prefs",
+            "key": "hooks_idle_ended_cmd",
+            "label": "Hooks Idle Ended Cmd",
+            "description": "",
+            "valueType": "string",
+            "defaultValue": ""
+        },
+        {
+            "ns": "prefs",
+            "key": "enabled_experimental_features",
+            "label": "Enabled Experimental Features",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "self_update_check_enabled",
+            "label": "Self Update Check Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "self_update_download_enabled",
+            "label": "Self Update Download Enabled",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "app_language",
+            "label": "App Language",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "show_share_media_option",
+            "label": "Show Share Media Option",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "hide_search_history",
+            "label": "Hide Search History",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "prefer_audio_description",
+            "label": "Prefer Audio Description",
+            "description": "",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "update_dismiss_period",
+            "label": "Update Dismiss Period",
+            "description": "",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "remember_volume_per_content_type",
+            "label": "Remember Volume Per Content Type",
+            "description": "Remember playback volume per content type (movie, episode, …).",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "volume_profiles",
+            "label": "Volume Profiles",
+            "description": "Remembered volume levels as a JSON map of content-type bucket to level (0..1).",
+            "valueType": "string"
+        }
+    ]
+}
