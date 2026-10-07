@@ -4,9 +4,11 @@ using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyPlay.Configuration;
 using Jellyfin.Plugin.JellyPlay.Services.Cache;
+using Jellyfin.Plugin.JellyPlay.Services.Fetching;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
@@ -145,23 +147,28 @@ public sealed partial class AnimeMarkersService
     private static readonly TimeSpan MissCacheTtl = TimeSpan.FromHours(2);
 
     private readonly IHttpClientFactory _httpFactory;
+    private readonly ResilientFetcher _fetcher;
     private readonly FileCacheStore _cache;
     private readonly ILibraryManager _libraryManager;
     private readonly Func<AnimeConfig> _config;
     private readonly CircuitBreaker _fillerBreaker = new();
     private readonly CircuitBreaker _tenraiBreaker = new();
     private readonly ILogger<AnimeMarkersService> _logger;
+    private readonly TimeProvider _clock;
     private readonly Dictionary<string, FribbEntry> _fribbIndex = new(StringComparer.Ordinal);
     private readonly object _fribbLock = new();
+    private Task? _fribbFetch;
     private DateTime _fribbLoadedUtc;
 
-    public AnimeMarkersService(IHttpClientFactory httpFactory, FileCacheStore cache, ILibraryManager libraryManager, Func<AnimeConfig> config, ILogger<AnimeMarkersService> logger)
+    public AnimeMarkersService(IHttpClientFactory httpFactory, ResilientFetcher fetcher, FileCacheStore cache, ILibraryManager libraryManager, Func<AnimeConfig> config, ILogger<AnimeMarkersService> logger, TimeProvider? clock = null)
     {
         _httpFactory = httpFactory;
+        _fetcher = fetcher;
         _cache = cache;
         _libraryManager = libraryManager;
         _config = config;
         _logger = logger;
+        _clock = clock ?? TimeProvider.System;
     }
 
     public bool IsEnabled => _config().Enabled;
@@ -171,7 +178,7 @@ public sealed partial class AnimeMarkersService
     {
         get
         {
-            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var now = _fetcher.NowMs;
             return _fillerBreaker.IsOpen(now) && _tenraiBreaker.IsOpen(now);
         }
     }
@@ -197,7 +204,7 @@ public sealed partial class AnimeMarkersService
             return null;
         }
 
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var now = _fetcher.NowMs;
         var series = ResolveSeries(seriesId);
         // Precedence: explicit admin override (matched by seriesId) > the
         // library's provider ids + explicit hint > name-slug fallback.
@@ -276,31 +283,28 @@ public sealed partial class AnimeMarkersService
 
     private async Task<List<AnimeMarker>> FetchFillerMarkers(string slug)
     {
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        try
-        {
-            var client = _httpFactory.CreateClient("JellyPlayHttpClient");
-            using var request = new HttpRequestMessage(HttpMethod.Get, $"{FillerListBase}{Uri.EscapeDataString(slug)}");
-            request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-            var html = await (await client.SendAsync(request)).Content.ReadAsStringAsync();
-            var markers = ParseFillerList(html);
-            if (markers.Count == 0)
-            {
-                // A valid show page always lists episodes; zero rows means a bad
-                // slug or a layout change — let the breaker count it and degrade
-                // this series to Tenrai-only markers.
-                throw new InvalidOperationException($"AnimeFillerList scrape produced no rows for '{slug}'.");
-            }
+        var markers = await _fetcher.FetchAsync(
+            $"filler:{slug}",
+            (client, cancellationToken) => ScrapeFillerListAsync(client, slug, cancellationToken),
+            _fillerBreaker,
+            LogLevel.Debug);
+        return markers ?? new List<AnimeMarker>();
+    }
 
-            _fillerBreaker.RecordSuccess(now);
-            return markers;
-        }
-        catch (Exception ex)
+    private static async Task<List<AnimeMarker>?> ScrapeFillerListAsync(HttpClient client, string slug, CancellationToken cancellationToken)
+    {
+        using var request = ResilientFetcher.BrowserGetRequest($"{FillerListBase}{Uri.EscapeDataString(slug)}");
+        var html = await (await client.SendAsync(request, cancellationToken)).Content.ReadAsStringAsync(cancellationToken);
+        var markers = ParseFillerList(html);
+        if (markers.Count == 0)
         {
-            _fillerBreaker.RecordFailure(now);
-            _logger.LogDebug(ex, "FillerList fetch failed for {Slug}", slug);
-            return new List<AnimeMarker>();
+            // A valid show page always lists episodes; zero rows means a bad
+            // slug or a layout change — let the breaker count it and degrade
+            // this series to Tenrai-only markers.
+            throw new InvalidOperationException($"AnimeFillerList scrape produced no rows for '{slug}'.");
         }
+
+        return markers;
     }
 
     internal static List<AnimeMarker> ParseFillerList(string html)
@@ -330,31 +334,29 @@ public sealed partial class AnimeMarkersService
 
     private async Task<List<AnimeMarker>> FetchTenraiRecaps(string anilistId)
     {
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        try
-        {
-            var client = _httpFactory.CreateClient("JellyPlayHttpClient");
-            var json = await client.GetStringAsync($"{TenraiBase}?anilist_id={Uri.EscapeDataString(anilistId)}");
-            using var doc = JsonDocument.Parse(json);
-            var markers = new List<AnimeMarker>();
-            foreach (var recap in doc.RootElement.EnumerateArray())
-            {
-                if (recap.TryGetProperty("episode_number", out var episode)
-                    && episode.TryGetInt32(out var number))
-                {
-                    markers.Add(new AnimeMarker("recap", number, null));
-                }
-            }
+        var markers = await _fetcher.FetchAsync(
+            $"tenrai:{anilistId}",
+            async Task<List<AnimeMarker>?> (client, cancellationToken) =>
+                ParseTenraiRecaps(await client.GetStringAsync($"{TenraiBase}?anilist_id={Uri.EscapeDataString(anilistId)}", cancellationToken)),
+            _tenraiBreaker,
+            LogLevel.Debug);
+        return markers ?? new List<AnimeMarker>();
+    }
 
-            _tenraiBreaker.RecordSuccess(now);
-            return markers;
-        }
-        catch (Exception ex)
+    private static List<AnimeMarker> ParseTenraiRecaps(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var markers = new List<AnimeMarker>();
+        foreach (var recap in doc.RootElement.EnumerateArray())
         {
-            _tenraiBreaker.RecordFailure(now);
-            _logger.LogDebug(ex, "Tenrai recaps failed for {AniListId}", anilistId);
-            return new List<AnimeMarker>();
+            if (recap.TryGetProperty("episode_number", out var episode)
+                && episode.TryGetInt32(out var number))
+            {
+                markers.Add(new AnimeMarker("recap", number, null));
+            }
         }
+
+        return markers;
     }
 
     /// <summary>Loads (and periodically refreshes) the Fribb anime-list mapping, then matches the series' ids against it.</summary>
@@ -375,16 +377,30 @@ public sealed partial class AnimeMarkersService
         }
     }
 
+    /// <summary>
+    /// Loads (and periodically refreshes) the Fribb anime-list mapping.
+    /// Single-flight: concurrent cold callers share ONE fetch task (the
+    /// in-flight slot is guarded by the lock and cleared on failure so the
+    /// next caller retries); a loaded index re-fetches only once stale.
+    /// </summary>
     private async Task EnsureFribbIndexAsync()
     {
+        Task fetch;
         lock (_fribbLock)
         {
-            if (_fribbLoadedUtc > DateTime.UtcNow.AddHours(-Math.Max(1, _config().RefreshIntervalHours)))
+            if (_fribbLoadedUtc > _clock.GetUtcNow().UtcDateTime.AddHours(-Math.Max(1, _config().RefreshIntervalHours)))
             {
                 return;
             }
+
+            fetch = _fribbFetch ??= FetchFribbIndexAsync();
         }
 
+        await fetch;
+    }
+
+    private async Task FetchFribbIndexAsync()
+    {
         try
         {
             var url = _config().FribbListUrl;
@@ -431,11 +447,17 @@ public sealed partial class AnimeMarkersService
                     _fribbIndex[key] = entry;
                 }
 
-                _fribbLoadedUtc = DateTime.UtcNow;
+                _fribbLoadedUtc = _clock.GetUtcNow().UtcDateTime;
+                _fribbFetch = null;
             }
         }
         catch (Exception ex)
         {
+            lock (_fribbLock)
+            {
+                _fribbFetch = null; // cleared so the next caller retries
+            }
+
             _logger.LogDebug(ex, "Fribb anime-list refresh failed");
         }
     }

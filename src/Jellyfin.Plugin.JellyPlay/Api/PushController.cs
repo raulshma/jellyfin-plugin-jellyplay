@@ -1,7 +1,7 @@
 using Jellyfin.Plugin.JellyPlay.Helpers;
+using Jellyfin.Plugin.JellyPlay.Services.Admin;
 using Jellyfin.Plugin.JellyPlay.Services.Push;
 using MediaBrowser.Common.Api;
-using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -16,20 +16,20 @@ namespace Jellyfin.Plugin.JellyPlay.Api;
 [ApiController]
 [Authorize(Policy = Policies.RequiresElevation)]
 [Route(JellyPlayContract.RoutePrefix + "/admin/push")]
-public class PushAdminController : ControllerBase
+public class PushAdminController : JellyPlayControllerBase
 {
     private readonly PushDispatcher _push;
-    private readonly IUserManager _users;
+    private readonly AdminUsers _adminUsers;
 
-    public PushAdminController(PushDispatcher push, IUserManager users)
+    public PushAdminController(PushDispatcher push, AdminUsers adminUsers)
     {
         _push = push;
-        _users = users;
+        _adminUsers = adminUsers;
     }
 
     /// <summary>Whether push dispatching is enabled, plus every registered device.</summary>
     [HttpGet("overview")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetOverview()
-        => JellyPlayResponses.Camel(_push.GetAdminOverview(guid => _users.GetUserById(guid)?.Username));
+        => JellyPlayResponses.Camel(_push.GetAdminOverview(_adminUsers.ResolveName));
 }

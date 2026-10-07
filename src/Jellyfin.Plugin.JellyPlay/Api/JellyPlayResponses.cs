@@ -1,4 +1,7 @@
 using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
@@ -32,41 +35,45 @@ public static class JellyPlayResponses
         Converters = { new SystemTextJsonElementConverter() }
     };
 
-    public static ContentResult Camel(object? payload) => new()
-    {
-        Content = JsonConvert.SerializeObject(payload ?? new object(), Settings),
-        ContentType = "application/json; charset=utf-8",
-        StatusCode = 200,
-    };
+    public static ContentResult Camel(object? payload) => Gate(200, JsonConvert.SerializeObject(payload ?? new object(), Settings));
 
-    /// <summary>camelCase JSON with a non-200 status (e.g. the newsletter 400 contract).</summary>
-    public static ContentResult Camel(object? payload, int statusCode) => new()
-    {
-        Content = JsonConvert.SerializeObject(payload ?? new object(), Settings),
-        ContentType = "application/json; charset=utf-8",
-        StatusCode = statusCode,
-    };
+    /// <summary>camelCase JSON with a non-200 status (e.g. the newsletter 400 contract, the reprovision 502).</summary>
+    public static ContentResult Camel(object? payload, int statusCode) => Gate(statusCode, JsonConvert.SerializeObject(payload ?? new object(), Settings));
 
     /// <summary>Bare 200 for actions with no response body.</summary>
-    public static ContentResult Camel() => new()
-    {
-        StatusCode = 200,
-    };
+    public static ContentResult Camel() => Gate(200, content: null);
+
+    /// <summary>202 with a camelCase body (the broadcast route's response).</summary>
+    public static ContentResult Accepted(object? payload) => Camel(payload, StatusCodes.Status202Accepted);
 
     /// <summary>
     /// The ONE error-body shape ({error: "code"}) through the same camelCase
     /// gate — raw StatusCode(...) calls bypass the gate and leak PascalCase
     /// serialization, contradicting docs/CONTRACT.md. All error responses
-    /// (400/401/404/429/503…) go through here.
+    /// (400/401/404/429/503…) go through here. The error code crosses the wire
+    /// verbatim (byte stability): a null stays null.
     /// </summary>
-    public static ContentResult Error(int statusCode, string error) => Camel(new { error }, statusCode);
-}
+    public static ContentResult Error(int statusCode, string? error) => Camel(new { error }, statusCode);
 
-/// <summary>Controller-side sugar for the shared error-body gate.</summary>
-public static class JellyPlayResponseExtensions
-{
-    public static ContentResult JellyPlayError(this ControllerBase _, int statusCode, string error)
-        => JellyPlayResponses.Error(statusCode, error);
+    /// <summary>
+    /// The gate for responses written outside the MVC result pipeline (the
+    /// Seerr proxy pass-through writes the response itself): the same gate
+    /// serializer and error shape, straight onto the response.
+    /// </summary>
+    public static async Task WriteErrorAsync(HttpResponse response, int statusCode, string error, CancellationToken cancellationToken = default)
+    {
+        response.StatusCode = statusCode;
+        response.ContentType = "application/json; charset=utf-8";
+        await response.WriteAsync(JsonConvert.SerializeObject(new { error }, Settings), cancellationToken);
+    }
+
+    /// <summary>The one place a gate result is built — a plain ContentResult, which the response filter never touches (it rewrites ObjectResults only).</summary>
+    private static ContentResult Gate(int statusCode, string? content) => new()
+    {
+        Content = content,
+        ContentType = content is null ? null : "application/json; charset=utf-8",
+        StatusCode = statusCode,
+    };
 }
 
 /// <summary>

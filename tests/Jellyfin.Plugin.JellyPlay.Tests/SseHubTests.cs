@@ -1,11 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyPlay.Realtime;
 using Jellyfin.Plugin.JellyPlay.Services.Events;
-using Jellyfin.Plugin.JellyPlay.Services.Cache;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -20,27 +18,14 @@ public class SseHubTests
         var aliceId = hub.Subscribe("alice", "settings");
         var bobId = hub.Subscribe("bob", "settings");
 
-        var readTask = Task.Run(async () =>
-        {
-            var received = new List<SseEvent>();
-            await foreach (var evt in hub.ReadAllAsync(aliceId, CancellationToken.None))
-            {
-                received.Add(evt);
-                break;
-            }
-
-            return received;
-        });
-
-        // Give the reader a beat to attach.
-        await Task.Delay(50);
+        // The bounded channel buffers the event, so publish-then-read is race-free.
         var delivered = hub.PublishToUser("settings", "alice", "settings.changed", "{\"x\":1}");
-        var receivedForAlice = await readTask.WaitAsync(TimeSpan.FromSeconds(2));
+        var evt = await hub.WaitForEventAsync(aliceId, TimeSpan.FromSeconds(2), CancellationToken.None);
 
         Assert.Equal(1, delivered);
-        Assert.Single(receivedForAlice);
-        Assert.Equal("settings.changed", receivedForAlice[0].EventName);
-        Assert.NotEqual(0UL, receivedForAlice[0].Id);
+        Assert.NotNull(evt);
+        Assert.Equal("settings.changed", evt!.EventName);
+        Assert.NotEqual(0UL, evt.Id);
 
         hub.Unsubscribe(aliceId);
         hub.Unsubscribe(bobId);
@@ -119,31 +104,6 @@ public class EpisodeGroupBufferTests
 
         Assert.Equal(2, buffer.FlushAll().Count);
         Assert.Equal(0, buffer.PendingGroupCount);
-    }
-}
-
-public class CircuitBreakerTests
-{
-    [Fact]
-    public void Opens_AfterThreshold_AndCloses_AfterWindow()
-    {
-        var breaker = new CircuitBreaker(failureThreshold: 2, openWindow: TimeSpan.FromSeconds(1));
-
-        breaker.RecordFailure(0);
-        Assert.False(breaker.IsOpen(1));
-
-        breaker.RecordFailure(2);
-        Assert.True(breaker.IsOpen(3));
-
-        // Still open inside the window.
-        Assert.True(breaker.IsOpen(900));
-
-        // After the window, a trial is allowed.
-        Assert.False(breaker.IsOpen(1500));
-
-        // Success resets the counter.
-        breaker.RecordSuccess(1600);
-        Assert.False(breaker.IsOpen(1700));
     }
 }
 

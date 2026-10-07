@@ -14,7 +14,7 @@ namespace Jellyfin.Plugin.JellyPlay.Api;
 [ApiController]
 [Authorize]
 [Route("newsletter")]
-public class NewsletterController : ControllerBase
+public class NewsletterController : JellyPlayControllerBase
 {
     private readonly NewsletterService _newsletter;
 

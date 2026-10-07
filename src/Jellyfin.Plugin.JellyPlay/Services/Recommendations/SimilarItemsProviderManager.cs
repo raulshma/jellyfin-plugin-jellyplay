@@ -37,6 +37,15 @@ public class SimilarItemsProviderManager : IHostedService
     private PropertyInfo? _queryExcludeItemIds;
     private readonly List<object> _stockProviders = [];
 
+    /// <summary>
+    /// True once this host's similar-items pipeline actually took the plugin's
+    /// provider (Jellyfin 12+; the registration is reflection-guarded and a
+    /// no-op on 10.11). Surfaced through the capabilities payload so clients
+    /// can tell "stock /Items/Similar returns our scored list" from "the
+    /// plugin route is the only similar source" without probing host versions.
+    /// </summary>
+    public bool SimilarPipelineRegistered { get; private set; }
+
     public SimilarItemsProviderManager(
         IServiceProvider serviceProvider,
         SimilarItemsService similarItemsService,
@@ -131,6 +140,7 @@ public class SimilarItemsProviderManager : IHostedService
         }
 
         addPartsMethod.Invoke(simMgr, [arr]);
+        SimilarPipelineRegistered = true;
         _logger.LogInformation("JellyPlay similar-items provider registered ahead of {Count} stock providers.", allList.Count - 1);
     }
 

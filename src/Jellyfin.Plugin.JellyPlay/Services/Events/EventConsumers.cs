@@ -3,19 +3,16 @@ using Jellyfin.Data.Events.Users;
 using MediaBrowser.Controller.Events;
 using MediaBrowser.Controller.Events.Session;
 using MediaBrowser.Controller.Library;
-using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyPlay.Services.Events;
 
 public sealed class SessionStartedEvent : IEventConsumer<SessionStartedEventArgs>
 {
     private readonly EventService _events;
-    private readonly ILogger<SessionStartedEvent> _logger;
 
-    public SessionStartedEvent(EventService events, ILogger<SessionStartedEvent> logger)
+    public SessionStartedEvent(EventService events)
     {
         _events = events;
-        _logger = logger;
     }
 
     public Task OnEvent(SessionStartedEventArgs? eventArgs)
@@ -33,12 +30,10 @@ public sealed class SessionStartedEvent : IEventConsumer<SessionStartedEventArgs
 public sealed class PlaybackStartedEvent : IEventConsumer<PlaybackStartEventArgs>
 {
     private readonly EventService _events;
-    private readonly ILogger<PlaybackStartedEvent> _logger;
 
-    public PlaybackStartedEvent(EventService events, ILogger<PlaybackStartedEvent> logger)
+    public PlaybackStartedEvent(EventService events)
     {
         _events = events;
-        _logger = logger;
     }
 
     public Task OnEvent(PlaybackStartEventArgs? eventArgs)
@@ -56,12 +51,10 @@ public sealed class PlaybackStartedEvent : IEventConsumer<PlaybackStartEventArgs
 public sealed class UserLockedOutEvent : IEventConsumer<UserLockedOutEventArgs>
 {
     private readonly EventService _events;
-    private readonly ILogger<UserLockedOutEvent> _logger;
 
-    public UserLockedOutEvent(EventService events, ILogger<UserLockedOutEvent> logger)
+    public UserLockedOutEvent(EventService events)
     {
         _events = events;
-        _logger = logger;
     }
 
     public Task OnEvent(UserLockedOutEventArgs? eventArgs)

@@ -1,13 +1,13 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Net.Http;
-using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyPlay.Configuration;
 using Jellyfin.Plugin.JellyPlay.Services.Cache;
+using Jellyfin.Plugin.JellyPlay.Services.Fetching;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyPlay.Services.Ratings;
@@ -34,18 +34,16 @@ public sealed record ImdbChart(string Chart, IReadOnlyList<ChartEntry> Entries, 
 public sealed class MdbListService
 {
     private const string BaseUrl = "https://api.mdblist.com";
-    private readonly IHttpClientFactory _httpFactory;
+    private readonly ResilientFetcher _fetcher;
     private readonly FileCacheStore _cache;
     private readonly CircuitBreaker _breaker = new();
     private readonly Func<RatingsConfig> _config;
-    private readonly ILogger<MdbListService> _logger;
 
-    public MdbListService(IHttpClientFactory httpFactory, FileCacheStore cache, Func<RatingsConfig> config, ILogger<MdbListService> logger)
+    public MdbListService(ResilientFetcher fetcher, FileCacheStore cache, Func<RatingsConfig> config)
     {
-        _httpFactory = httpFactory;
+        _fetcher = fetcher;
         _cache = cache;
         _config = config;
-        _logger = logger;
     }
 
     public bool IsConfigured => !string.IsNullOrEmpty(ApiKey);
@@ -59,51 +57,33 @@ public sealed class MdbListService
             return null;
         }
 
-        var cacheKey = $"mdblist:{imdbId}";
-        var cached = _cache.Get<RatingsResult>(cacheKey, TimeSpan.FromHours(TtlHours));
-        if (cached is not null)
-        {
-            return cached;
-        }
+        return await _fetcher.GetOrFetchAsync(
+            $"mdblist:{imdbId}",
+            TimeSpan.FromHours(TtlHours),
+            (client, cancellationToken) => FetchRatingsAsync(client, imdbId, ApiKey, cancellationToken),
+            _breaker);
+    }
 
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (_breaker.IsOpen(now))
+    private static async Task<RatingsResult?> FetchRatingsAsync(HttpClient client, string imdbId, string apiKey, CancellationToken cancellationToken)
+    {
+        var response = await client.GetAsync($"{BaseUrl}/find/{imdbId}?apikey={apiKey}", cancellationToken);
+        response.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        var ratings = new List<RatingEntry>();
+        var root = doc.RootElement;
+        if (root.TryGetProperty("ratings", out var list) && list.ValueKind == JsonValueKind.Array)
         {
-            _logger.LogDebug("MDBList circuit open; skipping");
-            return null;
-        }
-
-        try
-        {
-            var client = _httpFactory.CreateClient("JellyPlayHttpClient");
-            var response = await client.GetAsync($"{BaseUrl}/find/{imdbId}?apikey={ApiKey}");
-            response.EnsureSuccessStatusCode();
-            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            var ratings = new List<RatingEntry>();
-            var root = doc.RootElement;
-            if (root.TryGetProperty("ratings", out var list) && list.ValueKind == JsonValueKind.Array)
+            foreach (var entry in list.EnumerateArray())
             {
-                foreach (var entry in list.EnumerateArray())
-                {
-                    ratings.Add(new RatingEntry(
-                        entry.TryGetProperty("source", out var source) ? source.GetString() ?? "unknown" : "unknown",
-                        entry.TryGetProperty("value", out var value) && value.TryGetDouble(out var score) ? score : null,
-                        entry.TryGetProperty("votes", out var votes) && votes.TryGetInt32(out var voteCount) ? voteCount : null,
-                        entry.TryGetProperty("url", out var url) ? url.GetString() : null));
-                }
+                ratings.Add(new RatingEntry(
+                    entry.TryGetProperty("source", out var source) ? source.GetString() ?? "unknown" : "unknown",
+                    entry.TryGetProperty("value", out var value) && value.TryGetDouble(out var score) ? score : null,
+                    entry.TryGetProperty("votes", out var votes) && votes.TryGetInt32(out var voteCount) ? voteCount : null,
+                    entry.TryGetProperty("url", out var url) ? url.GetString() : null));
             }
+        }
 
-            var result = new RatingsResult(imdbId, ratings);
-            _cache.Set(cacheKey, result);
-            _breaker.RecordSuccess(now);
-            return result;
-        }
-        catch (Exception ex)
-        {
-            _breaker.RecordFailure(now);
-            _logger.LogWarning(ex, "MDBList ratings fetch failed for {ImdbId}", imdbId);
-            return null;
-        }
+        return new RatingsResult(imdbId, ratings);
     }
 
     public async Task<string?> GetKeyInfo()
@@ -113,17 +93,10 @@ public sealed class MdbListService
             return null;
         }
 
-        try
-        {
-            var client = _httpFactory.CreateClient("JellyPlayHttpClient");
-            var json = await client.GetStringAsync($"{BaseUrl}/user?apikey={ApiKey}");
-            return json;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "MDBList key info failed");
-            return null;
-        }
+        return await _fetcher.FetchAsync(
+            "mdblist:keyinfo",
+            async Task<string?> (client, cancellationToken) => await client.GetStringAsync($"{BaseUrl}/user?apikey={ApiKey}", cancellationToken),
+            failureLogLevel: LogLevel.Debug);
     }
 
     public void ClearCache(string? imdbId)
@@ -143,18 +116,14 @@ public sealed class MdbListService
 public sealed class TmdbRatingsService
 {
     private const string BaseUrl = "https://api.themoviedb.org/3";
-    private readonly IHttpClientFactory _httpFactory;
-    private readonly FileCacheStore _cache;
+    private readonly ResilientFetcher _fetcher;
     private readonly CircuitBreaker _breaker = new();
     private readonly Func<RatingsConfig> _config;
-    private readonly ILogger<TmdbRatingsService> _logger;
 
-    public TmdbRatingsService(IHttpClientFactory httpFactory, FileCacheStore cache, Func<RatingsConfig> config, ILogger<TmdbRatingsService> logger)
+    public TmdbRatingsService(ResilientFetcher fetcher, Func<RatingsConfig> config)
     {
-        _httpFactory = httpFactory;
-        _cache = cache;
+        _fetcher = fetcher;
         _config = config;
-        _logger = logger;
     }
 
     private string? ApiKey => _config().TmdbApiKey;
@@ -169,49 +138,33 @@ public sealed class TmdbRatingsService
             return null;
         }
 
-        var cacheKey = $"tmdb:season:{tmdbId}:{seasonNumber}";
-        var cached = _cache.Get<IReadOnlyDictionary<int, EpisodeRatingsResult>>(cacheKey, TimeSpan.FromHours(Ttl));
-        if (cached is not null)
+        return await _fetcher.GetOrFetchAsync(
+            $"tmdb:season:{tmdbId}:{seasonNumber}",
+            TimeSpan.FromHours(Ttl),
+            (client, cancellationToken) => FetchSeasonRatingsAsync(client, tmdbId, seasonNumber, ApiKey, cancellationToken),
+            _breaker);
+    }
+
+    private static async Task<IReadOnlyDictionary<int, EpisodeRatingsResult>?> FetchSeasonRatingsAsync(HttpClient client, string tmdbId, int seasonNumber, string? apiKey, CancellationToken cancellationToken)
+    {
+        var json = await client.GetStringAsync($"{BaseUrl}/tv/{tmdbId}/season/{seasonNumber}?api_key={apiKey}", cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+        var results = new Dictionary<int, EpisodeRatingsResult>();
+        foreach (var episode in doc.RootElement.GetProperty("episodes").EnumerateArray())
         {
-            return cached;
+            var number = episode.TryGetProperty("episode_number", out var n) ? n.GetInt32() : 0;
+            var score = episode.TryGetProperty("vote_average", out var v) && v.TryGetDouble(out var d) ? d : (double?)null;
+            var votes = episode.TryGetProperty("vote_count", out var vc) ? vc.GetInt32() : (int?)null;
+            results[number] = new EpisodeRatingsResult(
+                null,
+                score,
+                votes,
+                score is null
+                    ? Array.Empty<RatingEntry>()
+                    : new[] { new RatingEntry("TMDB", score, votes, null) });
         }
 
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (_breaker.IsOpen(now))
-        {
-            return null;
-        }
-
-        try
-        {
-            var client = _httpFactory.CreateClient("JellyPlayHttpClient");
-            var json = await client.GetStringAsync($"{BaseUrl}/tv/{tmdbId}/season/{seasonNumber}?api_key={ApiKey}");
-            using var doc = JsonDocument.Parse(json);
-            var results = new Dictionary<int, EpisodeRatingsResult>();
-            foreach (var episode in doc.RootElement.GetProperty("episodes").EnumerateArray())
-            {
-                var number = episode.TryGetProperty("episode_number", out var n) ? n.GetInt32() : 0;
-                var score = episode.TryGetProperty("vote_average", out var v) && v.TryGetDouble(out var d) ? d : (double?)null;
-                var votes = episode.TryGetProperty("vote_count", out var vc) ? vc.GetInt32() : (int?)null;
-                results[number] = new EpisodeRatingsResult(
-                    null,
-                    score,
-                    votes,
-                    score is null
-                        ? Array.Empty<RatingEntry>()
-                        : new[] { new RatingEntry("TMDB", score, votes, null) });
-            }
-
-            _cache.Set(cacheKey, results);
-            _breaker.RecordSuccess(now);
-            return results;
-        }
-        catch (Exception ex)
-        {
-            _breaker.RecordFailure(now);
-            _logger.LogWarning(ex, "TMDB season ratings failed for {TmdbId} S{Season}", tmdbId, seasonNumber);
-            return null;
-        }
+        return results;
     }
 
     /// <summary>Next unaired episode info for a series, from TMDB.</summary>
@@ -224,34 +177,26 @@ public sealed class TmdbRatingsService
             return null;
         }
 
-        var cacheKey = $"tmdb:next:{tmdbId}";
-        var cached = _cache.Get<NextEpisodeInfo>(cacheKey, TimeSpan.FromHours(6));
-        if (cached is not null)
+        return await _fetcher.GetOrFetchAsync(
+            $"tmdb:next:{tmdbId}",
+            TimeSpan.FromHours(6),
+            (client, cancellationToken) => FetchNextEpisodeAsync(client, tmdbId, ApiKey, cancellationToken),
+            _breaker,
+            failureLogLevel: LogLevel.Debug); // per-episode background lookup — a dead upstream is Debug-worthy
+    }
+
+    private static async Task<NextEpisodeInfo?> FetchNextEpisodeAsync(HttpClient client, string tmdbId, string? apiKey, CancellationToken cancellationToken)
+    {
+        var json = await client.GetStringAsync($"{BaseUrl}/tv/{tmdbId}?api_key={apiKey}", cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.TryGetProperty("next_episode_to_air", out var next) && next.ValueKind == JsonValueKind.Object)
         {
-            return cached;
+            var name = next.TryGetProperty("name", out var n) ? n.GetString() : null;
+            var airDate = next.TryGetProperty("air_date", out var a) ? a.GetString() : null;
+            return new NextEpisodeInfo(name, airDate);
         }
 
-        try
-        {
-            var client = _httpFactory.CreateClient("JellyPlayHttpClient");
-            var json = await client.GetStringAsync($"{BaseUrl}/tv/{tmdbId}?api_key={ApiKey}");
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("next_episode_to_air", out var next) && next.ValueKind == JsonValueKind.Object)
-            {
-                var name = next.TryGetProperty("name", out var n) ? n.GetString() : null;
-                var airDate = next.TryGetProperty("air_date", out var a) ? a.GetString() : null;
-                var result = new NextEpisodeInfo(name, airDate);
-                _cache.Set(cacheKey, result);
-                return result;
-            }
-
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "TMDB next-episode failed for {TmdbId}", tmdbId);
-            return null;
-        }
+        return null;
     }
 
     private int Ttl => _config().CacheTtlHours;
@@ -265,18 +210,14 @@ public sealed class TmdbRatingsService
 public sealed partial class ImdbChartsService
 {
     private const string ChartUrl = "https://www.imdb.com/chart/top/?ref_=nv_tp_250";
-    private readonly IHttpClientFactory _httpFactory;
-    private readonly FileCacheStore _cache;
+    private readonly ResilientFetcher _fetcher;
     private readonly CircuitBreaker _breaker = new(failureThreshold: 2, openWindow: TimeSpan.FromHours(6));
     private readonly Func<RatingsConfig> _config;
-    private readonly ILogger<ImdbChartsService> _logger;
 
-    public ImdbChartsService(IHttpClientFactory httpFactory, FileCacheStore cache, Func<RatingsConfig> config, ILogger<ImdbChartsService> logger)
+    public ImdbChartsService(ResilientFetcher fetcher, Func<RatingsConfig> config)
     {
-        _httpFactory = httpFactory;
-        _cache = cache;
+        _fetcher = fetcher;
         _config = config;
-        _logger = logger;
     }
 
     public bool IsEnabled => _config().EnableImdbCharts;
@@ -288,41 +229,24 @@ public sealed partial class ImdbChartsService
             return null;
         }
 
-        var cached = _cache.Get<ImdbChart>("imdb:top250", TimeSpan.FromHours(24));
-        if (cached is not null)
+        return await _fetcher.GetOrFetchAsync(
+            "imdb:top250",
+            TimeSpan.FromHours(24),
+            FetchTop250Async,
+            _breaker);
+    }
+
+    private async Task<ImdbChart?> FetchTop250Async(HttpClient client, CancellationToken cancellationToken)
+    {
+        using var request = ResilientFetcher.BrowserGetRequest(ChartUrl);
+        var html = await (await client.SendAsync(request, cancellationToken)).Content.ReadAsStringAsync(cancellationToken);
+        var entries = ParseTop250(html);
+        if (entries.Count == 0)
         {
-            return cached;
+            throw new InvalidOperationException("Chart parse produced no entries; layout may have changed.");
         }
 
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (_breaker.IsOpen(now))
-        {
-            return null;
-        }
-
-        try
-        {
-            var client = _httpFactory.CreateClient("JellyPlayHttpClient");
-            using var request = new HttpRequestMessage(HttpMethod.Get, ChartUrl);
-            request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-            var html = await (await client.SendAsync(request)).Content.ReadAsStringAsync();
-            var entries = ParseTop250(html);
-            if (entries.Count == 0)
-            {
-                throw new InvalidOperationException("Chart parse produced no entries; layout may have changed.");
-            }
-
-            var chart = new ImdbChart("top250", entries, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-            _cache.Set("imdb:top250", chart);
-            _breaker.RecordSuccess(now);
-            return chart;
-        }
-        catch (Exception ex)
-        {
-            _breaker.RecordFailure(now);
-            _logger.LogWarning(ex, "IMDb top250 fetch failed");
-            return null;
-        }
+        return new ImdbChart("top250", entries, _fetcher.NowMs);
     }
 
     /// <summary>

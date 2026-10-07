@@ -1,4 +1,3 @@
-using System;
 using System.ComponentModel.DataAnnotations;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,31 +17,26 @@ namespace Jellyfin.Plugin.JellyPlay.Api;
 [ApiController]
 [Authorize]
 [Route(JellyPlayContract.RoutePrefix + "/seerr")]
-public class SeerrController : ControllerBase
+public class SeerrController : JellyPlayControllerBase
 {
     private readonly SeerrSessionService _sessions;
     private readonly SeerrProxyService _proxy;
     private readonly SeerrWebhookProvisioner _provisioner;
     private readonly Services.Events.EventService _events;
-    private readonly Services.Admin.WebhookRateLimiter _webhookRateLimiter;
     private readonly Func<Configuration.SeerrConfig> _config;
-    private readonly TimeProvider _clock;
 
     public SeerrController(
         SeerrSessionService sessions,
         SeerrProxyService proxy,
         SeerrWebhookProvisioner provisioner,
         Services.Events.EventService events,
-        Services.Admin.WebhookRateLimiter webhookRateLimiter,
         Func<Configuration.SeerrConfig> config)
     {
         _sessions = sessions;
         _proxy = proxy;
         _provisioner = provisioner;
         _events = events;
-        _webhookRateLimiter = webhookRateLimiter;
         _config = config;
-        _clock = TimeProvider.System;
     }
 
     [HttpPost("login")]
@@ -58,7 +52,11 @@ public class SeerrController : ControllerBase
             _ => new SeerrLoginResult(false, "unknown-auth-type")
         };
 
-        return result.Success ? JellyPlayResponses.Camel(new { linked = true }) : Unauthorized(new { error = result.Error });
+        return result.Success
+            ? JellyPlayResponses.Camel(new { linked = true })
+            // Byte-stability: the upstream error string goes over the wire
+            // verbatim — null stays null, no synthetic fallback.
+            : JellyPlayResponses.Error(StatusCodes.Status401Unauthorized, result.Error);
     }
 
     [HttpGet("status")]
@@ -106,13 +104,15 @@ public class SeerrController : ControllerBase
     }
 
     /// <summary>
-    /// Inbound Seerr webhook (AllowAnonymous). Abuse containment first —
-    /// 30/min per remote client (429 when exceeded) — then the secret check,
-    /// compared in constant time.
+    /// Inbound Seerr webhook (AllowAnonymous). Abuse containment runs first —
+    /// the rate-limit filter fires before the action (30/min per remote
+    /// client, 429 when exceeded) — then the secret check, compared in
+    /// constant time.
     /// </summary>
     [HttpPost("webhook")]
     [AllowAnonymous]
     [RequestSizeLimit(256 * 1024)] // anonymous inbound — cap the unauthenticated read before parsing
+    [RateLimit(typeof(Services.Admin.WebhookRateLimiter), "webhook", RateLimitKeyStrategy.ClientIdentity)]
     [ApiExplorerSettings(IgnoreApi = true)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -120,12 +120,6 @@ public class SeerrController : ControllerBase
     public async Task<IActionResult> Webhook()
     {
         var config = _config();
-        var clientKey = Services.Admin.WebhookSecurity.ClientIpKey(HttpContext, config.TrustProxyHeaders);
-        if (!_webhookRateLimiter.Allow(clientKey, _clock.GetUtcNow().ToUnixTimeMilliseconds()))
-        {
-            return this.JellyPlayError(StatusCodes.Status429TooManyRequests, "rate-limited");
-        }
-
         var secret = Request.Headers["X-JellyPlay-Webhook-Secret"].ToString();
         if (string.IsNullOrEmpty(config.WebhookSecret)
             || !Services.Admin.WebhookSecurity.SecretMatches(config.WebhookSecret, secret))
@@ -193,7 +187,7 @@ public class SeerrController : ControllerBase
         return ok
             ? JellyPlayResponses.Camel(new { provisioned = true, baseUrl, baseUrlSource = "request" })
             // Pinned response shape in docs/CONTRACT.md — not the generic error body.
-            : StatusCode(StatusCodes.Status502BadGateway, new { provisioned = false, baseUrl, baseUrlSource = "request" });
+            : JellyPlayResponses.Camel(new { provisioned = false, baseUrl, baseUrlSource = "request" }, StatusCodes.Status502BadGateway);
     }
 
     private string RequestBaseUrl()

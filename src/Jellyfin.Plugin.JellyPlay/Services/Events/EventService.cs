@@ -25,6 +25,7 @@ public sealed class EventService
     private readonly Func<IReadOnlyList<string>> _adminUserIds;
     private readonly PushDispatcher? _push;
     private readonly ILogger<EventService> _logger;
+    private readonly TimeProvider _clock;
     private readonly ConcurrentDictionary<string, long> _recentEventKeys = new();
 
     public EventService(
@@ -32,13 +33,15 @@ public sealed class EventService
         Func<EventsConfig> config,
         Func<IReadOnlyList<string>> adminUserIds,
         ILogger<EventService> logger,
-        PushDispatcher? push = null)
+        PushDispatcher? push = null,
+        TimeProvider? clock = null)
     {
         _hub = hub;
         _config = config;
         _adminUserIds = adminUserIds;
         _push = push;
         _logger = logger;
+        _clock = clock ?? TimeProvider.System;
     }
 
     public int PublishNewMedia(EpisodeGroup group)
@@ -174,7 +177,7 @@ public sealed class EventService
 
     private bool ShouldEmit(string key, int thresholdSeconds)
     {
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var now = _clock.GetUtcNow().ToUnixTimeMilliseconds();
         var thresholdMs = thresholdSeconds * 1000L;
         while (true)
         {

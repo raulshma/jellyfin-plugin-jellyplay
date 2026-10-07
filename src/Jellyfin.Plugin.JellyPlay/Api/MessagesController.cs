@@ -14,7 +14,7 @@ namespace Jellyfin.Plugin.JellyPlay.Api;
 [ApiController]
 [Authorize]
 [Route(JellyPlayContract.RoutePrefix)]
-public class MessagesController : ControllerBase
+public class MessagesController : JellyPlayControllerBase
 {
     private readonly MessageService _messages;
 

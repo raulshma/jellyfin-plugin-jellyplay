@@ -100,16 +100,6 @@ public sealed class SseHub
         return delivered;
     }
 
-    public IAsyncEnumerable<SseEvent> ReadAllAsync(Guid subscriberId, System.Threading.CancellationToken cancellationToken)
-    {
-        if (_subscribers.TryGetValue(subscriberId, out var subscriber))
-        {
-            return subscriber.Channel.Reader.ReadAllAsync(cancellationToken);
-        }
-
-        return EmptySequence();
-    }
-
     /// <summary>
     /// Waits up to <paramref name="timeout"/> for the subscriber's next event.
     /// Returns null when the window elapses (writer should emit a keepalive
@@ -143,10 +133,4 @@ public sealed class SseHub
     }
 
     public bool IsSubscribed(Guid subscriberId) => _subscribers.ContainsKey(subscriberId);
-
-    private static async IAsyncEnumerable<SseEvent> EmptySequence()
-    {
-        await Task.CompletedTask;
-        yield break;
-    }
 }

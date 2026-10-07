@@ -1,7 +1,7 @@
 using Jellyfin.Plugin.JellyPlay.Helpers;
+using Jellyfin.Plugin.JellyPlay.Services.Admin;
 using Jellyfin.Plugin.JellyPlay.Services.Analytics;
 using MediaBrowser.Common.Api;
-using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -16,15 +16,15 @@ namespace Jellyfin.Plugin.JellyPlay.Api;
 [ApiController]
 [Authorize(Policy = Policies.RequiresElevation)]
 [Route(JellyPlayContract.RoutePrefix + "/admin/analytics")]
-public class AnalyticsAdminController : ControllerBase
+public class AnalyticsAdminController : JellyPlayControllerBase
 {
     private readonly AnalyticsService _analytics;
-    private readonly IUserManager _users;
+    private readonly AdminUsers _adminUsers;
 
-    public AnalyticsAdminController(AnalyticsService analytics, IUserManager users)
+    public AnalyticsAdminController(AnalyticsService analytics, AdminUsers adminUsers)
     {
         _analytics = analytics;
-        _users = users;
+        _adminUsers = adminUsers;
     }
 
     /// <summary>
@@ -35,7 +35,7 @@ public class AnalyticsAdminController : ControllerBase
     [HttpGet("overview")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetOverview([FromQuery] int days = AnalyticsService.DefaultOverviewDays)
-        => JellyPlayResponses.Camel(_analytics.GetOverview(days, guid => _users.GetUserById(guid)?.Username));
+        => JellyPlayResponses.Camel(_analytics.GetOverview(days, _adminUsers.ResolveName));
 
     /// <summary>
     /// Raw finished playback sessions, newest-first. Optional userId filter
@@ -59,7 +59,7 @@ public class AnalyticsAdminController : ControllerBase
 [ApiController]
 [Authorize]
 [Route(JellyPlayContract.RoutePrefix + "/analytics")]
-public class AnalyticsMeController : ControllerBase
+public class AnalyticsMeController : JellyPlayControllerBase
 {
     private readonly AnalyticsService _analytics;
 

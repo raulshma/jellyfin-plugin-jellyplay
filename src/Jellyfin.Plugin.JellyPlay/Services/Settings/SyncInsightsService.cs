@@ -4,6 +4,8 @@ using System.Linq;
 using System.Text.Json;
 using Jellyfin.Plugin.JellyPlay.Api;
 using Jellyfin.Plugin.JellyPlay.Configuration;
+using Jellyfin.Plugin.JellyPlay.Helpers;
+using Jellyfin.Plugin.JellyPlay.Services.Admin;
 using Jellyfin.Plugin.JellyPlay.Storage;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
 
@@ -57,7 +59,7 @@ public sealed class SyncInsightsService
     /// <summary>The caller's recorded sync operations, newest-first; seq is the sync_history Id.</summary>
     public SyncHistoryResponse GetHistory(string userId, long? since, int limit)
     {
-        var clamped = Math.Clamp(limit == 0 ? DefaultHistoryLimit : limit, 1, MaxHistoryLimit);
+        var clamped = RequestLimits.Clamp(limit, DefaultHistoryLimit, MaxHistoryLimit);
         var entries = _db.GetSyncHistory(userId, since ?? 0, clamped)
             .Select(ToEntryDto)
             .ToList();
@@ -67,7 +69,7 @@ public sealed class SyncInsightsService
     /// <summary>
     /// Cross-user overview for admins: every user with settings rows, names
     /// resolved through <paramref name="userName"/> (falling back to the raw
-    /// id when the user is unknown to the host).
+    /// id when the user is unknown to the host — <see cref="AdminUsers.DisplayName"/>).
     /// </summary>
     public AdminSyncOverviewResponse GetAdminOverview(Func<Guid, string?> userName)
     {
@@ -79,12 +81,9 @@ public sealed class SyncInsightsService
             .Select(footprint =>
             {
                 summaries.TryGetValue(footprint.UserId, out var summary);
-                var name = Guid.TryParse(footprint.UserId, out var guid) && guid != Guid.Empty
-                    ? userName(guid)
-                    : null;
                 return new AdminSyncUserRow(
                     footprint.UserId,
-                    string.IsNullOrWhiteSpace(name) ? footprint.UserId : name!,
+                    AdminUsers.DisplayName(footprint.UserId, userName),
                     footprint.Keys,
                     footprint.Bytes,
                     summary?.LastSyncAt,
@@ -105,7 +104,7 @@ public sealed class SyncInsightsService
     /// </summary>
     public SyncHistoryKeysResponse? GetHistoryKeys(string userId, long seq, int limit = DefaultKeysLimit)
     {
-        var clamped = Math.Clamp(limit == 0 ? DefaultKeysLimit : limit, 1, MaxKeysLimit);
+        var clamped = RequestLimits.Clamp(limit, DefaultKeysLimit, MaxKeysLimit);
         var row = _db.GetSyncHistoryRow(userId, seq);
         if (row is null)
         {

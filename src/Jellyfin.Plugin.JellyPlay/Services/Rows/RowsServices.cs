@@ -3,9 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyPlay.Configuration;
-using Jellyfin.Plugin.JellyPlay.Services.Cache;
+using Jellyfin.Plugin.JellyPlay.Services.Fetching;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Mvc;
@@ -25,17 +26,15 @@ public sealed record RowResult(string Title, string Source, IReadOnlyList<RowIte
 /// </summary>
 public sealed partial class CustomRowsService
 {
-    private readonly IHttpClientFactory _httpFactory;
-    private readonly FileCacheStore _cache;
+    private readonly ResilientFetcher _fetcher;
     private readonly ILibraryManager _libraryManager;
-    private readonly Func<RatingsConfig> _config;
+    private readonly Func<RowsFetchConfig> _config;
     private readonly CircuitBreaker _breaker = new();
     private readonly ILogger<CustomRowsService> _logger;
 
-    public CustomRowsService(IHttpClientFactory httpFactory, FileCacheStore cache, ILibraryManager libraryManager, Func<RatingsConfig> config, ILogger<CustomRowsService> logger)
+    public CustomRowsService(ResilientFetcher fetcher, ILibraryManager libraryManager, Func<RowsFetchConfig> config, ILogger<CustomRowsService> logger)
     {
-        _httpFactory = httpFactory;
-        _cache = cache;
+        _fetcher = fetcher;
         _libraryManager = libraryManager;
         _config = config;
         _logger = logger;
@@ -68,37 +67,16 @@ public sealed partial class CustomRowsService
     /// <summary>Letterboxd list pages are scrapeable HTML; each entry has a poster with title/year in the film caption.</summary>
     private async Task<List<RowItem>?> FetchLetterboxdAsync(string listSlug)
     {
-        var cacheKey = $"letterboxd:{listSlug}";
-        var cached = _cache.Get<List<RowItem>>(cacheKey, CacheTtl);
-        if (cached is not null)
-        {
-            return cached;
-        }
-
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (_breaker.IsOpen(now))
-        {
-            _logger.LogDebug("Letterboxd circuit open; skipping {List}", listSlug);
-            return null;
-        }
-
-        try
-        {
-            var client = _httpFactory.CreateClient("JellyPlayHttpClient");
-            using var request = new HttpRequestMessage(HttpMethod.Get, $"https://letterboxd.com/{listSlug}/");
-            request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-            var html = await (await client.SendAsync(request)).Content.ReadAsStringAsync();
-            var items = ParseLetterboxd(html);
-            _cache.Set(cacheKey, items);
-            _breaker.RecordSuccess(now);
-            return items;
-        }
-        catch (Exception ex)
-        {
-            _breaker.RecordFailure(now);
-            _logger.LogWarning(ex, "Letterboxd list fetch failed: {List}", listSlug);
-            return null;
-        }
+        return await _fetcher.GetOrFetchAsync(
+            $"letterboxd:{listSlug}",
+            CacheTtl,
+            async Task<List<RowItem>?> (client, cancellationToken) =>
+            {
+                using var request = ResilientFetcher.BrowserGetRequest($"https://letterboxd.com/{listSlug}/");
+                var html = await (await client.SendAsync(request, cancellationToken)).Content.ReadAsStringAsync(cancellationToken);
+                return ParseLetterboxd(html);
+            },
+            _breaker);
     }
 
     internal static List<RowItem> ParseLetterboxd(string html)
@@ -128,37 +106,16 @@ public sealed partial class CustomRowsService
     /// <summary>IMDb find endpoint via MDBList-compatible IMDb list page scrape (watchlist / ls<id> lists).</summary>
     private async Task<List<RowItem>?> FetchImdbListAsync(string listId)
     {
-        var cacheKey = $"imdblist:{listId}";
-        var cached = _cache.Get<List<RowItem>>(cacheKey, CacheTtl);
-        if (cached is not null)
-        {
-            return cached;
-        }
-
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (_breaker.IsOpen(now))
-        {
-            _logger.LogDebug("IMDb list circuit open; skipping {List}", listId);
-            return null;
-        }
-
-        try
-        {
-            var client = _httpFactory.CreateClient("JellyPlayHttpClient");
-            using var request = new HttpRequestMessage(HttpMethod.Get, $"https://www.imdb.com/list/{listId}/");
-            request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-            var html = await (await client.SendAsync(request)).Content.ReadAsStringAsync();
-            var items = ParseImdbList(html);
-            _cache.Set(cacheKey, items);
-            _breaker.RecordSuccess(now);
-            return items;
-        }
-        catch (Exception ex)
-        {
-            _breaker.RecordFailure(now);
-            _logger.LogWarning(ex, "IMDb list fetch failed: {List}", listId);
-            return null;
-        }
+        return await _fetcher.GetOrFetchAsync(
+            $"imdblist:{listId}",
+            CacheTtl,
+            async Task<List<RowItem>?> (client, cancellationToken) =>
+            {
+                using var request = ResilientFetcher.BrowserGetRequest($"https://www.imdb.com/list/{listId}/");
+                var html = await (await client.SendAsync(request, cancellationToken)).Content.ReadAsStringAsync(cancellationToken);
+                return ParseImdbList(html);
+            },
+            _breaker);
     }
 
     internal static List<RowItem> ParseImdbList(string html)
@@ -188,94 +145,57 @@ public sealed partial class CustomRowsService
     private static partial System.Text.RegularExpressions.Regex ImdbItemRegex();
 
     /// <summary>MDBList official lists (needs key; top list endpoint returns structured JSON).</summary>
-    private async Task<List<RowItem>?> FetchMdbListAsync(string listSlug)
+    private Task<List<RowItem>?> FetchMdbListAsync(string listSlug)
     {
         var apiKey = _config().MdbListApiKey;
         if (string.IsNullOrEmpty(apiKey))
         {
-            return null;
+            return Task.FromResult<List<RowItem>?>(null);
         }
 
-        var cacheKey = $"mdblist-list:{listSlug}";
-        var cached = _cache.Get<List<RowItem>>(cacheKey, CacheTtl);
-        if (cached is not null)
-        {
-            return cached;
-        }
-
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (_breaker.IsOpen(now))
-        {
-            _logger.LogDebug("MDBList circuit open; skipping {List}", listSlug);
-            return null;
-        }
-
-        try
-        {
-            var client = _httpFactory.CreateClient("JellyPlayHttpClient");
-            var json = await client.GetStringAsync($"https://api.mdblist.com/lists/{listSlug}/items?apikey={apiKey}");
-            using var doc = JsonDocument.Parse(json);
-            var items = new List<RowItem>();
-            foreach (var item in doc.RootElement.GetProperty("items").EnumerateArray())
+        return _fetcher.GetOrFetchAsync(
+            $"mdblist-list:{listSlug}",
+            CacheTtl,
+            async Task<List<RowItem>?> (client, cancellationToken) =>
             {
-                items.Add(new RowItem(
-                    item.TryGetProperty("title", out var title) ? title.GetString() ?? string.Empty : string.Empty,
-                    item.TryGetProperty("release_year", out var year) && year.TryGetInt32(out var y) ? y.ToString() : null,
-                    item.TryGetProperty("imdb_id", out var imdb) && imdb.ValueKind == JsonValueKind.String ? imdb.GetString() : null,
-                    item.TryGetProperty("tmdb_id", out var tmdb) && tmdb.TryGetInt32(out var t) ? t.ToString() : null,
-                    null));
-            }
-
-            _cache.Set(cacheKey, items);
-            _breaker.RecordSuccess(now);
-            return items;
-        }
-        catch (Exception ex)
-        {
-            _breaker.RecordFailure(now);
-            _logger.LogWarning(ex, "MDBList list fetch failed: {List}", listSlug);
-            return null;
-        }
+                var json = await client.GetStringAsync($"https://api.mdblist.com/lists/{listSlug}/items?apikey={apiKey}", cancellationToken);
+                return ParseMdbListItems(json);
+            },
+            _breaker);
     }
 
-    /// <summary>TMDB official lists (GET /list/{id}, v3 api key from the ratings config — same client/pattern as TmdbRatingsService).</summary>
-    private async Task<List<RowItem>?> FetchTmdbListAsync(string listId)
+    private static List<RowItem> ParseMdbListItems(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var items = new List<RowItem>();
+        foreach (var item in doc.RootElement.GetProperty("items").EnumerateArray())
+        {
+            items.Add(new RowItem(
+                item.TryGetProperty("title", out var title) ? title.GetString() ?? string.Empty : string.Empty,
+                item.TryGetProperty("release_year", out var year) && year.TryGetInt32(out var y) ? y.ToString() : null,
+                item.TryGetProperty("imdb_id", out var imdb) && imdb.ValueKind == JsonValueKind.String ? imdb.GetString() : null,
+                item.TryGetProperty("tmdb_id", out var tmdb) && tmdb.TryGetInt32(out var t) ? t.ToString() : null,
+                null));
+        }
+
+        return items;
+    }
+
+    /// <summary>TMDB official lists (GET /list/{id}, v3 api key from the rows fetch config — same client/pattern as TmdbRatingsService).</summary>
+    private Task<List<RowItem>?> FetchTmdbListAsync(string listId)
     {
         var apiKey = _config().TmdbApiKey;
         if (string.IsNullOrEmpty(apiKey))
         {
-            return null;
+            return Task.FromResult<List<RowItem>?>(null);
         }
 
-        var cacheKey = $"tmdb-list:{listId}";
-        var cached = _cache.Get<List<RowItem>>(cacheKey, CacheTtl);
-        if (cached is not null)
-        {
-            return cached;
-        }
-
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (_breaker.IsOpen(now))
-        {
-            _logger.LogDebug("TMDB circuit open; skipping list {List}", listId);
-            return null;
-        }
-
-        try
-        {
-            var client = _httpFactory.CreateClient("JellyPlayHttpClient");
-            var json = await client.GetStringAsync($"https://api.themoviedb.org/3/list/{Uri.EscapeDataString(listId)}?api_key={apiKey}");
-            var items = ParseTmdbList(json);
-            _cache.Set(cacheKey, items);
-            _breaker.RecordSuccess(now);
-            return items;
-        }
-        catch (Exception ex)
-        {
-            _breaker.RecordFailure(now);
-            _logger.LogWarning(ex, "TMDB list fetch failed: {List}", listId);
-            return null;
-        }
+        return _fetcher.GetOrFetchAsync(
+            $"tmdb-list:{listId}",
+            CacheTtl,
+            async Task<List<RowItem>?> (client, cancellationToken) =>
+                ParseTmdbList(await client.GetStringAsync($"https://api.themoviedb.org/3/list/{Uri.EscapeDataString(listId)}?api_key={apiKey}", cancellationToken)),
+            _breaker);
     }
 
     /// <summary>
@@ -344,18 +264,14 @@ public sealed class SeasonalService
 {
     private static readonly string[] DefaultKeywords = ["christmas", "halloween", "valentines-day", "summer", "thanksgiving"];
 
-    private readonly IHttpClientFactory _httpFactory;
-    private readonly FileCacheStore _cache;
-    private readonly Func<RatingsConfig> _config;
+    private readonly ResilientFetcher _fetcher;
+    private readonly Func<RowsFetchConfig> _config;
     private readonly CircuitBreaker _breaker = new();
-    private readonly ILogger<SeasonalService> _logger;
 
-    public SeasonalService(IHttpClientFactory httpFactory, FileCacheStore cache, Func<RatingsConfig> config, ILogger<SeasonalService> logger)
+    public SeasonalService(ResilientFetcher fetcher, Func<RowsFetchConfig> config)
     {
-        _httpFactory = httpFactory;
-        _cache = cache;
+        _fetcher = fetcher;
         _config = config;
-        _logger = logger;
     }
 
     public async Task<RowResult?> GetSeasonalRow(string? keyword)
@@ -372,53 +288,38 @@ public sealed class SeasonalService
             return null;
         }
 
-        var cacheKey = $"seasonal:{kw}";
-        var cached = _cache.Get<List<RowItem>>(cacheKey, TimeSpan.FromDays(2));
-        if (cached is not null)
-        {
-            return new RowResult(TitleFor(kw), "tmdb", cached);
-        }
+        var items = await _fetcher.GetOrFetchAsync(
+            $"seasonal:{kw}",
+            TimeSpan.FromDays(2),
+            (client, cancellationToken) => FetchSeasonalItemsAsync(client, tmdbKey, kw, cancellationToken),
+            _breaker);
+        return items is null ? null : new RowResult(TitleFor(kw), "tmdb", items);
+    }
 
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (_breaker.IsOpen(now))
+    private static async Task<List<RowItem>?> FetchSeasonalItemsAsync(HttpClient client, string tmdbKey, string keyword, CancellationToken cancellationToken)
+    {
+        var json = await client.GetStringAsync(
+            $"https://api.themoviedb.org/3/discover/movie?api_key={tmdbKey}&with_keywords={Uri.EscapeDataString(keyword)}&sort_by=popularity.desc&vote_count.gte=50",
+            cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+        var items = new List<RowItem>();
+        foreach (var result in doc.RootElement.GetProperty("results").EnumerateArray())
         {
-            _logger.LogDebug("TMDB circuit open; skipping seasonal row {Keyword}", kw);
-            return null;
-        }
-
-        try
-        {
-            var client = _httpFactory.CreateClient("JellyPlayHttpClient");
-            var json = await client.GetStringAsync(
-                $"https://api.themoviedb.org/3/discover/movie?api_key={tmdbKey}&with_keywords={System.Uri.EscapeDataString(kw)}&sort_by=popularity.desc&vote_count.gte=50");
-            using var doc = JsonDocument.Parse(json);
-            var items = new List<RowItem>();
-            foreach (var result in doc.RootElement.GetProperty("results").EnumerateArray())
+            items.Add(new RowItem(
+                result.TryGetProperty("title", out var title) ? title.GetString() ?? string.Empty : string.Empty,
+                result.TryGetProperty("release_date", out var date) && date.ValueKind == JsonValueKind.String
+                    ? date.GetString() is { Length: >= 4 } release ? release[..4] : null
+                    : null,
+                null,
+                result.TryGetProperty("id", out var id) && id.TryGetInt32(out var i) ? i.ToString() : null,
+                null));
+            if (items.Count >= 20)
             {
-                items.Add(new RowItem(
-                    result.TryGetProperty("title", out var title) ? title.GetString() ?? string.Empty : string.Empty,
-                    result.TryGetProperty("release_date", out var date) && date.ValueKind == JsonValueKind.String
-                        ? date.GetString() is { Length: >= 4 } release ? release[..4] : null
-                        : null,
-                    null,
-                    result.TryGetProperty("id", out var id) && id.TryGetInt32(out var i) ? i.ToString() : null,
-                    null));
-                if (items.Count >= 20)
-                {
-                    break;
-                }
+                break;
             }
+        }
 
-            _cache.Set(cacheKey, items);
-            _breaker.RecordSuccess(now);
-            return new RowResult(TitleFor(kw), "tmdb", items);
-        }
-        catch (Exception ex)
-        {
-            _breaker.RecordFailure(now);
-            _logger.LogWarning(ex, "Seasonal row failed for keyword {Keyword}", kw);
-            return null;
-        }
+        return items;
     }
 
     private static string? PickSeasonalKeyword()

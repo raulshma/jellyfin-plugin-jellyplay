@@ -384,7 +384,7 @@ public sealed partial class JellyPlayDatabase
             foreach (var row in rows)
             {
                 using var statement = connection.Prepare(
-                    "insert into admin_defaults (Scope, Payload, UpdatedAt) values (@Scope, @Payload, @UpdatedAt)");
+                    $"insert into {AdminDefaultsTable} (Scope, Payload, UpdatedAt) values (@Scope, @Payload, @UpdatedAt)");
                 statement.Bind("@Scope", row.Scope);
                 statement.Bind("@Payload", row.Payload);
                 statement.Bind("@UpdatedAt", row.UpdatedAt);

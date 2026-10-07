@@ -8,8 +8,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ApiExplorer;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
 
 namespace Jellyfin.Plugin.JellyPlay.Api;
 
@@ -17,7 +15,7 @@ namespace Jellyfin.Plugin.JellyPlay.Api;
 [ApiController]
 [Authorize]
 [Route(JellyPlayContract.RoutePrefix)]
-public class JellyPlayController : ControllerBase
+public class JellyPlayController : JellyPlayControllerBase
 {
     private static readonly string[] AllFeatures =
     [
@@ -43,31 +41,17 @@ public class JellyPlayController : ControllerBase
 
     private readonly SettingsService _settings;
     private readonly Func<Configuration.PluginConfiguration> _config;
+    private readonly Services.Recommendations.SimilarItemsProviderManager _similarItems;
 
-    public JellyPlayController(SettingsService settings, Func<Configuration.PluginConfiguration> config)
+    public JellyPlayController(
+        SettingsService settings,
+        Func<Configuration.PluginConfiguration> config,
+        Services.Recommendations.SimilarItemsProviderManager similarItems)
     {
         _settings = settings;
         _config = config;
+        _similarItems = similarItems;
     }
-
-    /// <summary>
-    /// Features that appear in <see cref="AllFeatures"/> only when their
-    /// configuration is present — one map instead of a removal cascade per
-    /// toggle. A null configuration removes every conditional feature.
-    /// </summary>
-    private static readonly IReadOnlyDictionary<string, Func<PluginConfiguration, bool>> ConditionalFeatures =
-        new Dictionary<string, Func<PluginConfiguration, bool>>
-        {
-            [JellyPlayContract.Features.SeerrBridge] = c =>
-                !string.IsNullOrEmpty(c.Seerr.ServerUrl) && !string.IsNullOrEmpty(c.Seerr.ApiKey),
-            [JellyPlayContract.Features.Ratings] = c => c.Ratings.Enabled(),
-            [JellyPlayContract.Features.CustomRows] = c => c.Rows.Enabled,
-            [JellyPlayContract.Features.SeasonalRows] = c => c.Rows.SeasonalEnabled,
-            [JellyPlayContract.Features.AnimeMarkers] = c => c.Anime.Enabled,
-            [JellyPlayContract.Features.Newsletter] = c => !string.IsNullOrEmpty(c.Newsletter.SmtpHost),
-            [JellyPlayContract.Features.Push] = c => c.Push.Enabled,
-            [JellyPlayContract.Features.Analytics] = c => c.Analytics.Enabled
-        };
 
     /// <summary>The single bootstrap probe. Clients tolerate 404 (plugin absent) and feature-gate on the response.</summary>
     [HttpGet("capabilities")]
@@ -76,8 +60,7 @@ public class JellyPlayController : ControllerBase
     {
         var config = _config();
         var features = AllFeatures
-            .Where(f => config is not null
-                && (!ConditionalFeatures.TryGetValue(f, out var isAvailable) || isAvailable(config)))
+            .Where(f => FeatureAvailability.IsAvailable(f, config))
             .ToList();
 
         return JellyPlayResponses.Camel(new CapabilitiesResponse(
@@ -87,7 +70,8 @@ public class JellyPlayController : ControllerBase
                 ?? string.Empty,
             features,
             System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            ["", "desktop", "phone", "tv"]));
+            ["", "desktop", "phone", "tv"],
+            _similarItems.SimilarPipelineRegistered));
     }
 
     /// <summary>Admin tri-state defaults (global scope).</summary>
@@ -140,14 +124,7 @@ public class JellyPlayController : ControllerBase
     [Authorize(Policy = Policies.RequiresElevation)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetConfigYaml()
-    {
-        var config = _config();
-        var yaml = new SerializerBuilder()
-            .WithNamingConvention(CamelCaseNamingConvention.Instance)
-            .Build()
-            .Serialize(config);
-        return JellyPlayResponses.Camel(new { value = yaml });
-    }
+        => JellyPlayResponses.Camel(new { value = Services.Admin.ConfigYaml.Serialize(_config()) });
 
     [HttpPost("config/yaml")]
     [Authorize(Policy = Policies.RequiresElevation)]
@@ -156,14 +133,10 @@ public class JellyPlayController : ControllerBase
     {
         try
         {
-            var deserializer = new DeserializerBuilder()
-                .WithNamingConvention(CamelCaseNamingConvention.Instance)
-                .IgnoreUnmatchedProperties()
-                .Build();
-            var config = deserializer.Deserialize<PluginConfiguration>(request.Value);
+            var config = Services.Admin.ConfigYaml.Parse(request.Value);
             // The one remaining Instance read in a controller: persisting the
-            // YAML round-trip is plugin-instance lifecycle (SaveConfiguration),
-            // not a config read.
+            // YAML round-trip is plugin-instance lifecycle (UpdateConfiguration),
+            // not a config read — the documented ADR-0002 exception.
             JellyPlayPlugin.Instance!.UpdateConfiguration(config);
             return JellyPlayResponses.Camel(new { error = false, message = string.Empty });
         }

@@ -8,7 +8,8 @@ public sealed record CapabilitiesResponse(
     string PluginVersion,
     IReadOnlyList<string> Features,
     long ServerNow,
-    IReadOnlyList<string> DeviceProfiles);
+    IReadOnlyList<string> DeviceProfiles,
+    bool ServerSimilarPipeline = false);
 
 public sealed class SettingsWriteDto
 {

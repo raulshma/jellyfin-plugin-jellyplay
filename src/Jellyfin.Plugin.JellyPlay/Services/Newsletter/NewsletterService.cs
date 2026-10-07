@@ -78,19 +78,22 @@ public sealed class NewsletterService
     private readonly ILibraryManager _libraryManager;
     private readonly Func<NewsletterConfig> _config;
     private readonly ILogger<NewsletterService> _logger;
+    private readonly TimeProvider _clock;
 
     public NewsletterService(
         INewsletterSender sender,
         IUserManager userManager,
         ILibraryManager libraryManager,
         Func<NewsletterConfig> config,
-        ILogger<NewsletterService> logger)
+        ILogger<NewsletterService> logger,
+        TimeProvider? clock = null)
     {
         _sender = sender;
         _userManager = userManager;
         _libraryManager = libraryManager;
         _config = config;
         _logger = logger;
+        _clock = clock ?? TimeProvider.System;
     }
 
     public Task SendTestAsync() => SendAsync(testOnly: true);
@@ -127,7 +130,7 @@ public sealed class NewsletterService
     /// <summary>Composes a simple HTML digest from items added in the last 7 days.</summary>
     private async Task<(string Subject, string Html)> ComposeFromRecentlyAdded()
     {
-        var since = DateTime.UtcNow.AddDays(-7);
+        var since = _clock.GetUtcNow().UtcDateTime.AddDays(-7);
         var query = new MediaBrowser.Controller.Entities.InternalItemsQuery(user: null)
         {
             IncludeItemTypes = new[] { Jellyfin.Data.Enums.BaseItemKind.Movie, Jellyfin.Data.Enums.BaseItemKind.Series, Jellyfin.Data.Enums.BaseItemKind.Episode },

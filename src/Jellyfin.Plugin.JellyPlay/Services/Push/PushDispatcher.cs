@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyPlay.Configuration;
+using Jellyfin.Plugin.JellyPlay.Services.Admin;
 using Jellyfin.Plugin.JellyPlay.Storage;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
 using Microsoft.Extensions.Logging;
@@ -27,7 +28,7 @@ public static class PushKinds
 /// <summary>One push notification fanned out to every push-registered device of the target users.</summary>
 public sealed record PushMessage(string Kind, string Title, string Body, string? ItemId = null);
 
-/// <summary>Transport seam: issue one prepared request (tests substitute a fake; production uses a shared client).</summary>
+/// <summary>Transport seam: issue one prepared request (tests substitute a fake; production uses the named pooled client).</summary>
 public delegate Task<HttpResponseMessage> PushSender(HttpRequestMessage request, CancellationToken cancellationToken);
 
 /// <summary>
@@ -43,11 +44,12 @@ public sealed class PushDispatcher
     /// <summary>Per-endpoint budget; a slow distributor must not hold the background worker.</summary>
     public const int TimeoutSeconds = 10;
 
+    /// <summary>Named IHttpClientFactory client behind both push transports (dispatcher + FCM token exchange).</summary>
+    public const string HttpClientName = "jellyplay-push";
+
     private const string NtfyKindHeader = "X-JellyPlay-Kind";
     private const string NtfyItemIdHeader = "X-JellyPlay-ItemId";
     private const string FcmSendUrlPrefix = "https://fcm.googleapis.com/v1/projects/";
-
-    private static readonly HttpClient SharedClient = CreateSharedClient();
 
     private readonly JellyPlayDatabase _db;
     private readonly Func<PushConfig> _config;
@@ -56,8 +58,8 @@ public sealed class PushDispatcher
     private readonly FcmTokenProvider? _fcmTokens;
 
     /// <summary>DI constructor: real transport with a per-request 10s budget.</summary>
-    public PushDispatcher(JellyPlayDatabase db, Func<PushConfig> config, ILogger<PushDispatcher> logger, FcmTokenProvider fcmTokens)
-        : this(db, config, logger, SharedClientSendAsync, fcmTokens)
+    public PushDispatcher(JellyPlayDatabase db, Func<PushConfig> config, ILogger<PushDispatcher> logger, IHttpClientFactory httpFactory, FcmTokenProvider fcmTokens)
+        : this(db, config, logger, NamedClientSender(httpFactory), fcmTokens)
     {
     }
 
@@ -299,25 +301,20 @@ public sealed class PushDispatcher
 
     /// <summary>
     /// Cross-user push fleet view for admins. Names resolve through
-    /// <paramref name="userName"/> (id fallback); registeredAt prefers the
-    /// row's CreatedAt and falls back to LastSeen for pre-v4 rows.
+    /// <paramref name="userName"/> (id fallback — <see cref="AdminUsers.DisplayName"/>);
+    /// registeredAt prefers the row's CreatedAt and falls back to LastSeen for
+    /// pre-v4 rows.
     /// </summary>
     public AdminPushOverviewResponse GetAdminOverview(Func<Guid, string?> userName)
     {
         var devices = _db.GetAllPushDevices()
-            .Select(row =>
-            {
-                var name = Guid.TryParse(row.UserId, out var guid) && guid != Guid.Empty
-                    ? userName(guid)
-                    : null;
-                return new AdminPushDeviceDto(
-                    row.DeviceId,
-                    string.IsNullOrWhiteSpace(name) ? row.UserId : name!,
-                    row.Name,
-                    row.PushKind ?? string.Empty,
-                    EndpointHost(row.PushEndpoint),
-                    row.CreatedAt ?? row.LastSeen);
-            })
+            .Select(row => new AdminPushDeviceDto(
+                row.DeviceId,
+                AdminUsers.DisplayName(row.UserId, userName),
+                row.Name,
+                row.PushKind ?? string.Empty,
+                EndpointHost(row.PushEndpoint),
+                row.CreatedAt ?? row.LastSeen))
             .ToList();
 
         return new AdminPushOverviewResponse(_config().Enabled, _config().FcmConfigured(), devices);
@@ -325,22 +322,9 @@ public sealed class PushDispatcher
 
     private static bool IsNtfy(string? kind) => PushRegistrations.IsNtfyKind(kind);
 
-    private static HttpClient CreateSharedClient()
-    {
-        var client = new HttpClient(new SocketsHttpHandler
-        {
-            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
-            ConnectTimeout = TimeSpan.FromSeconds(TimeoutSeconds)
-        })
-        {
-            Timeout = Timeout.InfiniteTimeSpan // each request is bounded by its own 10s CTS
-        };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("jellyfin-plugin-jellyplay/1.0");
-        return client;
-    }
-
-    private static async Task<HttpResponseMessage> SharedClientSendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        => await SharedClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+    /// <summary>Sends through the pooled named client (created per request; the factory owns the handler lifetime).</summary>
+    private static PushSender NamedClientSender(IHttpClientFactory httpFactory)
+        => (request, cancellationToken) => httpFactory.CreateClient(HttpClientName).SendAsync(request, cancellationToken);
 }
 
 /// <summary>Admin overview row: endpoint URLs are secrets — only the host is ever surfaced.</summary>

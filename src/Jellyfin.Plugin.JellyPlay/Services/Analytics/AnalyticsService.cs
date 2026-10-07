@@ -5,6 +5,7 @@ using System.Text.Json;
 using Jellyfin.Plugin.JellyPlay.Api;
 using Jellyfin.Plugin.JellyPlay.Configuration;
 using Jellyfin.Plugin.JellyPlay.Helpers;
+using Jellyfin.Plugin.JellyPlay.Services.Admin;
 using Jellyfin.Plugin.JellyPlay.Storage;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
 using MediaBrowser.Controller.Entities;
@@ -385,7 +386,7 @@ public sealed class AnalyticsService
     /// </summary>
     public AnalyticsOverviewResponse GetOverview(int days, Func<Guid, string?> resolveUserName)
     {
-        var clampedDays = Math.Clamp(days == 0 ? DefaultOverviewDays : days, 1, MaxOverviewDays);
+        var clampedDays = RequestLimits.Clamp(days, DefaultOverviewDays, MaxOverviewDays);
         var todayUtc = _clock().UtcDateTime.Date;
         var fromDayDate = todayUtc.AddDays(-(clampedDays - 1));
         var fromMs = ToUnixMs(fromDayDate);
@@ -414,7 +415,7 @@ public sealed class AnalyticsService
             .OrderBy(group => group.Key, StringComparer.Ordinal)
             .Select(group => new AnalyticsPerUserRow(
                 group.Key,
-                ResolveUserName(group.Key, resolveUserName),
+                AdminUsers.DisplayName(group.Key, resolveUserName),
                 group.Sum(row => row.ItemsPlayed),
                 group.Sum(row => row.PlaySeconds),
                 group.Sum(row => row.TranscodeSeconds)))
@@ -430,7 +431,7 @@ public sealed class AnalyticsService
     /// <summary>Raw finished sessions newest-first, optional user/since (unix ms) filters.</summary>
     public AnalyticsSessionsResponse GetSessions(string? userId, long? since, int limit)
     {
-        var clamped = Math.Clamp(limit == 0 ? DefaultSessionLimit : limit, 1, MaxSessionLimit);
+        var clamped = RequestLimits.Clamp(limit, DefaultSessionLimit, MaxSessionLimit);
         var sessions = _db.GetPlaybackSessions(
                 string.IsNullOrWhiteSpace(userId) ? null : userId,
                 since ?? 0,
@@ -449,7 +450,7 @@ public sealed class AnalyticsService
     /// </summary>
     public AnalyticsMeResponse GetMyOverview(string userId, int days)
     {
-        var clampedDays = Math.Clamp(days == 0 ? DefaultOverviewDays : days, 1, MaxOverviewDays);
+        var clampedDays = RequestLimits.Clamp(days, DefaultOverviewDays, MaxOverviewDays);
         var todayUtc = _clock().UtcDateTime.Date;
         var fromDayDate = todayUtc.AddDays(-(clampedDays - 1));
         var fromMs = ToUnixMs(fromDayDate);
@@ -517,12 +518,6 @@ public sealed class AnalyticsService
             return null;
         }
     }
-
-    /// <summary>Id fallback — the established user-name resolution pattern.</summary>
-    private static string ResolveUserName(string userId, Func<Guid, string?> resolveUserName)
-        => Guid.TryParse(userId, out var guid) && guid != Guid.Empty
-            ? resolveUserName(guid) ?? userId
-            : userId;
 
     // ------------------------------------------------------------------
     // Maintenance (daily task; also the disable purge)

@@ -4,12 +4,15 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyPlay.Configuration;
 using Jellyfin.Plugin.JellyPlay.Services.Settings;
 using Jellyfin.Plugin.JellyPlay.Storage;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
 using MediaBrowser.Common.Configuration;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using YamlDotNet.Serialization;
+using YamlDotNet.Serialization.NamingConventions;
 
 namespace Jellyfin.Plugin.JellyPlay.Services.Admin;
 
@@ -43,9 +46,7 @@ public sealed class AdminDefaultsService
         var pushed = 0;
         foreach (var target in targets)
         {
-            var userDefaults = _settings.GetAdminDefaultsRaw(target);
-            var merged = MergeDefaults(globalDefaults, userDefaults);
-            pushed += PushMerged(target, merged);
+            pushed += PushMerged(target, globalDefaults, _settings.GetAdminDefaultsRaw(target));
         }
 
         return new PushOutcome(targets.Count, pushed);
@@ -53,70 +54,36 @@ public sealed class AdminDefaultsService
 
     public sealed record PushOutcome(int Users, int KeysPushed);
 
-    private static Dictionary<string, JsonElement> MergeDefaults(JsonElement? global, JsonElement? perUser)
-    {
-        var merged = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-        foreach (var (key, value) in EnumerateDefaults(global))
-        {
-            merged[key] = value;
-        }
-
-        foreach (var (key, value) in EnumerateDefaults(perUser))
-        {
-            merged[key] = value;
-        }
-
-        return merged;
-    }
-
-    private static IEnumerable<(string Key, JsonElement Value)> EnumerateDefaults(JsonElement? payload)
-    {
-        if (payload is not { ValueKind: JsonValueKind.Object } element)
-        {
-            yield break;
-        }
-
-        foreach (var property in element.EnumerateObject())
-        {
-            if (property.Value.ValueKind == JsonValueKind.Object)
-            {
-                yield return (property.Name, property.Value);
-            }
-        }
-    }
-
-    private int PushMerged(string userId, Dictionary<string, JsonElement> merged)
+    /// <summary>
+    /// Pushes the scope-merged defaults to one user. The precedence lives in
+    /// <see cref="DefaultsEnvelope.MergeForPush"/> (forced overwrites always,
+    /// suggested fills gaps only, per-user scope beats global, the user's own
+    /// value beats suggested); this method only orchestrates the resulting
+    /// writes through the settings pipeline (LWW batch, change log, SSE). The
+    /// conservative write-path shadow rule is on: a malformed per-user
+    /// override blocks the push for its key instead of letting the global
+    /// default fall through.
+    /// </summary>
+    private int PushMerged(string userId, JsonElement? globalDefaults, JsonElement? perUserDefaults)
     {
         var baseSnapshot = _settings.GetAll(userId, JellyPlayDatabase.BaseProfile);
-        var existing = baseSnapshot.Settings.ToDictionary(entry => entry.Ns + "/" + entry.Key, entry => entry);
+        var existing = baseSnapshot.Settings.ToDictionary(entry => DefaultsEnvelope.Join(entry.Ns, entry.Key), entry => entry);
 
         var writes = new List<Api.SettingsWriteDto>();
-        foreach (var (compositeKey, entry) in merged)
+        foreach (var entry in DefaultsEnvelope.MergeForPush(
+                     globalDefaults,
+                     perUserDefaults,
+                     existing.Keys.ToHashSet(StringComparer.Ordinal)))
         {
-            var separator = compositeKey.IndexOf('/');
-            if (separator <= 0)
+            var hasExisting = existing.TryGetValue(DefaultsEnvelope.Join(entry.Ns, entry.Key), out var current);
+            writes.Add(new Api.SettingsWriteDto
             {
-                continue;
-            }
-
-            var mode = entry.TryGetProperty("mode", out var modeElement) ? modeElement.GetString() : null;
-            if (mode is not ("forced" or "suggested") || !entry.TryGetProperty("value", out var value))
-            {
-                continue;
-            }
-
-            var hasExisting = existing.TryGetValue(compositeKey, out var current);
-            if (mode == "forced" || !hasExisting)
-            {
-                writes.Add(new Api.SettingsWriteDto
-                {
-                    Ns = compositeKey[..separator],
-                    Key = compositeKey[(separator + 1)..],
-                    SchemaVersion = hasExisting ? current.SchemaVersion : 1,
-                    UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                    Value = value
-                });
-            }
+                Ns = entry.Ns,
+                Key = entry.Key,
+                SchemaVersion = hasExisting ? current.SchemaVersion : 1,
+                UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                Value = entry.Value
+            });
         }
 
         if (writes.Count == 0)
@@ -184,4 +151,26 @@ public sealed class ConfigBackupService
     }
 
     public sealed record RestoreOutcome(bool Success, string Error);
+}
+
+/// <summary>
+/// The dashboard's YAML editor format: the WHOLE plugin configuration as
+/// camelCase YAML. Serialization and parse-validate are admin service logic;
+/// persisting the round-trip stays a plugin-lifecycle concern at the caller.
+/// </summary>
+public static class ConfigYaml
+{
+    public static string Serialize(PluginConfiguration config)
+        => new SerializerBuilder()
+            .WithNamingConvention(CamelCaseNamingConvention.Instance)
+            .Build()
+            .Serialize(config);
+
+    /// <summary>Parses admin-edited YAML into a full configuration (unmatched keys ignored); throws on invalid YAML.</summary>
+    public static PluginConfiguration Parse(string yaml)
+        => new DeserializerBuilder()
+            .WithNamingConvention(CamelCaseNamingConvention.Instance)
+            .IgnoreUnmatchedProperties()
+            .Build()
+            .Deserialize<PluginConfiguration>(yaml);
 }

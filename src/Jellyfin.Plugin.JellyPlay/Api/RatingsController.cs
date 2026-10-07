@@ -10,7 +10,7 @@ namespace Jellyfin.Plugin.JellyPlay.Api;
 [ApiController]
 [Authorize]
 [Route(JellyPlayContract.RoutePrefix)]
-public class RatingsController : ControllerBase
+public class RatingsController : JellyPlayControllerBase
 {
     private readonly MdbListService _mdbList;
     private readonly TmdbRatingsService _tmdb;

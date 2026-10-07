@@ -19,7 +19,7 @@ namespace Jellyfin.Plugin.JellyPlay.Api;
 [ApiController]
 [Authorize]
 [Route(JellyPlayContract.RoutePrefix)]
-public class RowsController : ControllerBase
+public class RowsController : JellyPlayControllerBase
 {
     private readonly CustomRowsService _rows;
     private readonly SeasonalService _seasonal;
@@ -74,7 +74,7 @@ public class RowsController : ControllerBase
 [ApiController]
 [Authorize]
 [Route(JellyPlayContract.RoutePrefix)]
-public class AnimeMarkersController : ControllerBase
+public class AnimeMarkersController : JellyPlayControllerBase
 {
     private readonly AnimeMarkersService _markers;
 
@@ -106,7 +106,7 @@ public class AnimeMarkersController : ControllerBase
 [ApiController]
 [Authorize]
 [Route(JellyPlayContract.RoutePrefix)]
-public class RecommendationsController : ControllerBase
+public class RecommendationsController : JellyPlayControllerBase
 {
     private readonly SimilarItemsService _similar;
 
@@ -126,7 +126,7 @@ public class RecommendationsController : ControllerBase
 [ApiController]
 [Authorize]
 [Route(JellyPlayContract.RoutePrefix)]
-public class UserDataController : ControllerBase
+public class UserDataController : JellyPlayControllerBase
 {
     private readonly UserRatingsService _ratings;
     private readonly BookmarkService _bookmarks;
@@ -161,7 +161,7 @@ public class UserDataController : ControllerBase
 [ApiController]
 [Authorize]
 [Route(JellyPlayContract.RoutePrefix)]
-public class TranscodesController : ControllerBase
+public class TranscodesController : JellyPlayControllerBase
 {
     private readonly TranscodeInsightsService _transcodes;
     private readonly IUserManager _users;

@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyPlay.Configuration;
 using Microsoft.Extensions.Hosting;
@@ -12,17 +14,19 @@ namespace Jellyfin.Plugin.JellyPlay.Services.Seerr;
 /// <summary>
 /// Registers the plugin's webhook receiver in Seerr automatically (admin
 /// settings PUT), so Seerr request activity flows into JellyPlay events without
-/// manual dashboard steps. Secret lives in plugin config.
+/// manual dashboard steps. Secret lives in plugin config. All traffic crosses
+/// the feature's <see cref="SeerrSender"/> transport seam (the plugin is the
+/// auth boundary — the API key rides the prepared request headers).
 /// </summary>
 public sealed class SeerrWebhookProvisioner
 {
-    private readonly IHttpClientFactory _httpFactory;
+    private readonly SeerrSender _sender;
     private readonly Func<SeerrConfig> _config;
     private readonly ILogger<SeerrWebhookProvisioner> _logger;
 
-    public SeerrWebhookProvisioner(IHttpClientFactory httpFactory, Func<SeerrConfig> config, ILogger<SeerrWebhookProvisioner> logger)
+    public SeerrWebhookProvisioner(SeerrSender sender, Func<SeerrConfig> config, ILogger<SeerrWebhookProvisioner> logger)
     {
-        _httpFactory = httpFactory;
+        _sender = sender;
         _config = config;
         _logger = logger;
     }
@@ -37,16 +41,15 @@ public sealed class SeerrWebhookProvisioner
 
         try
         {
-            var client = _httpFactory.CreateClient("JellyPlayHttpClient");
             var url = $"{config.ServerUrl.TrimEnd('/')}/api/v1/settings/main";
             var settingsUrl = $"{pluginWebhookBaseUrl.TrimEnd('/')}/jellyplay/seerr/webhook";
 
             // Read current main settings, then patch the webhook fields — never blind-overwrite.
             using var get = new HttpRequestMessage(HttpMethod.Get, url);
             get.Headers.Add("X-Api-Key", config.ApiKey);
-            using var getResponse = await client.SendAsync(get);
+            using var getResponse = await _sender(get, null, CancellationToken.None).ConfigureAwait(false);
             getResponse.EnsureSuccessStatusCode();
-            var settings = JsonDocument.Parse(await getResponse.Content.ReadAsStringAsync());
+            var settings = JsonDocument.Parse(await getResponse.Content.ReadAsStringAsync().ConfigureAwait(false));
 
             var payload = new System.Dynamic.ExpandoObject() as IDictionary<string, object?>;
             foreach (var property in settings.RootElement.EnumerateObject())
@@ -61,7 +64,7 @@ public sealed class SeerrWebhookProvisioner
 
             using var put = new HttpRequestMessage(HttpMethod.Put, url) { Content = JsonContent.Create(payload) };
             put.Headers.Add("X-Api-Key", config.ApiKey);
-            using var putResponse = await client.SendAsync(put);
+            using var putResponse = await _sender(put, null, CancellationToken.None).ConfigureAwait(false);
             putResponse.EnsureSuccessStatusCode();
             _logger.LogInformation("Seerr webhook provisioned at {Url}", settingsUrl);
             return true;
@@ -124,9 +127,11 @@ public sealed class SeerrProvisioningHostedService : IHostedService
                 {
                     await _provisioner.ProvisionAsync(configured);
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // logged inside provisioner; retried via admin endpoint
+                    // ProvisionAsync logs its own failures; this guards the
+                    // background task itself so a crash never swallows silently.
+                    _logger.LogWarning(ex, "Seerr webhook provisioning task crashed unexpectedly");
                 }
             },
             cancellationToken);

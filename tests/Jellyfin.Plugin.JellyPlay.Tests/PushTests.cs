@@ -333,7 +333,7 @@ public sealed class DeviceRegistrationApiTests : IDisposable
 
     private static JArray GetDevicesJson(EventsController controller)
     {
-        var result = Assert.IsType<ContentResult>(controller.GetDevices());
+        var result = Assert.IsAssignableFrom<ContentResult>(controller.GetDevices());
         return JArray.Parse(result.Content!);
     }
 
@@ -402,8 +402,12 @@ public sealed class DeviceRegistrationApiTests : IDisposable
 
         var result = controller.RegisterDevice(Request("d1", kind, endpoint));
 
-        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.Contains("invalid-push-registration", JsonSerializer.Serialize(badRequest.Value));
+        // The body is the gate's error shape ({error: "code"}), not a raw object result.
+        var badRequest = Assert.IsAssignableFrom<ContentResult>(result);
+        Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
+        var body = JObject.Parse(badRequest.Content!);
+        Assert.Equal("invalid-push-registration", body["error"]!.ToString());
+        Assert.Single(body.Properties());
         Assert.Null(_db.GetDeviceById("d1")); // nothing persisted
     }
 
@@ -825,5 +829,107 @@ public sealed class PushAudienceTests : IDisposable
         // A beat for any wrongly-issued request to surface; none may arrive.
         await Task.Delay(150);
         Assert.Equal(0, _recording.Count);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Production transport: both push services ride the named pooled client
+// ---------------------------------------------------------------------------
+
+/// <summary>Stub IHttpClientFactory: hands out clients over one shared handler (the test owns its lifetime).</summary>
+internal sealed class StubHttpClientFactory : IHttpClientFactory
+{
+    private readonly HttpMessageHandler _handler;
+
+    public StubHttpClientFactory(HttpMessageHandler handler)
+    {
+        _handler = handler;
+    }
+
+    public HttpClient CreateClient(string name) => new(_handler, disposeHandler: false);
+}
+
+/// <summary>Handler recording the requests that went through the factory client.</summary>
+internal sealed class RecordingHttpHandler : HttpMessageHandler
+{
+    public Func<HttpResponseMessage>? Responder { get; set; }
+
+    public int Calls;
+
+    public ConcurrentQueue<string> Endpoints { get; } = new();
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref Calls);
+        Endpoints.Enqueue(request.RequestUri?.ToString() ?? string.Empty);
+        return Task.FromResult(Responder?.Invoke() ?? new HttpResponseMessage(HttpStatusCode.OK));
+    }
+}
+
+/// <summary>The DI constructors wire the transport to IHttpClientFactory ("jellyplay-push") — no hidden static clients remain.</summary>
+public sealed class PushHttpFactoryTests : IDisposable
+{
+    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-push-http-" + Guid.NewGuid().ToString("N"));
+    private readonly JellyPlayDatabase _db;
+
+    public PushHttpFactoryTests()
+    {
+        Directory.CreateDirectory(_tempDir);
+        _db = new JellyPlayDatabase(_tempDir);
+    }
+
+    public void Dispose()
+    {
+        _db.Dispose();
+        try
+        {
+            Directory.Delete(_tempDir, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+    }
+
+    [Fact]
+    public async Task Dispatcher_DiConstructor_SendsThroughTheFactoryClient()
+    {
+        var handler = new RecordingHttpHandler();
+        _db.UpsertDevice(new DeviceRow("a", "u1", "A", "android", "1", 1, "generic", "https://push.example/a", 1));
+        var dispatcher = new PushDispatcher(
+            _db,
+            () => new PushConfig { Enabled = true },
+            NullLogger<PushDispatcher>.Instance,
+            new StubHttpClientFactory(handler),
+            new FcmTokenProvider(
+                () => new PushConfig(),
+                NullLogger<FcmTokenProvider>.Instance,
+                () => DateTimeOffset.UtcNow,
+                static (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK))));
+
+        await dispatcher.DispatchAsync(new PushMessage(PushKinds.Message, "T", "B"), new[] { "u1" });
+
+        Assert.Equal(1, handler.Calls);
+        Assert.Equal("https://push.example/a", handler.Endpoints.Single());
+    }
+
+    [Fact]
+    public async Task FcmTokenProvider_DiConstructor_ExchangesThroughTheFactoryClient()
+    {
+        using var sa = new FakeServiceAccount();
+        var handler = new RecordingHttpHandler
+        {
+            Responder = static () => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"access_token\":\"tok-1\",\"expires_in\":3600}", Encoding.UTF8, "application/json")
+            }
+        };
+        var provider = new FcmTokenProvider(
+            () => new PushConfig { Enabled = true, FcmProjectId = "proj-x", FcmServiceAccountJson = sa.Json() },
+            NullLogger<FcmTokenProvider>.Instance,
+            new StubHttpClientFactory(handler));
+
+        Assert.Equal("tok-1", await provider.GetTokenAsync());
+        Assert.Equal(1, handler.Calls);
+        Assert.Equal("https://oauth2.googleapis.com/token", handler.Endpoints.Single());
     }
 }

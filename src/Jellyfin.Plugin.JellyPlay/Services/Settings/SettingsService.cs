@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyPlay.Api;
 using Jellyfin.Plugin.JellyPlay.Configuration;
 using Jellyfin.Plugin.JellyPlay.Realtime;
+using Jellyfin.Plugin.JellyPlay.Services.Admin;
 using Jellyfin.Plugin.JellyPlay.Storage;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
 using Microsoft.AspNetCore.Http;
@@ -28,13 +29,13 @@ public sealed class SettingsService
     private readonly ILogger<SettingsService> _logger;
     private readonly TimeProvider _clock;
 
-    public SettingsService(JellyPlayDatabase db, SseHub hub, Func<SyncConfig> config, ILogger<SettingsService> logger)
+    public SettingsService(JellyPlayDatabase db, SseHub hub, Func<SyncConfig> config, ILogger<SettingsService> logger, TimeProvider? clock = null)
     {
         _db = db;
         _hub = hub;
         _config = config;
         _logger = logger;
-        _clock = TimeProvider.System;
+        _clock = clock ?? TimeProvider.System;
     }
 
     public JellyPlayDatabase.Quotas Quotas => new(_config().MaxKeyBytes, _config().MaxUserBytes, _config().MaxKeysPerUser);
@@ -223,22 +224,15 @@ public sealed class SettingsService
             merged[(row.Ns, row.Key)] = row;
         }
 
-        var defaults = GetDefaultsMerged(userId);
+        var defaults = GetDefaultsMerged(
+            userId,
+            merged.Keys.Select(id => DefaultsEnvelope.Join(id.Item1, id.Item2)).ToHashSet(StringComparer.Ordinal));
         var modes = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        foreach (var (ns, key, entry) in defaults.Forced)
+        foreach (var entry in defaults)
         {
-            merged[(ns, key)] = DefaultsToRow(userId, profile, ns, key, entry);
-            modes[DefaultModeKey(ns, key)] = "forced";
-        }
-
-        foreach (var (ns, key, entry) in defaults.Suggested)
-        {
-            if (!merged.ContainsKey((ns, key)))
-            {
-                merged[(ns, key)] = DefaultsToRow(userId, profile, ns, key, entry);
-                modes[DefaultModeKey(ns, key)] = "suggested";
-            }
+            merged[(entry.Ns, entry.Key)] = DefaultsToRow(userId, profile, entry.Ns, entry.Key, entry.Value);
+            modes[DefaultModeKey(entry.Ns, entry.Key)] = entry.Mode == AdminDefaultMode.Forced ? "forced" : "suggested";
         }
 
         // Every remaining resolved key is user-owned (base or profile overlay):
@@ -254,7 +248,7 @@ public sealed class SettingsService
         return response;
     }
 
-    private static string DefaultModeKey(string ns, string key) => $"{ns}/{key}";
+    private static string DefaultModeKey(string ns, string key) => DefaultsEnvelope.Join(ns, key);
 
     public void SetDeviceProfile(string userId, string profile, string? deviceId, IReadOnlyList<SettingsWriteDto> writes)
         => ApplyBatch(userId, profile, deviceId, writes);
@@ -291,13 +285,13 @@ public sealed class SettingsService
 
         foreach (var property in payload.EnumerateObject())
         {
-            var separator = property.Name.IndexOf('/');
-            if (separator <= 0 || separator == property.Name.Length - 1)
+            var (ns, key) = DefaultsEnvelope.Split(property.Name);
+            if (ns.Length == 0 || key.Length == 0)
             {
                 continue;
             }
 
-            var descriptor = ClientSettingsCatalog.Find(property.Name[..separator], property.Name[(separator + 1)..]);
+            var descriptor = ClientSettingsCatalog.Find(ns, key);
             if (descriptor is null
                 || property.Value.ValueKind != JsonValueKind.Object
                 || !property.Value.TryGetProperty("value", out var value))
@@ -321,46 +315,15 @@ public sealed class SettingsService
         return row is null ? null : JsonSerializer.Deserialize<JsonElement>(row.Payload);
     }
 
-    private (List<(string Ns, string Key, JsonElement Value)> Forced, List<(string Ns, string Key, JsonElement Value)> Suggested) GetDefaultsMerged(string userId)
-    {
-        var forced = new List<(string, string, JsonElement)>();
-        var suggested = new List<(string, string, JsonElement)>();
-
-        foreach (var scope in new[] { GlobalDefaultsScope, userId })
-        {
-            var raw = GetAdminDefaultsRaw(scope);
-            if (raw is null || raw.Value.ValueKind != JsonValueKind.Object)
-            {
-                continue;
-            }
-
-            foreach (var property in raw.Value.EnumerateObject())
-            {
-                if (property.Value.ValueKind != JsonValueKind.Object
-                    || !property.Value.TryGetProperty("mode", out var modeElement))
-                {
-                    continue;
-                }
-
-                var mode = modeElement.GetString();
-                // User scope wins over global scope for the same key: the second
-                // occurrence replaces the first via remove+add.
-                forced.RemoveAll(f => f.Item1 == NsOf(property.Name) && f.Item2 == KeyOf(property.Name));
-                suggested.RemoveAll(s => s.Item1 == NsOf(property.Name) && s.Item2 == KeyOf(property.Name));
-
-                if (mode == "forced" && property.Value.TryGetProperty("value", out var forcedValue))
-                {
-                    forced.Add((NsOf(property.Name), KeyOf(property.Name), forcedValue));
-                }
-                else if (mode == "suggested" && property.Value.TryGetProperty("value", out var suggestedValue))
-                {
-                    suggested.Add((NsOf(property.Name), KeyOf(property.Name), suggestedValue));
-                }
-            }
-        }
-
-        return (forced, suggested);
-    }
+    /// <summary>
+    /// The tri-state defaults that apply to one user after the scope merge and
+    /// the gap filter — forced ones always, suggested ones only for keys the
+    /// user has not set. The precedence itself lives in
+    /// <see cref="DefaultsEnvelope.MergeForRead"/> (the one parser/merger, shared with
+    /// the admin write side).
+    /// </summary>
+    private List<ResolvedDefault> GetDefaultsMerged(string userId, IReadOnlySet<string> existingKeys)
+        => DefaultsEnvelope.MergeForRead(GetAdminDefaultsRaw(GlobalDefaultsScope), GetAdminDefaultsRaw(userId), existingKeys);
 
     private SettingRow DefaultsToRow(string userId, string profile, string ns, string key, JsonElement value)
         => new(
@@ -372,18 +335,6 @@ public sealed class SettingsService
             0,
             "admin-default",
             JsonSerializer.SerializeToUtf8Bytes(value));
-
-    private static string NsOf(string compositeKey)
-    {
-        var index = compositeKey.IndexOf('/', StringComparison.Ordinal);
-        return index < 0 ? compositeKey : compositeKey[..index];
-    }
-
-    private static string KeyOf(string compositeKey)
-    {
-        var index = compositeKey.IndexOf('/', StringComparison.Ordinal);
-        return index < 0 ? string.Empty : compositeKey[(index + 1)..];
-    }
 
     private SettingsSnapshotResponse ToSnapshot(string userId, string profile, long head, IReadOnlyList<SettingRow> rows)
     {

@@ -667,8 +667,8 @@ public sealed class FcmRegistrationApiTests : IDisposable
 
     private static string ErrorOf(IActionResult result)
     {
-        var body = System.Text.Json.JsonSerializer.Serialize(Assert.IsType<BadRequestObjectResult>(result).Value);
-        return JObject.Parse(body)["error"]!.ToString();
+        var content = Assert.IsAssignableFrom<ContentResult>(result);
+        return JObject.Parse(content.Content!)["error"]!.ToString();
     }
 
     [Fact]
@@ -683,7 +683,7 @@ public sealed class FcmRegistrationApiTests : IDisposable
         var stored = _db.GetDeviceById("d1");
         Assert.Equal(("fcm", "fcm-reg-token-9"), (stored!.PushKind, stored.PushEndpoint));
 
-        var listed = JArray.Parse(Assert.IsType<ContentResult>(controller.GetDevices()).Content!)[0]!["push"]!;
+        var listed = JArray.Parse(Assert.IsAssignableFrom<ContentResult>(controller.GetDevices()).Content!)[0]!["push"]!;
         Assert.Equal("fcm", listed["kind"]!.ToString());
         Assert.Equal("fcm-reg-token-9", listed["endpoint"]!.ToString());
     }
@@ -720,7 +720,7 @@ public sealed class FcmRegistrationApiTests : IDisposable
         Assert.IsType<NoContentResult>(controller.RegisterDevice(Request("generic", "https://push.example/hook", "d-generic")));
         Assert.IsType<NoContentResult>(controller.RegisterDevice(Request("ntfy", "https://ntfy.sh/topic", "d-ntfy")));
 
-        var rows = JArray.Parse(Assert.IsType<ContentResult>(controller.GetDevices()).Content!);
+        var rows = JArray.Parse(Assert.IsAssignableFrom<ContentResult>(controller.GetDevices()).Content!);
         Assert.Equal(2, rows.Count);
     }
 }

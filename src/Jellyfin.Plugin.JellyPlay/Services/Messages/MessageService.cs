@@ -22,17 +22,20 @@ public sealed class MessageService
     private readonly PushDispatcher? _push;
     private readonly Func<IReadOnlyList<string>>? _adminUserIds;
     private readonly ILogger<MessageService> _logger;
+    private readonly TimeProvider _clock;
 
     public MessageService(
         JellyPlayDatabase db,
         ILogger<MessageService> logger,
         PushDispatcher? push = null,
-        Func<IReadOnlyList<string>>? adminUserIds = null)
+        Func<IReadOnlyList<string>>? adminUserIds = null,
+        TimeProvider? clock = null)
     {
         _db = db;
         _push = push;
         _adminUserIds = adminUserIds;
         _logger = logger;
+        _clock = clock ?? TimeProvider.System;
     }
 
     public MessageRow Upsert(MessageAdminRequest request)
@@ -54,7 +57,7 @@ public sealed class MessageService
             request.StartsAt,
             request.EndsAt,
             request.OrderIndex,
-            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            _clock.GetUtcNow().ToUnixTimeMilliseconds());
         _db.UpsertMessage(row);
 
         if (created)
@@ -90,7 +93,7 @@ public sealed class MessageService
     /// <summary>Messages visible to one user right now, with read flags.</summary>
     public IReadOnlyList<MessageDto> GetInbox(string userId, bool isAdmin)
     {
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var now = _clock.GetUtcNow().ToUnixTimeMilliseconds();
         var read = _db.GetReadMessageIds(userId);
         var inbox = new List<MessageDto>();
 
@@ -147,5 +150,5 @@ public sealed class MessageService
     }
 
     public void MarkRead(string userId, string messageId)
-        => _db.MarkMessageRead(userId, messageId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        => _db.MarkMessageRead(userId, messageId, _clock.GetUtcNow().ToUnixTimeMilliseconds());
 }

@@ -1,5 +1,5 @@
 using System;
-using Jellyfin.Data;
+using System.Net.Http;
 using Jellyfin.Plugin.JellyPlay.Realtime;
 using Jellyfin.Plugin.JellyPlay.Services.Admin;
 using Jellyfin.Plugin.JellyPlay.Services.Anime;
@@ -38,6 +38,23 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
                 client.DefaultRequestHeaders.UserAgent.ParseAdd("jellyfin-plugin-jellyplay/1.0");
             });
 
+        // Push transports (dispatcher + FCM token exchange): one named pooled
+        // client with the connection budgets the push fire-and-forget expects —
+        // each request is bounded by its own 10s CTS, so the client timeout
+        // itself stays infinite.
+        serviceCollection.AddHttpClient(
+            Services.Push.PushDispatcher.HttpClientName,
+            client =>
+            {
+                client.Timeout = System.Threading.Timeout.InfiniteTimeSpan;
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("jellyfin-plugin-jellyplay/1.0");
+            })
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+                ConnectTimeout = TimeSpan.FromSeconds(Services.Push.PushDispatcher.TimeoutSeconds)
+            });
+
         // Realtime
         serviceCollection.AddSingleton<SseHub>();
         // Config seam: services receive the config section they need as a
@@ -55,6 +72,14 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton(_ => new Func<Configuration.AnimeConfig>(() => JellyPlayPlugin.Instance!.Configuration.Anime));
         serviceCollection.AddSingleton(_ => new Func<Configuration.CacheConfig>(() => JellyPlayPlugin.Instance!.Configuration.Cache));
         serviceCollection.AddSingleton(_ => new Func<Configuration.RowsConfig>(() => JellyPlayPlugin.Instance!.Configuration.Rows));
+        // Rows fetchers honestly declare the values they consume (TMDB/MDBList
+        // keys + cache TTL), composed from the sections that own them — they
+        // never depend on the whole ratings section.
+        serviceCollection.AddSingleton(_ => new Func<Services.Rows.RowsFetchConfig>(() =>
+        {
+            var ratings = JellyPlayPlugin.Instance!.Configuration.Ratings;
+            return new Services.Rows.RowsFetchConfig(ratings.TmdbApiKey, ratings.MdbListApiKey, ratings.CacheTtlHours);
+        }));
 
         // Push notifications (plugin is the push server; fire-and-forget).
         // FcmTokenProvider mints OAuth2 tokens for the fcm transport from the
@@ -75,20 +100,27 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton(sp => new FileCacheStore(
             sp.GetRequiredService<ILogger<Services.Cache.FileCacheStore>>(),
             cacheDirectory: System.IO.Path.Combine(JellyPlayPlugin.Instance!.DataDirectory, "cache"),
-            maxSizeMegabytes: () => JellyPlayPlugin.Instance!.Configuration.Cache.MaxSizeMegabytes));
+            maxSizeMegabytes: () => sp.GetRequiredService<Func<Configuration.CacheConfig>>().Invoke().MaxSizeMegabytes));
+
+        // Resilient fetch: the one pipeline for external HTTP sources —
+        // file cache → circuit breaker → fetch → parse (see GLOSSARY.md).
+        serviceCollection.AddSingleton<Services.Fetching.ResilientFetcher>();
 
         // Settings sync
         serviceCollection.AddSingleton<SettingsService>();
         serviceCollection.AddSingleton<SyncInsightsService>();
 
+        // Admin identity: display names (raw-id fallback) for the admin
+        // overviews and the administrator set behind audience "admins" — one
+        // module, so the resolution rule and the "who is an admin" query each
+        // have a single home.
+        serviceCollection.AddSingleton<Services.Admin.AdminUsers>();
+
         // Events & messages
         serviceCollection.AddSingleton(sp => new EventService(
             sp.GetRequiredService<SseHub>(),
             () => JellyPlayPlugin.Instance!.Configuration.Events,
-            () => sp.GetRequiredService<IUserManager>().GetUsers()
-                .Where(user => user.HasPermission(Jellyfin.Database.Implementations.Enums.PermissionKind.IsAdministrator))
-                .Select(user => user.Id.ToString())
-                .ToList(),
+            () => sp.GetRequiredService<Services.Admin.AdminUsers>().AdminUserIds,
             sp.GetRequiredService<ILogger<EventService>>(),
             sp.GetRequiredService<Services.Push.PushDispatcher>()));
         serviceCollection.AddSingleton<EpisodeGroupBuffer>();

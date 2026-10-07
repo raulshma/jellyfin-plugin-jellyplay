@@ -14,8 +14,15 @@ the app stays fully functional and merely hides gated features.
 
 ```
 GET jellyplay/capabilities
-→ 200 { contractVersion: 1, pluginVersion: "0.11.3", features: ["settings-sync", …], serverNow, deviceProfiles: ["", "desktop", "phone", "tv"] }
+→ 200 { contractVersion: 1, pluginVersion: "0.11.3", features: ["settings-sync", …], serverNow, deviceProfiles: ["", "desktop", "phone", "tv"], serverSimilarPipeline: true|false }
 ```
+
+`serverSimilarPipeline` (additive, default false) reports whether the plugin's
+similar-items scorer registered into the HOST's pipeline — Jellyfin 12+ hosts
+only (the registration is reflection-guarded and a no-op on 10.11). When true,
+the stock `GET /Items/{id}/Similar` returns the same scored list the
+`recommendations` route serves, and clients should render one similar row, not
+two.
 
 Feature keys: `settings-sync`, `device-profiles`, `admin-defaults`, `config-backup`,
 `events`, `messages`, `seerr-bridge`, `newsletter`, `ratings`, `custom-rows`,

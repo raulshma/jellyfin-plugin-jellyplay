@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using Jellyfin.Plugin.JellyPlay.Helpers;
 
 namespace Jellyfin.Plugin.JellyPlay.Services.Admin;
 
@@ -46,15 +47,14 @@ public class RateLimiter
         return true;
     }
 
-    /// <summary>Occasional O(n) sweep so abandoned keys do not accumulate forever.</summary>
+    /// <summary>Occasional O(n) sweep so abandoned keys do not accumulate forever (the shared <see cref="SweepGate"/>).</summary>
     private void MaybeSweep(long nowMs)
     {
-        if (nowMs - System.Threading.Interlocked.Read(ref _lastSweepMs) < _windowMs)
+        if (!SweepGate.Enter(ref _lastSweepMs, nowMs, _windowMs))
         {
             return;
         }
 
-        System.Threading.Interlocked.Exchange(ref _lastSweepMs, nowMs);
         foreach (var (key, window) in _hits)
         {
             lock (window)

@@ -28,36 +28,15 @@ public sealed class NewMediaAudienceTests
     private static EpisodeGroup Group(Guid itemId)
         => new(Guid.NewGuid(), Guid.NewGuid(), "Show", 1, new[] { new EpisodeRef(itemId, "E1") }, null);
 
-    private static async Task<List<SseEvent>> ReadOneAsync(SseHub hub, Guid subscriberId)
-        => await Task.Run(async () =>
-        {
-            var received = new List<SseEvent>();
-            await foreach (var evt in hub.ReadAllAsync(subscriberId, CancellationToken.None))
-            {
-                received.Add(evt);
-                break;
-            }
-
-            return received;
-        }).WaitAsync(TimeSpan.FromSeconds(2));
+    /// <summary>The subscriber's next buffered event, or null after the window (the hub's own read seam).</summary>
+    private static Task<SseEvent?> ReadOneAsync(SseHub hub, Guid subscriberId)
+        => hub.WaitForEventAsync(subscriberId, TimeSpan.FromSeconds(2), CancellationToken.None);
 
     private static async Task AssertNothingDeliveredAsync(SseHub hub, Guid subscriberId)
     {
-        var read = Task.Run(async () =>
-        {
-            await foreach (var _ in hub.ReadAllAsync(subscriberId, CancellationToken.None))
-            {
-                return true;
-            }
-
-            return false;
-        });
-
         // The publish already ran; a mis-delivery would be buffered and picked
-        // up immediately. Nothing after a beat means the filter held.
-        var completed = await read.WaitAsync(TimeSpan.FromMilliseconds(150))
-            .ContinueWith(t => t.Status == TaskStatus.RanToCompletion && t.Result, TaskScheduler.Default);
-        Assert.False(completed);
+        // up immediately. A null after the window means the filter held.
+        Assert.Null(await hub.WaitForEventAsync(subscriberId, TimeSpan.FromMilliseconds(150), CancellationToken.None));
     }
 
     [Fact]
@@ -72,8 +51,8 @@ public sealed class NewMediaAudienceTests
         var adminRead = await ReadOneAsync(hub, adminId);
 
         Assert.Equal(1, delivered);
-        Assert.Single(adminRead);
-        Assert.Equal("new-media", adminRead[0].EventName);
+        Assert.NotNull(adminRead);
+        Assert.Equal("new-media", adminRead!.EventName);
         await AssertNothingDeliveredAsync(hub, regularId);
 
         hub.Unsubscribe(adminId);
@@ -93,8 +72,8 @@ public sealed class NewMediaAudienceTests
         var regularRead = await ReadOneAsync(hub, regularId);
 
         Assert.Equal(2, delivered);
-        Assert.Single(adminRead);
-        Assert.Single(regularRead);
+        Assert.NotNull(adminRead);
+        Assert.NotNull(regularRead);
 
         hub.Unsubscribe(adminId);
         hub.Unsubscribe(regularId);
@@ -125,7 +104,7 @@ public sealed class NewMediaAudienceTests
         var adminRead = await ReadOneAsync(hub, adminId);
 
         Assert.Equal(1, delivered);
-        Assert.Single(adminRead);
+        Assert.NotNull(adminRead);
         await AssertNothingDeliveredAsync(hub, regularId);
 
         hub.Unsubscribe(adminId);

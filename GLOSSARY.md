@@ -15,6 +15,11 @@ change under an existing key without a bump.
 call. A 404 means the plugin is absent; the client hides gated features and
 stays functional.
 
+**Serialization gate** — `JellyPlayResponses.Camel` / `JellyPlayResponses.Error`,
+the one module that produces every JSON body on the wire. No controller or
+service writes an object body any other way; a result filter rewrites
+stragglers and a contract test pins the exclusivity.
+
 ## Devices & push
 
 **Device registry** — the per-user set of known devices (idempotent
@@ -84,3 +89,11 @@ data-erasure switch.
 mutating routes (settings batch, broadcast, anonymous webhook intake). Keyed
 on user id for authenticated routes, on client identity for anonymous ones.
 Error bodies always have the shape `{ "error": "code" }` in camelCase.
+
+**Resilient fetch** — the file cache → circuit breaker → fetch → parse
+pipeline for the TTL-cached external sources (TMDB, MDBList, IMDb charts,
+Letterboxd, seasonal lists): one TTL policy, one spoofed browser user agent
+for every scraped source (API sources use the plugin's own client), and
+failure shaped as "no data" (null), never an exception leaking to a route.
+The Fribb anime id index is NOT on this pipeline — it is a separate
+single-flight, memoized fetch with its own staleness window.

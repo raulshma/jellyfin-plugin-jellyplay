@@ -17,7 +17,7 @@ namespace Jellyfin.Plugin.JellyPlay.Api;
 [ApiController]
 [Authorize]
 [Route(JellyPlayContract.RoutePrefix + "/settings")]
-public class SettingsController : ControllerBase
+public class SettingsController : JellyPlayControllerBase
 {
     private readonly SettingsService _settings;
     private readonly SseHub _hub;

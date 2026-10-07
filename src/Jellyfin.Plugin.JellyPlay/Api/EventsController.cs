@@ -19,7 +19,7 @@ namespace Jellyfin.Plugin.JellyPlay.Api;
 [ApiController]
 [Authorize]
 [Route(JellyPlayContract.RoutePrefix)]
-public class EventsController : ControllerBase
+public class EventsController : JellyPlayControllerBase
 {
     /// <summary>Camel-case-insensitive binding for the raw push element (matches ASP.NET's body binding).</summary>
     internal static class DeviceJson
@@ -56,10 +56,10 @@ public class EventsController : ControllerBase
         return outcome switch
         {
             RegisterDeviceOutcome.Registered => NoContent(),
-            RegisterDeviceOutcome.DeviceIdRequired => BadRequest(new { error = "deviceId-required" }),
-            RegisterDeviceOutcome.InvalidPushRegistration => BadRequest(new { error = "invalid-push-registration" }),
-            RegisterDeviceOutcome.PushKindUnavailable => BadRequest(new { error = "push-kind-unavailable" }),
-            _ => BadRequest(new { error = "invalid-push-registration" })
+            RegisterDeviceOutcome.DeviceIdRequired => JellyPlayResponses.Error(StatusCodes.Status400BadRequest, "deviceId-required"),
+            RegisterDeviceOutcome.InvalidPushRegistration => JellyPlayResponses.Error(StatusCodes.Status400BadRequest, "invalid-push-registration"),
+            RegisterDeviceOutcome.PushKindUnavailable => JellyPlayResponses.Error(StatusCodes.Status400BadRequest, "push-kind-unavailable"),
+            _ => JellyPlayResponses.Error(StatusCodes.Status400BadRequest, "invalid-push-registration")
         };
     }
 
@@ -84,7 +84,7 @@ public class EventsController : ControllerBase
     public IActionResult Broadcast([FromBody, Required] BroadcastRequest request)
     {
         var delivered = _events.PublishBroadcast(request.Title, request.Body, request.Url);
-        return Accepted(new { delivered });
+        return JellyPlayResponses.Accepted(new { delivered });
     }
 
     /// <summary>Live events stream: new-media, broadcast, session-started, playback-started, user-locked-out.</summary>

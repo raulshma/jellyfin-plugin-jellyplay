@@ -64,8 +64,8 @@ public sealed class FcmTokenProvider
     private DateTimeOffset _accessTokenExpiry;
 
     /// <summary>DI constructor: real transport with a per-request 10s budget.</summary>
-    public FcmTokenProvider(Func<PushConfig> config, ILogger<FcmTokenProvider> logger)
-        : this(config, logger, static () => DateTimeOffset.UtcNow, FcmTokenSender)
+    public FcmTokenProvider(Func<PushConfig> config, ILogger<FcmTokenProvider> logger, IHttpClientFactory httpFactory)
+        : this(config, logger, static () => DateTimeOffset.UtcNow, NamedClientSender(httpFactory))
     {
     }
 
@@ -305,22 +305,7 @@ public sealed class FcmTokenProvider
         return string.Create(CultureInfo.InvariantCulture, $"{signingInput}.{Base64UrlEncode(signature)}");
     }
 
-    private static readonly HttpClient SharedClient = CreateSharedClient();
-
-    private static HttpClient CreateSharedClient()
-    {
-        var client = new HttpClient(new SocketsHttpHandler
-        {
-            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
-            ConnectTimeout = TimeSpan.FromSeconds(TimeoutSeconds)
-        })
-        {
-            Timeout = Timeout.InfiniteTimeSpan // each request is bounded by its own 10s CTS
-        };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("jellyfin-plugin-jellyplay/1.0");
-        return client;
-    }
-
-    private static async Task<HttpResponseMessage> FcmTokenSender(HttpRequestMessage request, CancellationToken cancellationToken)
-        => await SharedClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+    /// <summary>Sends through the pooled named client (created per request; the factory owns the handler lifetime).</summary>
+    private static PushSender NamedClientSender(IHttpClientFactory httpFactory)
+        => (request, cancellationToken) => httpFactory.CreateClient(PushDispatcher.HttpClientName).SendAsync(request, cancellationToken);
 }

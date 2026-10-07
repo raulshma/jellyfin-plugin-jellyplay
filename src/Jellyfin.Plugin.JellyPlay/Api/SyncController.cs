@@ -1,8 +1,8 @@
 using System.ComponentModel.DataAnnotations;
 using Jellyfin.Plugin.JellyPlay.Helpers;
+using Jellyfin.Plugin.JellyPlay.Services.Admin;
 using Jellyfin.Plugin.JellyPlay.Services.Settings;
 using MediaBrowser.Common.Api;
-using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -16,7 +16,7 @@ namespace Jellyfin.Plugin.JellyPlay.Api;
 [ApiController]
 [Authorize]
 [Route(JellyPlayContract.RoutePrefix + "/sync")]
-public class SyncController : ControllerBase
+public class SyncController : JellyPlayControllerBase
 {
     private readonly SyncInsightsService _insights;
 
@@ -71,15 +71,15 @@ public class SyncController : ControllerBase
 [ApiController]
 [Authorize(Policy = Policies.RequiresElevation)]
 [Route(JellyPlayContract.RoutePrefix + "/admin/sync")]
-public class SyncAdminController : ControllerBase
+public class SyncAdminController : JellyPlayControllerBase
 {
     private readonly SyncInsightsService _insights;
-    private readonly IUserManager _users;
+    private readonly AdminUsers _adminUsers;
 
-    public SyncAdminController(SyncInsightsService insights, IUserManager users)
+    public SyncAdminController(SyncInsightsService insights, AdminUsers adminUsers)
     {
         _insights = insights;
-        _users = users;
+        _adminUsers = adminUsers;
     }
 
     /// <summary>
@@ -90,5 +90,5 @@ public class SyncAdminController : ControllerBase
     [HttpGet("overview")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetOverview()
-        => JellyPlayResponses.Camel(_insights.GetAdminOverview(guid => _users.GetUserById(guid)?.Username));
+        => JellyPlayResponses.Camel(_insights.GetAdminOverview(_adminUsers.ResolveName));
 }

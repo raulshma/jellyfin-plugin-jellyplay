@@ -11,7 +11,7 @@ namespace Jellyfin.Plugin.JellyPlay.Api;
 [ApiController]
 [Authorize(Policy = Policies.RequiresElevation)]
 [Route(JellyPlayContract.RoutePrefix + "/admin")]
-public class AdminController : ControllerBase
+public class AdminController : JellyPlayControllerBase
 {
     private readonly AdminDefaultsService _defaults;
     private readonly ConfigBackupService _backup;
@@ -42,6 +42,8 @@ public class AdminController : ControllerBase
         using var ms = new System.IO.MemoryStream();
         await Request.Body.CopyToAsync(ms);
         var outcome = _backup.Restore(ms.ToArray());
-        return outcome.Success ? JellyPlayResponses.Camel(outcome) : BadRequest(outcome);
+        return outcome.Success
+            ? JellyPlayResponses.Camel(outcome)
+            : JellyPlayResponses.Camel(outcome, StatusCodes.Status400BadRequest);
     }
 }

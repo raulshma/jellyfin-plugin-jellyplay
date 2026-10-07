@@ -18,7 +18,7 @@ namespace Jellyfin.Plugin.JellyPlay.Services.Cache;
 /// </summary>
 public sealed class FileCacheStore
 {
-    /// <summary>Cache ceiling when no configuration is reachable (unit tests, early init).</summary>
+    /// <summary>Cache ceiling when the configured cap is not positive.</summary>
     public const long DefaultMaxTotalBytes = 256L << 20;
 
     /// <summary>Hard age ceiling for any entry regardless of the reader-supplied TTL.</summary>
@@ -31,12 +31,12 @@ public sealed class FileCacheStore
     private readonly ILogger<FileCacheStore> _logger;
     private int _writeCount;
 
-    /// <summary>DI/test constructor. <paramref name="cacheDirectory"/> defaults to the plugin data directory's "cache" folder; <paramref name="maxSizeMegabytes"/> defaults to the plugin configuration with a 256 MB floor.</summary>
-    public FileCacheStore(ILogger<FileCacheStore> logger, string? cacheDirectory = null, Func<int>? maxSizeMegabytes = null)
+    /// <summary>DI/test constructor: explicit cache directory and size-cap source (ADR-0002 — no plugin-singleton fallbacks; the composition root passes both).</summary>
+    public FileCacheStore(ILogger<FileCacheStore> logger, string cacheDirectory, Func<int> maxSizeMegabytes)
     {
         _logger = logger;
-        _cacheDir = cacheDirectory ?? Path.Combine(JellyPlayPlugin.Instance?.DataDirectory ?? AppContext.BaseDirectory, "cache");
-        _maxSizeMegabytes = maxSizeMegabytes ?? (() => JellyPlayPlugin.Instance?.Configuration.Cache.MaxSizeMegabytes ?? 256);
+        _cacheDir = cacheDirectory;
+        _maxSizeMegabytes = maxSizeMegabytes;
         Directory.CreateDirectory(_cacheDir);
         Sweep(MaxTotalBytes(), DefaultMaxEntryAge);
     }
@@ -208,66 +208,6 @@ public sealed class FileCacheStore
     {
         public T Value { get; set; } = default!;
         public long StoredAt { get; set; }
-    }
-}
-
-/// <summary>
-/// Circuit breaker per external source: after N consecutive failures the source
-/// is skipped for an open window, then allowed one trial call. Prevents one
-/// dead upstream from stalling request paths.
-/// </summary>
-public sealed class CircuitBreaker
-{
-    private readonly int _failureThreshold;
-    private readonly TimeSpan _openWindow;
-    private readonly object _lock = new();
-    private int _consecutiveFailures;
-    private long _openedAtMs;
-
-    public CircuitBreaker(int failureThreshold = 3, TimeSpan? openWindow = null)
-    {
-        _failureThreshold = failureThreshold;
-        _openWindow = openWindow ?? TimeSpan.FromMinutes(10);
-    }
-
-    public bool IsOpen(long nowMs)
-    {
-        lock (_lock)
-        {
-            if (_consecutiveFailures < _failureThreshold)
-            {
-                return false;
-            }
-
-            if (nowMs - _openedAtMs >= (long)_openWindow.TotalMilliseconds)
-            {
-                _consecutiveFailures = _failureThreshold - 1;
-                return false;
-            }
-
-            return true;
-        }
-    }
-
-    public void RecordSuccess(long nowMs)
-    {
-        lock (_lock)
-        {
-            _consecutiveFailures = 0;
-            _openedAtMs = 0;
-        }
-    }
-
-    public void RecordFailure(long nowMs)
-    {
-        lock (_lock)
-        {
-            _consecutiveFailures++;
-            if (_consecutiveFailures >= _failureThreshold)
-            {
-                _openedAtMs = nowMs;
-            }
-        }
     }
 }
 

@@ -1,9 +1,13 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Security.Claims;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyPlay.Api;
+using Jellyfin.Plugin.JellyPlay.Configuration;
 using Jellyfin.Plugin.JellyPlay.Realtime;
 using Jellyfin.Plugin.JellyPlay.Services.Admin;
 using Jellyfin.Plugin.JellyPlay.Services.Cache;
@@ -11,7 +15,12 @@ using Jellyfin.Plugin.JellyPlay.Services.Seerr;
 using Jellyfin.Plugin.JellyPlay.Storage;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Abstractions;
+using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -229,7 +238,7 @@ public sealed class FileCacheSweepTests : IDisposable
     public FileCacheSweepTests()
     {
         Directory.CreateDirectory(_tempDir);
-        _store = new FileCacheStore(NullLogger<FileCacheStore>.Instance, _tempDir);
+        _store = new FileCacheStore(NullLogger<FileCacheStore>.Instance, _tempDir, () => 256);
     }
 
     public void Dispose()
@@ -494,5 +503,164 @@ public sealed class SecretBoxTests : IDisposable
         var box = SecretBox.LoadOrCreate(Path.Combine(fileAsDir, "sub"), NullLogger.Instance);
         Assert.False(box.IsAvailable);
         Assert.Null(box.Protect(CookieJson));
+    }
+}
+
+/// <summary>The Seerr validation cache: entries expire on read and are swept on write, so the map cannot grow forever.</summary>
+public sealed class SeerrValidationCacheTests
+{
+    [Fact]
+    public void Entries_ExpireOnRead_AfterTheTtl()
+    {
+        var cache = new ValidationCache();
+        cache.Set("u", 0, valid: true);
+
+        Assert.True(cache.TryGet("u", 1_000, out var valid));
+        Assert.True(valid);
+        Assert.False(cache.TryGet("u", ValidationCache.TtlMs + 1, out _)); // expired = miss
+    }
+
+    [Fact]
+    public void WritePastTheSweepWindow_DropsExpiredEntries()
+    {
+        var cache = new ValidationCache();
+        cache.Set("a", 0, true);
+        cache.Set("b", 0, false);
+        Assert.Equal(2, cache.Count);
+
+        cache.Set("c", ValidationCache.TtlMs, true); // a full window past the last write → sweep fires
+
+        Assert.Equal(1, cache.Count); // a and b were expired; c is fresh
+        Assert.True(cache.TryGet("c", ValidationCache.TtlMs, out var valid));
+        Assert.True(valid);
+    }
+
+    [Fact]
+    public void Sweep_DropsOnlyExpiredEntries()
+    {
+        var cache = new ValidationCache();
+        cache.Set("old", 0, true);
+        cache.Set("fresh", ValidationCache.TtlMs - 1, true);
+
+        cache.Set("trigger", ValidationCache.TtlMs + 1, true);
+
+        Assert.Equal(2, cache.Count);
+        Assert.True(cache.TryGet("fresh", ValidationCache.TtlMs + 1, out _));
+        Assert.True(cache.TryGet("trigger", ValidationCache.TtlMs + 1, out _));
+    }
+}
+
+/// <summary>The rate-limit seam's key derivation: user id vs client identity (proxy trust read from the Seerr config).</summary>
+public sealed class RateLimitKeyTests
+{
+    private static HttpContext ContextWith(string? remoteIp, string? forwardedFor, IServiceProvider? services = null)
+    {
+        var context = new DefaultHttpContext
+        {
+            RequestServices = services ?? new ServiceCollection().BuildServiceProvider()
+        };
+        if (remoteIp is not null)
+        {
+            context.Connection.RemoteIpAddress = IPAddress.Parse(remoteIp);
+        }
+
+        if (forwardedFor is not null)
+        {
+            context.Request.Headers["X-Forwarded-For"] = forwardedFor;
+        }
+
+        return context;
+    }
+
+    private static IServiceProvider TrustedProxyProviders()
+        => new ServiceCollection()
+            .AddSingleton(new Func<SeerrConfig>(() => new SeerrConfig { TrustProxyHeaders = true }))
+            .BuildServiceProvider();
+
+    [Fact]
+    public void UserStrategy_KeysOnThePluginUserId()
+    {
+        var context = ContextWith(null, null);
+        context.User = new ClaimsPrincipal(new ClaimsIdentity(
+            new[] { new Claim("Jellyfin-UserId", "11111111-1111-1111-1111-111111111111") }, "Bearer"));
+
+        Assert.Equal(
+            "settings:11111111-1111-1111-1111-111111111111",
+            RateLimitFilter.BuildKey(RateLimitKeyStrategy.User, "settings", context, context.RequestServices));
+    }
+
+    [Fact]
+    public void ClientIdentity_KeysOnRemoteIp_ByDefault_EvenWithForwardedHeader()
+    {
+        var context = ContextWith("203.0.113.7", "198.51.100.9, 10.0.0.1");
+
+        Assert.Equal(
+            "webhook:ip:203.0.113.7",
+            RateLimitFilter.BuildKey(RateLimitKeyStrategy.ClientIdentity, "webhook", context, context.RequestServices));
+    }
+
+    [Fact]
+    public void ClientIdentity_UsesForwardedFirstHop_OnlyWhenProxyTrusted()
+    {
+        var context = ContextWith("203.0.113.7", "198.51.100.9:5678, 10.0.0.1", TrustedProxyProviders());
+
+        Assert.Equal(
+            "webhook:xff:198.51.100.9",
+            RateLimitFilter.BuildKey(RateLimitKeyStrategy.ClientIdentity, "webhook", context, context.RequestServices));
+    }
+}
+
+/// <summary>The gate's safety net: stray ObjectResults are rewritten through the gate; ContentResults (the gate's own output shape) are untouched.</summary>
+public sealed class JellyPlayResponseFilterTests
+{
+    private static ActionExecutedContext ExecutedContext(IActionResult result)
+        => new(
+            new ActionContext(new DefaultHttpContext(), new RouteData(), new ActionDescriptor()),
+            new List<IFilterMetadata>(),
+            new ActionDescriptor())
+        {
+            Result = result
+        };
+
+    [Fact]
+    public void RawObjectResult_IsRewrittenThroughTheGate()
+    {
+        var filter = new JellyPlayResponseFilter();
+        var context = ExecutedContext(new ObjectResult(new { Event = "Watch Later" })
+        {
+            StatusCode = StatusCodes.Status409Conflict
+        });
+
+        filter.OnActionExecuted(context);
+
+        var rewritten = Assert.IsAssignableFrom<ContentResult>(context.Result);
+        Assert.Equal(StatusCodes.Status409Conflict, rewritten.StatusCode);
+        Assert.Equal("{\"event\":\"Watch Later\"}", rewritten.Content);
+    }
+
+    [Fact]
+    public void ContentResultBodies_AreUntouched()
+    {
+        // Gate-produced responses are ContentResults — the net rewrites
+        // ObjectResults only, so a gate body is never double-serialized.
+        var filter = new JellyPlayResponseFilter();
+        var gateResult = JellyPlayResponses.Error(StatusCodes.Status409Conflict, "conflict");
+        var context = ExecutedContext(gateResult);
+
+        filter.OnActionExecuted(context);
+
+        Assert.Same(gateResult, context.Result);
+    }
+
+    [Fact]
+    public void BodylessObjectResult_IsLeftAlone()
+    {
+        var filter = new JellyPlayResponseFilter();
+        var raw = new ObjectResult(null) { StatusCode = StatusCodes.Status200OK };
+        var context = ExecutedContext(raw);
+
+        filter.OnActionExecuted(context);
+
+        Assert.Same(raw, context.Result);
     }
 }
