@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>JellyPlay sync</title>
+</head>
+<body>
+    <div data-role="page" id="jellyplaySyncPage" class="page type-interior jellyplaySyncPage">
+        <div data-role="content">
+            <div class="content-primary">
+                <div class="verticalSection">
+                    <h2 class="sectionTitle" data-i18n="SyncPageTitle">JellyPlay sync</h2>
+                    <p class="sectionDescription" data-i18n="SyncPageDescription">Per-user drill-down for the client settings sync: quota usage, registered devices, the recorded operation history with per-key diffs, a live monitor, the resolved-settings preview simulator and a push dry run.</p>
+                    <p><a is="emby-linkbutton" class="raised emby-button" href="#/configurationpage?name=JellyPlay"><span data-i18n="SyncBackToConfig">Back to JellyPlay configuration</span></a></p>
+                </div>
+
+                <div class="verticalSection" style="margin-top:2em">
+                    <h3 class="sectionTitle" data-i18n="SectionLiveMonitor">Live monitor</h3>
+                    <p class="sectionDescription" data-i18n="LiveMonitorDescription">Stream of sync operations (push / pull / reset / wipe) as the server records them, for every user. Keeps the last 200 entries; the durable record is the history below.</p>
+                    <div style="margin-bottom:0.75em">
+                        <button is="emby-button" type="button" id="jellyplayLiveConnect" class="raised button-submit emby-button"><span data-i18n="LiveMonitorConnect">Connect</span></button>
+                        <button is="emby-button" type="button" id="jellyplayLiveDisconnect" class="raised emby-button" disabled><span data-i18n="LiveMonitorDisconnect">Disconnect</span></button>
+                        <span id="jellyplayLiveStatus" class="jellyplay-test-status" data-i18n="LiveMonitorIdle">Idle.</span>
+                    </div>
+                    <div class="jellyplay-table-wrap">
+                        <table id="jellyplayLiveTable" class="detailTable">
+                            <thead>
+                                <tr>
+                                    <th data-i18n="ColumnTime">Time</th>
+                                    <th data-i18n="ColumnUser">User</th>
+                                    <th data-i18n="ColumnOp">Op</th>
+                                    <th data-i18n="ColumnDevice">Device</th>
+                                    <th data-i18n="ColumnApplied">Applied</th>
+                                    <th data-i18n="ColumnRejected">Rejected</th>
+                                </tr>
+                            </thead>
+                            <tbody id="jellyplayLiveBody"></tbody>
+                        </table>
+                        <p class="sectionDescription" id="jellyplayLiveEmpty" data-i18n="LiveMonitorEmpty">No sync operations observed yet.</p>
+                    </div>
+                </div>
+
+                <div class="verticalSection" style="margin-top:2em">
+                    <h3 class="sectionTitle" data-i18n="SectionDrilldown">Per-user drill-down</h3>
+                    <p class="sectionDescription" data-i18n="DrilldownDescription">Pick a user to inspect their sync footprint against the configured quotas, their registered devices (revoke wipes that device's synced keys) and their recorded operations — expand one to see exactly which keys it touched.</p>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="jellyplaySyncUser" data-i18n="DrilldownUser">User</label>
+                        <select id="jellyplaySyncUser" class="emby-select"></select>
+                    </div>
+                    <button is="emby-button" type="button" id="jellyplaySyncLoad" class="raised button-submit emby-button" style="margin-bottom:1em"><span data-i18n="DrilldownLoad">Load</span></button>
+
+                    <div id="jellyplayDrilldown" style="display:none">
+                        <h4 class="sectionTitle" data-i18n="DrilldownQuotas">Quota usage</h4>
+                        <div class="jellyplay-quota">
+                            <label class="jellyplay-field-label" for="jellyplayQuotaKeysBar" data-i18n="QuotaKeysLabel">Keys</label>
+                            <progress id="jellyplayQuotaKeysBar" max="100" value="0"></progress>
+                            <span id="jellyplayQuotaKeysText" class="jellyplay-test-status"></span>
+                        </div>
+                        <div class="jellyplay-quota">
+                            <label class="jellyplay-field-label" for="jellyplayQuotaBytesBar" data-i18n="QuotaBytesLabel">Bytes</label>
+                            <progress id="jellyplayQuotaBytesBar" max="100" value="0"></progress>
+                            <span id="jellyplayQuotaBytesText" class="jellyplay-test-status"></span>
+                        </div>
+
+                        <h4 class="sectionTitle" data-i18n="DrilldownNamespaces">Namespaces</h4>
+                        <div class="jellyplay-table-wrap">
+                            <table class="detailTable">
+                                <thead>
+                                    <tr>
+                                        <th data-i18n="ColumnNamespace">Namespace</th>
+                                        <th data-i18n="ColumnKeys">Keys</th>
+                                        <th data-i18n="ColumnBytes">Bytes</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="jellyplayNamespaceBody"></tbody>
+                            </table>
+                            <p class="sectionDescription" id="jellyplayNamespaceEmpty" data-i18n="NamespacesEmpty">No synced settings yet.</p>
+                        </div>
+
+                        <h4 class="sectionTitle" data-i18n="DrilldownDevices">Devices</h4>
+                        <div class="jellyplay-table-wrap">
+                            <table class="detailTable">
+                                <thead>
+                                    <tr>
+                                        <th data-i18n="ColumnName">Name</th>
+                                        <th data-i18n="ColumnPlatform">Platform</th>
+                                        <th data-i18n="ColumnModel">Model</th>
+                                        <th data-i18n="ColumnVersion">Version</th>
+                                        <th data-i18n="ColumnLastSeen">Last seen</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="jellyplayDeviceBody"></tbody>
+                            </table>
+                            <p class="sectionDescription" id="jellyplayDeviceEmpty" data-i18n="DevicesEmpty">No devices registered.</p>
+                        </div>
+
+                        <h4 class="sectionTitle" data-i18n="DrilldownHistory">History</h4>
+                        <div style="margin-bottom:0.75em">
+                            <button is="emby-button" type="button" id="jellyplayHistoryCsv" class="raised emby-button"><span data-i18n="HistoryExportCsv">Export CSV</span></button>
+                            <button is="emby-button" type="button" id="jellyplayHistoryJson" class="raised emby-button"><span data-i18n="HistoryExportJson">Export JSON</span></button>
+                        </div>
+                        <div id="jellyplayHistoryList" class="jellyplay-rows"></div>
+                        <p class="sectionDescription" id="jellyplayHistoryEmpty" data-i18n="HistoryEmpty">No recorded sync operations.</p>
+                    </div>
+                </div>
+
+                <div class="verticalSection" style="margin-top:2em">
+                    <h3 class="sectionTitle" data-i18n="SectionPreview">Resolved preview</h3>
+                    <p class="sectionDescription" data-i18n="PreviewDescription">What a client would resolve for the chosen user and device profile: base settings merged with the profile overlay and your tri-state defaults. Pure simulation — nothing is written.</p>
+                    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:0.75em">
+                        <div class="jellyplay-field" style="flex:1 1 240px">
+                            <label class="jellyplay-field-label" for="jellyplayPreviewUser" data-i18n="DrilldownUser">User</label>
+                            <select id="jellyplayPreviewUser" class="emby-select"></select>
+                        </div>
+                        <div class="jellyplay-field narrow">
+                            <label class="jellyplay-field-label" for="jellyplayPreviewProfile" data-i18n="PreviewProfile">Profile</label>
+                            <select id="jellyplayPreviewProfile" class="emby-select">
+                                <option value="" data-i18n="PreviewProfileBase">Base</option>
+                                <option value="desktop">desktop</option>
+                                <option value="phone">phone</option>
+                                <option value="tv">tv</option>
+                            </select>
+                        </div>
+                        <button is="emby-button" type="button" id="jellyplayPreviewRun" class="raised button-submit emby-button"><span data-i18n="PreviewRun">Preview</span></button>
+                    </div>
+                    <p class="sectionDescription" id="jellyplayPreviewEmpty" data-i18n="PreviewEmpty">Pick a user and profile, then run the preview.</p>
+                    <div id="jellyplayPreviewList" class="jellyplay-rows"></div>
+                </div>
+
+                <div class="verticalSection" style="margin-top:2em">
+                    <h3 class="sectionTitle" data-i18n="SectionPushDryRun">Push defaults — dry run</h3>
+                    <p class="sectionDescription" data-i18n="PushDryRunDescription">Simulate the defaults push for one user (or all users): how many keys would apply, how many would be rejected as stale, and any catalog problems in your stored defaults. Writes nothing — use Push on the main configuration page for the real thing.</p>
+                    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:0.75em">
+                        <div class="jellyplay-field" style="flex:1 1 240px">
+                            <label class="jellyplay-field-label" for="jellyplayDryRunUser" data-i18n="DrilldownUser">User</label>
+                            <select id="jellyplayDryRunUser" class="emby-select"></select>
+                        </div>
+                        <button is="emby-button" type="button" id="jellyplayDryRunRun" class="raised button-submit emby-button"><span data-i18n="PushDryRunRun">Simulate push</span></button>
+                    </div>
+                    <div id="jellyplayDryRunResult" class="jellyplay-test-status" style="display:none"></div>
+                </div>
+            </div>
+        </div>
+        <!-- Bump v whenever sync.js changes: the config page endpoints send no
+             cache headers, so browsers would otherwise keep running stale JS. -->
+        <script type="text/javascript" src="configurationpage?name=JellyPlaySync.js&amp;v=1"></script>
+    </div>
+</body>
+</html>

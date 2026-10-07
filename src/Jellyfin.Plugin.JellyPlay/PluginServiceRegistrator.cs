@@ -88,10 +88,13 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<Services.Push.PushDispatcher>();
 
         // Device registry: registration contract (push attach/preserve/detach,
-        // FCM gate) and owner-scoped listing behind one module.
+        // FCM gate), the caps-gated revoke+wipe orchestration and owner-scoped
+        // listing behind one module (the wipe's data half is the settings
+        // service's — history op and SSE fan-out live there).
         serviceCollection.AddSingleton(sp => new Services.Devices.DeviceRegistryService(
             sp.GetRequiredService<JellyPlayDatabase>(),
-            sp.GetRequiredService<Func<Configuration.PushConfig>>()));
+            sp.GetRequiredService<Func<Configuration.PushConfig>>(),
+            sp.GetRequiredService<Services.Settings.SettingsService>()));
 
         // Persistence — plugin instance owns the lazy database singleton
         serviceCollection.AddSingleton(_ => JellyPlayPlugin.Instance!.Database);
@@ -107,6 +110,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<Services.Fetching.ResilientFetcher>();
 
         // Settings sync
+        serviceCollection.AddSingleton<SnapshotService>();
         serviceCollection.AddSingleton<SettingsService>();
         serviceCollection.AddSingleton<SyncInsightsService>();
 
@@ -183,7 +187,10 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<Services.Admin.BroadcastRateLimiter>();
         serviceCollection.AddSingleton<Services.Admin.WebhookRateLimiter>();
 
-        // Jellyfin-12 similar-items pipeline registration (reflection-guarded; no-op on 10.11)
-        serviceCollection.AddHostedService<Services.Recommendations.SimilarItemsProviderManager>();
+        // Jellyfin-12 similar-items pipeline registration (reflection-guarded; no-op on 10.11).
+        // One singleton shared by both faces: the controller injects the concrete
+        // type, the host starts it through IHostedService.
+        serviceCollection.AddSingleton<Services.Recommendations.SimilarItemsProviderManager>();
+        serviceCollection.AddHostedService(sp => sp.GetRequiredService<Services.Recommendations.SimilarItemsProviderManager>());
     }
 }

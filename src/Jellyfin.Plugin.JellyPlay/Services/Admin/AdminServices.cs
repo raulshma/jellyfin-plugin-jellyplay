@@ -19,29 +19,54 @@ namespace Jellyfin.Plugin.JellyPlay.Services.Admin;
 /// <summary>
 /// Pushes tri-state defaults into user accounts. Forced keys overwrite whatever
 /// the user has; suggested keys only fill gaps. Scope "global" merges with any
-/// per-user overrides already stored.
+/// per-user overrides already stored. A restore-point snapshot is captured
+/// before each user's push (best-effort), so an admin can always roll back.
 /// </summary>
 public sealed class AdminDefaultsService
 {
     private readonly SettingsService _settings;
     private readonly JellyPlayDatabase _db;
+    private readonly SnapshotService _snapshots;
     private readonly ILogger<AdminDefaultsService> _logger;
 
-    public AdminDefaultsService(SettingsService settings, JellyPlayDatabase db, ILogger<AdminDefaultsService> logger)
+    public AdminDefaultsService(SettingsService settings, JellyPlayDatabase db, SnapshotService snapshots, ILogger<AdminDefaultsService> logger)
     {
         _settings = settings;
         _db = db;
+        _snapshots = snapshots;
         _logger = logger;
     }
 
-    /// <summary>Returns per-user (per-key) outcome counts.</summary>
-    public PushOutcome PushDefaults(string? userId)
+    /// <summary>Per-key would-rejects are capped at this many per dry run (counts stay authoritative).</summary>
+    internal const int MaxDryRunRejects = 100;
+
+    /// <summary>
+    /// Per-user outcome counts. The additive <see cref="DryRun"/> payload is
+    /// is present only on dry runs (<c>?dryRun=true</c>), which never write:
+    /// <c>keysPushed</c> is 0 there and the report carries would-apply /
+    /// would-reject counts plus the catalog-validation problems of the stored
+    /// defaults.
+    /// </summary>
+    public sealed record PushOutcome(int Users, int KeysPushed, PushDryRun? DryRun = null);
+
+    /// <summary>The dry-run report: what a real push would do, computed without touching any row.</summary>
+    public sealed record PushDryRun(int WouldApply, int WouldReject, IReadOnlyList<PushDryRunReject> WouldRejects, IReadOnlyList<string> Problems);
+
+    public sealed record PushDryRunReject(string UserId, string Ns, string Key, string Reason);
+
+    /// <summary>Per-user outcome counts; <c>dryRun</c> simulates the push and writes nothing.</summary>
+    public PushOutcome PushDefaults(string? userId, bool dryRun = false)
     {
         var targets = string.IsNullOrEmpty(userId)
             ? _db.GetDistinctSettingUserIds()
             : new List<string> { userId! };
 
         var globalDefaults = _settings.GetAdminDefaultsRaw(SettingsService.GlobalDefaultsScope);
+
+        if (dryRun)
+        {
+            return DryRunPush(targets, globalDefaults);
+        }
 
         var pushed = 0;
         foreach (var target in targets)
@@ -52,7 +77,60 @@ public sealed class AdminDefaultsService
         return new PushOutcome(targets.Count, pushed);
     }
 
-    public sealed record PushOutcome(int Users, int KeysPushed);
+    /// <summary>
+    /// Simulates the push over every target without writing: the same merged
+    /// write set a real push would produce (scope merge + shadow rule), each
+    /// write judged by the same LWW rule the batch pipeline applies (strictly
+    /// newer than the stored value applies; equal or older rejects
+    /// stale-write), plus the catalog-validation problems of the stored
+    /// defaults maps. Quota rejections are not simulated — the defaults are
+    /// catalog-sized and the per-user footprint is checked live on the real
+    /// push.
+    /// </summary>
+    private PushOutcome DryRunPush(IReadOnlyList<string> targets, JsonElement? globalDefaults)
+    {
+        var problems = new List<string>();
+        if (globalDefaults is { } global)
+        {
+            problems.AddRange(SettingsService.ValidateAgainstCatalog(global));
+        }
+
+        var rejects = new List<PushDryRunReject>();
+        var wouldApply = 0;
+        var wouldReject = 0;
+
+        foreach (var target in targets)
+        {
+            var perUserDefaults = _settings.GetAdminDefaultsRaw(target);
+            if (perUserDefaults is { } payload)
+            {
+                problems.AddRange(SettingsService.ValidateAgainstCatalog(payload));
+            }
+
+            var (writes, existing) = BuildPushWrites(target, globalDefaults, perUserDefaults);
+            foreach (var write in writes)
+            {
+                if (existing.TryGetValue(DefaultsEnvelope.Join(write.Ns, write.Key), out var current)
+                    && write.UpdatedAt <= current.UpdatedAt)
+                {
+                    wouldReject++;
+                    if (rejects.Count < MaxDryRunRejects)
+                    {
+                        rejects.Add(new PushDryRunReject(target, write.Ns, write.Key, "stale-write"));
+                    }
+
+                    continue;
+                }
+
+                wouldApply++;
+            }
+        }
+
+        return new PushOutcome(
+            targets.Count,
+            0,
+            new PushDryRun(wouldApply, wouldReject, rejects, problems));
+    }
 
     /// <summary>
     /// Pushes the scope-merged defaults to one user. The precedence lives in
@@ -65,6 +143,32 @@ public sealed class AdminDefaultsService
     /// default fall through.
     /// </summary>
     private int PushMerged(string userId, JsonElement? globalDefaults, JsonElement? perUserDefaults)
+    {
+        var (writes, _) = BuildPushWrites(userId, globalDefaults, perUserDefaults);
+
+        if (writes.Count == 0)
+        {
+            return 0;
+        }
+
+        // Restore point before the overwrite (best-effort; Create never throws).
+        _snapshots.Create(userId, "admin-push");
+
+        var result = _settings.ApplyBatch(userId, JellyPlayDatabase.BaseProfile, "admin-push", writes);
+        _logger.LogInformation("Pushed {Applied}/{Total} defaults to user {UserId}", result.Applied.Count, writes.Count, userId);
+        return result.Applied.Count;
+    }
+
+    /// <summary>
+    /// The merged write set a push would issue for one user (server-now
+    /// stamped) together with the user's current base-profile rows — shared
+    /// verbatim by the real push and the dry-run simulation so the two can
+    /// never disagree about WHAT would be written.
+    /// </summary>
+    private (List<Api.SettingsWriteDto> Writes, Dictionary<string, Api.SettingsEntryDto> Existing) BuildPushWrites(
+        string userId,
+        JsonElement? globalDefaults,
+        JsonElement? perUserDefaults)
     {
         var baseSnapshot = _settings.GetAll(userId, JellyPlayDatabase.BaseProfile);
         var existing = baseSnapshot.Settings.ToDictionary(entry => DefaultsEnvelope.Join(entry.Ns, entry.Key), entry => entry);
@@ -86,14 +190,7 @@ public sealed class AdminDefaultsService
             });
         }
 
-        if (writes.Count == 0)
-        {
-            return 0;
-        }
-
-        var result = _settings.ApplyBatch(userId, JellyPlayDatabase.BaseProfile, "admin-push", writes);
-        _logger.LogInformation("Pushed {Applied}/{Total} defaults to user {UserId}", result.Applied.Count, writes.Count, userId);
-        return result.Applied.Count;
+        return (writes, existing);
     }
 }
 

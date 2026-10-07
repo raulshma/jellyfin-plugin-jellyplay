@@ -188,10 +188,46 @@ public class SyncConfig
 
     public int MaxKeysPerUser { get; set; } = 2000;
 
+    /// <summary>
+    /// Per-namespace byte quotas (schema v7), enforced across the user's
+    /// profiles on top of the per-user total — a single runaway namespace can
+    /// no longer starve the others. Defaults leave headroom under the 5 MB
+    /// user total. Namespaces absent from the map are bounded only by
+    /// MaxUserBytes; raising MaxUserBytes above the namespace sums has no
+    /// effect on these caps.
+    /// </summary>
+    /// <remarks>
+    /// Jellyfin's XML config serializer cannot reflect <c>IDictionary</c>
+    /// members — persist through <see cref="NamespaceQuotaBytesSerialized"/>.
+    /// </remarks>
+    [System.Xml.Serialization.XmlIgnore]
+    public Dictionary<string, int> NamespaceQuotaBytes { get; set; } = new()
+    {
+        ["prefs"] = 3 * 1024 * 1024,
+        ["reader"] = 1536 * 1024,
+        ["search"] = 64 * 1024,
+        ["cw"] = 64 * 1024,
+        ["homelayout"] = 64 * 1024
+    };
+
+    /// <summary>XML persistence surrogate for <see cref="NamespaceQuotaBytes"/> — "ns=bytes" comma pairs.</summary>
+    public string NamespaceQuotaBytesSerialized
+    {
+        get => string.Join(",", NamespaceQuotaBytes.Select(kv => kv.Key + "=" + kv.Value));
+        set => NamespaceQuotaBytes = (value ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(pair => pair.Split('=', 2))
+            .Where(parts => parts.Length == 2 && int.TryParse(parts[1], out _))
+            .ToDictionary(p => p[0], p => int.Parse(p[1], System.Globalization.CultureInfo.InvariantCulture));
+    }
+
     public int ChangeLogRetentionDays { get; set; } = 30;
 
     /// <summary>How long recorded sync operations (push/pull/reset) are kept before the daily prune deletes them.</summary>
     public int HistoryRetentionDays { get; set; } = 30;
+
+    /// <summary>How old restore-point snapshots may get before the daily prune deletes them (a rolling keep-last window also applies at insert time).</summary>
+    public int SnapshotRetentionDays { get; set; } = 30;
 }
 
 public class CacheConfig

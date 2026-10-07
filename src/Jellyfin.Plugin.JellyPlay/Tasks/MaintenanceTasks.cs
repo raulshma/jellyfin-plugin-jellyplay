@@ -11,8 +11,8 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.JellyPlay.Tasks;
 
 /// <summary>
-/// Prunes the settings change log and the recorded sync-operation history
-/// beyond their retention windows.
+/// Prunes the settings change log, the recorded sync-operation history and
+/// the restore-point snapshots beyond their retention windows.
 /// </summary>
 public sealed class ChangeLogPruneTask : IScheduledTask
 {
@@ -27,11 +27,11 @@ public sealed class ChangeLogPruneTask : IScheduledTask
         _logger = logger;
     }
 
-    public string Name => "JellyPlay: prune settings change log and sync history";
+    public string Name => "JellyPlay: prune settings change log, sync history and snapshots";
 
     public string Key => "JellyPlay.ChangeLogPrune";
 
-    public string Description => "Removes settings change-log entries and recorded sync operations older than their retention windows.";
+    public string Description => "Removes settings change-log entries, recorded sync operations and restore-point snapshots older than their retention windows.";
 
     public string Category => "JellyPlay";
 
@@ -39,11 +39,13 @@ public sealed class ChangeLogPruneTask : IScheduledTask
     {
         var config = _config();
         var changeLogRows = await Task.Run(() => _db.PruneChangeLog(config.ChangeLogRetentionDays), cancellationToken);
-        progress.Report(50);
+        progress.Report(33);
         var historyRows = await Task.Run(() => _db.PruneSyncHistory(config.HistoryRetentionDays), cancellationToken);
+        progress.Report(66);
+        var snapshotRows = await Task.Run(() => _db.PruneSnapshots(config.SnapshotRetentionDays), cancellationToken);
         _logger.LogInformation(
-            "JellyPlay prune finished: {ChangeLogRows} change-log rows and {HistoryRows} sync-history rows removed (retention {ChangeLogDays}/{HistoryDays} days)",
-            changeLogRows, historyRows, config.ChangeLogRetentionDays, config.HistoryRetentionDays);
+            "JellyPlay prune finished: {ChangeLogRows} change-log rows, {HistoryRows} sync-history rows and {SnapshotRows} snapshots removed (retention {ChangeLogDays}/{HistoryDays}/{SnapshotDays} days)",
+            changeLogRows, historyRows, snapshotRows, config.ChangeLogRetentionDays, config.HistoryRetentionDays, config.SnapshotRetentionDays);
         progress.Report(100);
     }
 

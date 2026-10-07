@@ -36,17 +36,60 @@ Opaque per-user JSON blobs. The server never interprets values; clients own sche
 versions and migrations. Profiles are device classes (`""` base, `desktop`, `phone`, `tv`).
 
 ```
-GET    jellyplay/settings?profile=            → { head, profile, settings: [{ns, key, schemaVersion, updatedAt, deviceId, value}] }
-GET    jellyplay/settings/changed?since=SEQ&profile=   → same shape (delta since change-log cursor)
-POST   jellyplay/settings                     body { profile?, deviceId, writes: [{ns, key, schemaVersion, updatedAt, value}] }
-                                              → { head, applied: [{ns, key, updatedAt, seq}], rejected: [{ns, key, reason}] }
-DELETE jellyplay/settings/{ns}?profile=       → 204 (reset namespace)
-GET    jellyplay/settings/resolved/{profile}? → merged: forced-defaults > profile overlay > base > suggested-defaults
-                                              + additive `modes`: { "<ns>/<key>": "unset"|"suggested"|"forced" }
-POST   jellyplay/settings/profile/{profile}   → batch into a device profile
-GET    jellyplay/settings/stream              → SSE (events: settings.changed, settings.reset)
-GET    jellyplay/settings/catalog             → { catalogSchema, settings: [{ns, key, label, description, valueType, defaultValue, min, max, options}] }
+GET    jellyplay/settings?profile=&cursor=&limit=   → { head, profile, settings: [{ns, key, schemaVersion, updatedAt, deviceId, value}], nextCursor? }
+GET    jellyplay/settings/changed?since=SEQ&profile=&cursor=&limit=
+                                                    → same shape + additive `deleted`: [{ns, key}]
+POST   jellyplay/settings                           body { profile?, deviceId, writes: [{ns, key, schemaVersion, updatedAt, value, deleted?}] }
+                                                    → { head, applied: [{ns, key, updatedAt, seq, deleted?}], rejected: [{ns, key, reason}] }
+DELETE jellyplay/settings/{ns}?profile=             → 204 (reset namespace — tombstone batch, see below)
+GET    jellyplay/settings/resolved/{profile}?       → merged: forced-defaults > profile overlay > base > suggested-defaults
+                                                    + additive `modes`: { "<ns>/<key>": "unset"|"suggested"|"forced" }
+POST   jellyplay/settings/profile/{profile}         → batch into a device profile (captures a restore point first)
+GET    jellyplay/settings/stream                    → SSE (events: settings.changed, settings.reset)
+GET    jellyplay/settings/catalog                   → { catalogSchema, settings: [{ns, key, label, description, valueType, defaultValue, min, max, options}] }
 ```
+
+**Pagination** (additive, no bump): `GET settings` and `GET settings/changed`
+accept `cursor` (opaque; echo `nextCursor` back verbatim) and `limit`. The
+response carries `nextCursor` ONLY when more rows follow — absent means last
+page. The default limit is deliberately far above any real store (10 000 rows,
+clamped to 100 000), so current clients never see a second page. `deleted[]`
+is never paginated (it lists whole keys). Old clients ignore all of it.
+
+**Tombstones** (additive, no bump): a write carrying `"deleted": true` — the
+flag is the canonical and ONLY tombstone form; a JSON-`null` `value` without
+the flag is stored verbatim like any value (the pre-v7 behavior) — removes
+the key instead of writing a value. The server appends a
+`del` change-log row,
+the deletion roams to every peer through the delta's additive `deleted:
+[{ns, key}]` half, and stale pushes cannot resurrect the key (a put must beat
+the key's latest change-log entry — put OR del — when no live row exists).
+`applied[]` entries for deletes carry `deleted: true`. Reset (`DELETE
+settings/{ns}`) is a tombstone batch now: the change log records one `del` row
+per removed key (it is no longer wiped), so a reset reaches every peer's next
+delta and `GET sync/history/{seq}/keys` lists exactly what the reset removed.
+`del` rows are exempt from the change-log retention prune (only `put` rows
+age out after `Sync:ChangeLogRetentionDays`, default 30): tombstones are tiny
+and ARE the anti-resurrection watermark, so a stale offline put stays
+rejected no matter how old the delete is.
+
+**Clock-skew clamp**: a write whose `updatedAt` is more than 5 minutes ahead of
+the server clock is rejected with reason `clock-skew` (per-write, in
+`rejected[]`). Everything else stays pure client-clock LWW.
+
+**LWW rule**: a write applies iff `updatedAt` is strictly greater than the
+stored one (and than the key's latest tombstone when the row is absent). Equal
+timestamps reject (`stale-write`) — deterministic, no oscillation.
+Clients should stamp `updatedAt` from their own wall clock (ms).
+
+**Quotas** (server-enforced, rejected reasons: `key-too-large`, `quota-exceeded`,
+`key-limit-reached`, `stale-write`, `clock-skew`, `device-revoked`,
+`ns-quota-exceeded`): 256 KB/key, 5 MB/user, 2000 keys/user by default, plus
+per-namespace byte caps (`Sync:NamespaceQuotaBytes`, adjustable admin-side):
+`prefs` 3 MB, `reader` 1.5 MB, `search`/`cw`/`homelayout` 64 KB. Namespaces
+absent from the map are bounded only by the per-user total. A write crossing
+its namespace cap rejects with `ns-quota-exceeded`. Writes from a revoked
+device (see the device registry) reject with `device-revoked`.
 
 **Catalog**: the settings catalog is GENERATED, never hand-maintained — the
 client repo's `:shared:core:datastore:generateSettingsCatalog` Gradle task
@@ -70,22 +113,30 @@ or profile overlay), including a suggested default that lost to an existing
 user value (user scope wins). Absent on plain `GET settings` / `changed`
 snapshots; old clients ignore it.
 
-**LWW rule**: a write applies iff `updatedAt` is strictly greater than the stored
-one. Equal timestamps reject (`stale-write`) — deterministic, no oscillation.
-Clients should stamp `updatedAt` from their own wall clock (ms).
-
-**Quotas** (server-enforced, rejected reasons: `key-too-large`, `quota-exceeded`,
-`key-limit-reached`, `stale-write`): 256 KB/key, 5 MB/user, 2000 keys/user by default.
-
 **Sync protocol for clients**: on connect → `GET settings/resolved/{myProfile}`;
 apply locally if newer than local copies; keep `head`. On local change → debounce
-~3s → `POST settings` with changed keys; on partial success (`rejected`) re-pull
-delta. Subscribe to `settings/stream`; on `settings.changed` → `GET settings/changed?since=head`.
+~3s → `POST settings` with changed keys (deletes ride the same batch with
+`deleted: true`); on partial success (`rejected`) re-pull delta. Subscribe to
+`settings/stream`; on `settings.changed` → `GET settings/changed?since=head` —
+apply `settings[]` AND remove everything in `deleted[]` (a key can be absent
+from `settings[]` yet tombstoned; ignoring `deleted[]` makes deletes resurrect).
 
 **SSE streams** (both `settings/stream` and `events/stream`): after every ~15s of
 quiet the server writes a comment frame `: keepalive` — EventSource ignores it,
 but it resets idle proxies (nginx default 60s). Comment frames carry no `id`, so
 they never disturb `Last-Event-ID` resumption.
+
+**SSE ids & resume** (additive, no bump): every settings-stream event's `id:` is
+the user's change-log head AT PUBLISH — a reconnecting client sends its last
+`id` as `Last-Event-ID`, then resumes `GET settings/changed?since=<that id>`
+(pulling both `settings[]` and `deleted[]`). Events-stream ids stay the hub's
+monotonic sequence; `events/stream` additionally replays from a per-user
+in-memory ring (last 256 events) when the request carries `Last-Event-ID` —
+replayed frames arrive (in id order) before the live feed. The ring is
+best-effort: events older than the window, or everything after a server
+restart, is a ring MISS — the client detects nothing and must reconcile via
+the inbox (fetch messages) after every reconnect anyway. Old clients that
+never send `Last-Event-ID` see exactly the old behavior.
 
 ### Sync observability (additive, under `settings-sync`)
 
@@ -100,6 +151,17 @@ GET jellyplay/sync/history/{seq}/keys?limit=<default 200, clamp 1..200>
     → { seq, op, keys: [{ns, key, updatedAt}] }  |  404 (not found / not owned)
 GET jellyplay/admin/sync/overview [admin]
     → { users: [{userId, userName, keys, bytes, lastSyncAt, deviceCount}] }
+GET jellyplay/admin/sync/user/{userId} [admin]
+    → { userId, userName, status: <the sync/status shape above>,
+        devices: [{deviceId, name, platform, appVersion, lastSeen, model?, caps?: […], revoked}] }
+DELETE jellyplay/admin/sync/user/{userId}/devices/{deviceId} [admin] → 204 | 404 (user owns no such device)
+GET jellyplay/admin/sync/export?userId=&format=csv|json&limit=<default 200, max 1000> [admin]
+    → (json) { userId, exportedAt, history: [{seq, ts, deviceId, op, keysApplied, keysRejected,
+               rejects?: [{ns, key, reason}], fromSeq?, toSeq?, keys: [{ns, key, updatedAt}]}] }
+    |  (csv)  text/csv download — one row per per-key diff entry, header
+              seq,ts,deviceId,op,keysApplied,keysRejected,fromSeq,toSeq,ns,key,keyUpdatedAt
+              (operations without a usable diff range render as one row with empty key columns)
+    |  400 {error: "unsupported-format"}
 ```
 
 `status.head` is the user's current change-log seq (same cursor
@@ -112,36 +174,133 @@ configured quotas (256 KB/key, 5 MB/user, 2000 keys by default);
 caller's user: `push` on each accepted batch (with applied/rejected counts and
 the approximate byte size of what applied), `pull` on each `changed?since=`
 delta serve (`keysApplied` = returned count; full `GET settings` reads are NOT
-recorded), `reset` on namespace deletes. `seq` is the history entry id; `ts` is
-unix ms; `rejects` lists at most the first 10 rejections per operation and is
-absent when nothing was rejected. History recording is best-effort server-side
-and never affects the sync operation itself.
+recorded), `reset` on namespace deletes (tombstone batches), `wipe` on device
+revocations (tombstone batch over the revoked device's rows). `seq` is the
+history entry id; `ts` is unix ms; `rejects` lists at most the first 10
+rejections per operation and is absent when nothing was rejected. History
+recording is best-effort server-side and never affects the sync operation
+itself.
 
 **Per-key diff** (additive): each history entry also carries `fromSeq`/`toSeq`
 (absent on rows recorded before the field existed) — the change-log range the
 operation covered: a push brackets the head before/after the batch, a pull the
-requested `since` cursor through the served head, a reset a zero-width range
-at the head after (the change log records no deletions). `GET
+requested `since` cursor through the served head, and a reset/wipe the
+tombstone batch it appended (non-zero-width since tombstones entered the
+change log — its key list IS the list of removed keys). `GET
 sync/history/{seq}/keys` returns that range's change-log rows —
 `{ seq, op, keys: [{ns, key, updatedAt}] }`, newest-first, `limit` default
-200 clamped 1..200 — for the caller's OWN row only (404 otherwise). Reset
-rows (zero-width or missing range) return `keys: []`; clients render those as
-"namespace reset" without a key list. Rows pruned from the change log simply
-don't appear in the diff.
+200 clamped 1..200 — for the caller's OWN row only (404 otherwise). Only
+rows with a zero-width or missing range (pre-v7 resets, no-op operations)
+return `keys: []`. Rows pruned from the change log simply don't appear in
+the diff.
 
 Retention: history entries older than `Sync:HistoryRetentionDays` (default 30)
 are deleted by the daily prune task, which also reports the pruned row counts
 in its log. `status.historyRetentionDays` surfaces the configured value.
 
+### Admin drill-down, live monitor & preview (additive, elevation-gated)
+
+Dashboard-facing glue over the same record the observability endpoints serve.
+
+```
+GET jellyplay/admin/users [admin]
+    → { users: [{userId, userName}] }
+GET jellyplay/admin/settings/preview?userId=&profile= [admin]
+    → the resolved merge (the exact shape of GET settings/resolved/{profile},
+      additive modes map included) for ANY user — pure read: nothing is
+      written, no restore point and no history entry. The dashboard's
+      authoring simulator (pick user + profile → merged view) rides this.
+GET jellyplay/admin/stream [admin]
+    → SSE (event: sync.op)
+```
+
+`sync.op` — one event per RECORDED sync operation (push / pull / reset /
+wipe), broadcast to every elevated subscriber regardless of the user the
+operation belongs to:
+
+`{type: "sync.op", userId, op, deviceId, keysApplied, keysRejected, ts}`
+
+Ids ride the hub's monotonic sequence (no per-user anchor and no replay
+ring): the stream is a live view; `sync/history` + `admin/sync/export` are
+the durable record. Payloads carry raw user ids — the surface is
+elevation-gated. `DELETE jellyplay/admin/sync/user/{userId}/devices/{deviceId}`
+is the drill-down's revoke action: identical semantics to the owner's
+`DELETE jellyplay/devices/{id}` — including the caps gate (capped devices:
+row flagged `revoked`, excluded from push, writes rejected, settings rows
+tombstone-wiped with a recorded `wipe` operation; capless legacy devices:
+plain unregister).
+
+The dashboard page is `configurationpage?name=JellyPlaySync` (linked from the
+main JellyPlay config page); its strings resolve through the same
+`dashboard-strings` table.
+
+### Restore points (additive, under `settings-sync`)
+
+Rolling per-user snapshots of the WHOLE settings store (all profiles). One is
+captured automatically before each admin defaults push (`admin-push` origin)
+and before every cross-profile batch write (`profile-copy` origin); clients
+can create their own (`manual`). Rolling keep-last 5 is enforced at insert;
+age retention is `Sync:SnapshotRetentionDays` (default 30, daily prune).
+
+```
+GET  jellyplay/settings/snapshots                 → [{id, createdAt, origin, keys, bytes}]  (newest-first)
+POST jellyplay/settings/snapshots                 → { id }  (manual capture)
+POST jellyplay/settings/snapshots/{id}/restore    → { head, applied: […], rejected: […] }  |  404 (not owned)
+```
+
+Restore = a tombstone batch over every current row followed by the snapshot
+re-applied — both server-stamped, the re-apply one millisecond past the
+tombstones so the restore always wins LWW regardless of client clocks. It
+rides the ordinary batch pipeline: change log, anchored `settings.changed`
+SSE and history recording all happen. `rejected` is normally empty; entries
+there mean the restored value crossed a quota as-is.
+
+### Export / import (additive, under `settings-sync`)
+
+```
+GET  jellyplay/settings/export             → { exportedAt, pluginVersion, catalogSchema, catalogSettings,
+                                             profiles: [{profile, settings: [{ns, key, schemaVersion, updatedAt, deviceId, value}]}],
+                                             modes: { "<profile>": { "<ns>/<key>": "forced"|"suggested"|"unset" } } }
+POST jellyplay/settings/import?deviceId=      body (the same bundle shape) → { head, applied: […], rejected: […] }
+```
+
+The export is the caller's own rows for every stored profile plus the
+resolved tri-state modes maps (admin defaults appear only through `modes`,
+never as rows) and the settings-catalog stamp. Import re-applies the bundle
+for the caller through the ordinary batch pipeline with a SERVER-NOW
+timestamp — it beats anything older than now (per LWW) but never clobbers a
+legitimately newer local change pushed after the import.
+
 ## Events (`events`) — SSE only
 
 ```
-POST   jellyplay/devices                      body { deviceId, name, platform, appVersion, push? } → 204
-DELETE jellyplay/devices/{deviceId}           → 204/404
+POST   jellyplay/devices                      body { deviceId, name, platform, appVersion, model?, caps?, push? } → 204
+POST   jellyplay/devices/{deviceId}           body { name?, model? } → 204/404   (rename; null fields keep their value)
+DELETE jellyplay/devices/{deviceId}           → 204/404   (caps-gated: revoke + wipe for capped devices, plain unregister for capless legacy ones — see below)
 GET    jellyplay/devices                      → [rows]
-GET    jellyplay/events/stream                → SSE
+GET    jellyplay/events/stream                → SSE (sends `Last-Event-ID` for ring replay)
 POST   jellyplay/broadcast   [admin]          body { title, body, url? } → 202
 ```
+
+**Device registry v7** (additive): registrations may self-report `model`
+(informational) and `caps` (a JSON array of capability strings, overwritten on
+each registration). Device rows additionally carry `model`, `caps` (the parsed
+array) and `revoked`. `DELETE jellyplay/devices/{deviceId}` is CAPS-GATED. A
+device that registered caps (v7 clients — the app always sends at least
+`"silent-push"`) is REVOKED, not row-removed: the row survives flagged
+`revoked: true`, is excluded from every push fan-out, re-registering it is
+rejected (`400 {error: "device-revoked"}`), and — crucially — every settings
+row that device wrote is tombstone-wiped (one recorded `wipe` operation, one
+anchored `settings.changed` event) so its keys cannot linger on other
+devices; revocation is irreversible for these devices only. A device that
+NEVER registered caps (a legacy pre-v7 client) gets the OLD semantics
+instead — a plain unregister: the row (and its push registration) is removed,
+no revoked flag, no wipe, and re-registering the same deviceId later
+succeeds. Legacy clients call DELETE as their routine push-detach
+(distributor loss) and re-register with the same stable deviceId — revoking
+there would brick them. A `400 {error: "device-revoked"}` is also returned by
+registration of a revoked id; settings writes carrying a revoked deviceId
+reject per-write with reason `device-revoked`.
 
 The optional `push` registration block is documented under [Push](#push-push--plugin-side-push-notifications).
 
@@ -175,11 +334,13 @@ with the Firebase SDK; the device's endpoint is its FCM registration token.
 **Registration** (additive on the device registry):
 
 ```
-POST jellyplay/devices   body { deviceId?, name, platform, appVersion, push?: { kind: "generic"|"ntfy"|"fcm", endpoint } | null }
+POST jellyplay/devices   body { deviceId?, name, platform, appVersion, model?, caps?: ["silent-push", …], push?: { kind: "generic"|"ntfy"|"fcm", endpoint } | null }
                          → 204 | 400 {error: "deviceId-required"} | 400 {error: "invalid-push-registration"}
                          | 400 {error: "push-kind-unavailable"} (kind "fcm" but FCM not configured)
-DELETE jellyplay/devices/{deviceId}                    → 204/404 (unchanged; removes the registration with the row)
-GET    jellyplay/devices                               → [{deviceId, userId, name, platform, appVersion, lastSeen, push?: {kind, endpoint}}]
+                         | 400 {error: "device-revoked"} (registry v7: the device was revoked)
+POST jellyplay/devices/{deviceId}   body { name?, model? } → 204/404   (rename; null fields keep their value)
+DELETE jellyplay/devices/{deviceId}                    → 204/404 (caps-gated revoke + wipe / plain unregister — see the Events section)
+GET    jellyplay/devices                               → [{deviceId, userId, name, platform, appVersion, lastSeen, model?, caps?: […], revoked, push?: {kind, endpoint}}]
 ```
 
 - `push` present with a valid `kind` ("generic" | "ntfy" | "fcm") and a
@@ -189,14 +350,21 @@ GET    jellyplay/devices                               → [{deviceId, userId, n
   without a `push` block preserves any existing registration. An explicit
   JSON `null` (`"push": null`) **detaches**: the push registration is
   cleared server-side while the device row survives (the client's
-  toggle-off / distributor-revoked path — unlike DELETE, which removes the
-  whole row). Invalid kind or
+  toggle-off / distributor-revoked path — unlike DELETE, which revokes
+  capped v7 devices instead of removing the row; capless legacy devices are
+  plain-unregistered). Invalid kind or
   blank endpoint → 400 `invalid-push-registration`; kind `fcm` while FCM is
-  unconfigured → 400 `push-kind-unavailable`.
+  unconfigured → 400 `push-kind-unavailable`; a revoked deviceId → 400
+  `device-revoked` (a revoked device cannot reinstate itself).
+- `model` and `caps` (registry v7, additive): self-reported hardware model
+  and capability strings, overwritten on each registration. `caps` is what
+  gates the silent `sync-nudge` push (below). A device can update them any
+  time by re-POSTing.
 - `GET jellyplay/devices` returns only the requesting user's own devices, and
   the `push` block (containing the secret endpoint URL) is included **only**
   there — never echoed for another user in any non-admin surface. The field is
-  omitted when the device has no push registration.
+  omitted when the device has no push registration. Revoked devices remain
+  listed with `revoked: true`.
 
 **Dispatch audiences** (identical to the SSE events they mirror):
 
@@ -206,12 +374,25 @@ GET    jellyplay/devices                               → [{deviceId, userId, n
 - `message` (on message **creation** only; edits do not re-push) → the
   message's audience (`all` → every user, `admins` → admins, `users` → the
   explicit user ids).
+- `sync-nudge` (registry v7, silent) → delivered ONLY to devices whose
+  registered `caps` include `"silent-push"`, and only for users with no live
+  settings-stream SSE subscriber (the push is the "you're not connected"
+  trigger to flush the sync queue). The cap gate protects old clients: a
+  client that never advertised `silent-push` never receives `sync-nudge`, so
+  unknown kinds can never surface as a visible notification.
+  The SSE gate is a per-USER approximation of "not connected" (per-device
+  gating needs device-tagged subscriptions, deferred): one live
+  settings-stream subscriber — say the user's desktop — silences nudges to
+  that user's OTHER, offline devices. `sync-nudge` is best-effort anyway; a
+  missed nudge only delays the flush, which the SSE stream
+  (`settings.changed` after reconnect), the periodic pull or the client's
+  next focus-triggered flush still drains.
 
-Not pushed: settings changes, session/playback/lockout events.
+Not pushed as notifications: session/playback/lockout events.
 
 **Per-device payloads** (both `Content-Type: application/json`, `POST`):
 
-- `generic` — body `{"title": …, "body": …, "kind": "new-media"|"broadcast"|"message", "itemId": …?}`
+- `generic` — body `{"title": …, "body": …, "kind": "new-media"|"broadcast"|"message"|"sync-nudge", "itemId": …?}`
   (`itemId` present only when set).
 - `ntfy` — endpoint is the full publish URL (e.g. `https://ntfy.sh/mytopic`);
   body is the ntfy JSON publish format with the topic extracted from the last
@@ -223,9 +404,10 @@ Not pushed: settings changes, session/playback/lockout events.
   `https://fcm.googleapis.com/v1/projects/{FcmProjectId}/messages:send` with
   `Authorization: Bearer <OAuth2 access token>` and body
   `{"message": {"token": <registration token>, "notification": {"title": …, "body": …}, "data": {"kind": …, "itemId": …?}, "android": {"priority": "NORMAL"}}}`
-  (`data` values are always strings; `itemId` only when set). When FCM is
-  unconfigured (or the token cannot be minted) `fcm` devices are skipped with
-  a server-side Debug log.
+  (`data` values are always strings; `itemId` only when set; the silent
+  `sync-nudge` kind ships DATA-ONLY — the `notification` block is omitted).
+  When FCM is unconfigured (or the token cannot be minted) `fcm` devices are
+  skipped with a server-side Debug log.
 
 **Admin overview**:
 
@@ -341,6 +523,14 @@ POST  jellyplay/bookmarks/{itemId}     body { id?, position, chapterIndex?, labe
 DELETE jellyplay/bookmarks/{itemId}/{bookmarkId} → 204/404
 ```
 
+**Deprecated** (retained one release, then removed at the next contract
+bump): the dedicated bookmark routes above are superseded by the `books`
+NAMESPACE on the general settings-sync protocol — clients sync bookmarks as
+opaque `books/{itemId}/{positionTicks}` settings rows whose value carries
+the full payload (including the EPUB CFI this route's fixed DTO drops).
+The routes stay servable so pre-migration clients keep working; the
+`bookmarks` feature key stays advertised for the same window.
+
 ## Transcodes (`transcodes`) — the active-streams monitor
 
 Route ids keep the historic `transcodes` name; the data is every actively
@@ -428,10 +618,20 @@ pruned raw rows.
 ```
 GET  jellyplay/defaults [admin]                    → { "<ns>/<key>": {mode: unset|suggested|forced, value?} }
 POST jellyplay/defaults [admin]                    body same shape → 204
-POST jellyplay/admin/pushDefaults/{userId?} [admin] → { users, keysPushed }
+POST jellyplay/admin/pushDefaults/{userId?} [admin] → { users, keysPushed, dryRun? }
 GET  jellyplay/admin/configBackup [admin]          → JSON download (admin defaults + messages)
 POST jellyplay/admin/configBackup [admin]          body backup JSON → restore
 ```
+
+**Push dry-run** (additive, no bump): `POST
+jellyplay/admin/pushDefaults/{userId?}?dryRun=true` simulates the push and
+writes NOTHING — no rows, no restore points, no history. `keysPushed` is 0
+and the response carries the additive `dryRun` report:
+`{wouldApply, wouldReject, wouldRejects: [{userId, ns, key, reason}] (capped
+at the first 100), problems: [catalogValidationProblem…]}`. `wouldRejects`
+reason is always `stale-write` (the same LWW rule the batch pipeline
+applies); `problems` lists the catalog-validation findings in the STORED
+defaults maps (global + per-target user scopes).
 
 ## Plugin config (dashboard + YAML editor)
 
@@ -452,8 +652,26 @@ key absent from the body — there is no per-key unset verb).
 
 ## Versioning & deprecation
 
-- Additive endpoints/fields: no bump, old clients ignore.
+- Additive endpoints/fields: no bump, old clients ignore. The schema-v7 wave
+  (tombstones, pagination, registry, snapshots, export/import, quotas,
+  silent push, admin observability) is entirely additive: `deleted[]`,
+  `nextCursor`, `modes`, `Op`, device `caps`/`revoked` and the new routes
+  are ignored by clients that predate them, and the defaults (limit 10 000,
+  un-paged reads, no `Last-Event-ID` header) preserve the pre-v7 wire
+  byte-for-byte.
+- Silent push is gated by caps, not versions: `sync-nudge` is delivered only
+  to devices whose registered `caps` include `"silent-push"`, so old
+  clients — which render unknown push kinds as visible notifications — can
+  never receive it, whatever the plugin version.
 - Renames/removals/semantic changes: bump `contractVersion`; keep the previous
-  contract shippable for one minor plugin release when feasible.
+  contract shippable for one minor plugin release when feasible. The
+  dedicated bookmark routes are the current example: deprecated in favor of the
+  `books` namespace, retained one release (see User data).
+- Deliberate exceptions shipped under `contractVersion` 1 (reasoned in
+  ADR-0005): `DELETE settings/{ns}` (reset became a tombstone batch) and
+  `DELETE devices/{id}` (became revoke + wipe) changed semantics without a
+  bump. The old reset wiped the change log, so peers kept their stale keys
+  regardless — no client could regress; the devices revoke is caps-gated to
+  v7 clients, and capless legacy devices keep the plain-unregister behavior.
 - Feature keys are the stability boundary: never ship a behavior change under an
   existing feature key without a contract bump.

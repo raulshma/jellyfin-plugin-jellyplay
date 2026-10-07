@@ -58,6 +58,94 @@ public class SseHubTests
         hub.Unsubscribe(b);
         hub.Unsubscribe(c);
     }
+
+    [Fact]
+    public async Task PublishToUser_ExplicitId_AnchorsTheWireEventId()
+    {
+        // The settings stream anchors its SSE ids at the change-log head so a
+        // reconnecting client can resume the delta pull from that cursor.
+        var hub = new SseHub(NullLogger<SseHub>.Instance);
+        var id = hub.Subscribe("alice", "settings");
+
+        hub.PublishToUser("settings", "alice", "settings.changed", "{\"x\":1}", 4242);
+        var evt = await hub.WaitForEventAsync(id, TimeSpan.FromSeconds(2), CancellationToken.None);
+
+        Assert.NotNull(evt);
+        Assert.Equal(4242UL, evt!.Id);
+
+        hub.Unsubscribe(id);
+    }
+
+    [Fact]
+    public async Task PublishToUser_WithoutExplicitId_KeepsMonotonicSequence()
+    {
+        var hub = new SseHub(NullLogger<SseHub>.Instance);
+        var first = hub.Subscribe("alice", "events");
+        var second = hub.Subscribe("bob", "events");
+
+        hub.PublishToUser("events", "alice", "broadcast", "{}");
+        hub.PublishToUser("events", "bob", "broadcast", "{}");
+        var a = await hub.WaitForEventAsync(first, TimeSpan.FromSeconds(2), CancellationToken.None);
+        var b = await hub.WaitForEventAsync(second, TimeSpan.FromSeconds(2), CancellationToken.None);
+
+        Assert.NotEqual(0UL, a!.Id);
+        Assert.True(b!.Id > a.Id); // the shared sequence advances across users
+
+        hub.Unsubscribe(first);
+        hub.Unsubscribe(second);
+    }
+
+    [Fact]
+    public void ReplayEvents_ServesMissedEventsPerUser_InIdOrder()
+    {
+        var hub = new SseHub(NullLogger<SseHub>.Instance);
+        hub.PublishToUser("events", "alice", "new-media", "{\"n\":1}");
+        hub.PublishToUser("events", "alice", "broadcast", "{\"n\":2}");
+        hub.PublishToUser("events", "bob", "new-media", "{\"n\":3}");
+        var all = hub.PublishAll("events", "broadcast", "{\"n\":4}"); // broadcast reaches every existing ring
+        Assert.Equal(0, all); // nobody subscribed — delivery, not recording
+
+        var aliceEvents = hub.ReplayEvents("alice", 0);
+        Assert.Equal(3, aliceEvents.Count); // her two + the broadcast
+        Assert.True(aliceEvents[0].Id < aliceEvents[1].Id && aliceEvents[1].Id < aliceEvents[2].Id);
+
+        // Resume from the second event: only the events after it.
+        var resume = hub.ReplayEvents("alice", aliceEvents[1].Id);
+        Assert.Equal(aliceEvents[2].Id, Assert.Single(resume).Id);
+
+        // Per-user isolation: bob never sees alice's targeted events.
+        var bobEvents = hub.ReplayEvents("bob", 0);
+        Assert.Equal(2, bobEvents.Count);
+
+        // A user with no ring (never targeted) gets nothing.
+        Assert.Empty(hub.ReplayEvents("carol", 0));
+    }
+
+    [Fact]
+    public void ReplayEvents_RingHonorsCapacity()
+    {
+        var hub = new SseHub(NullLogger<SseHub>.Instance);
+        for (var index = 0; index < SseHub.ReplayRingCapacity + 10; index++)
+        {
+            hub.PublishToUser("events", "alice", "broadcast", $"\"{index}\"");
+        }
+
+        Assert.Equal(SseHub.ReplayRingCapacity, hub.ReplayEvents("alice", 0).Count);
+    }
+
+    [Fact]
+    public void HasSubscriber_ReflectsLiveSubscriptionsOnly()
+    {
+        var hub = new SseHub(NullLogger<SseHub>.Instance);
+        Assert.False(hub.HasSubscriber("alice", "settings"));
+
+        var id = hub.Subscribe("alice", "settings");
+        Assert.True(hub.HasSubscriber("alice", "settings"));
+        Assert.False(hub.HasSubscriber("alice", "events")); // same user, other stream
+
+        hub.Unsubscribe(id);
+        Assert.False(hub.HasSubscriber("alice", "settings"));
+    }
 }
 
 public class EpisodeGroupBufferTests

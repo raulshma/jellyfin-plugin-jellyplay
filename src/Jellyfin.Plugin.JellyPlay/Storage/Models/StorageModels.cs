@@ -11,20 +11,32 @@ public sealed record SettingRow(
     string DeviceId,
     byte[] Value);
 
-/// <summary>Incoming write from a client; <see cref="UpdatedAt"/> drives last-write-wins.</summary>
+/// <summary>
+/// Incoming write from a client; <see cref="UpdatedAt"/> drives last-write-wins.
+/// <see cref="IsDelete"/> marks a tombstone: applying it removes the stored row
+/// and appends a <c>del</c> change-log row instead of writing a value (the
+/// payload is ignored).
+/// </summary>
 public sealed record SettingWrite(
     string Ns,
     string Key,
     int SchemaVersion,
     long UpdatedAt,
     string DeviceId,
-    byte[] Value);
+    byte[] Value,
+    bool IsDelete = false);
 
-public sealed record AppliedSetting(string Ns, string Key, long UpdatedAt, long Seq);
+public sealed record AppliedSetting(string Ns, string Key, long UpdatedAt, long Seq, bool Deleted = false);
 
 public sealed record RejectedSetting(string Ns, string Key, string Reason);
 
 public sealed record UpsertResult(IReadOnlyList<AppliedSetting> Applied, IReadOnlyList<RejectedSetting> Rejected);
+
+/// <summary>A key tombstoned (deleted) at or after a delta cursor; the payload carried no value.</summary>
+public sealed record DeletedSettingKey(string Profile, string Ns, string Key);
+
+/// <summary>The delta answer: rows still present plus the keys deleted since the cursor.</summary>
+public sealed record ChangedSettings(IReadOnlyList<SettingRow> Rows, IReadOnlyList<DeletedSettingKey> Deleted);
 
 /// <summary>A change-log entry; <see cref="Seq"/> is the global cursor used by `changed?since=`.</summary>
 public sealed record ChangeLogEntry(long Seq, string UserId, string Profile, string Ns, string Key, long UpdatedAt);
@@ -34,7 +46,11 @@ public sealed record ChangeLogEntry(long Seq, string UserId, string Profile, str
 /// (<see cref="PushKind"/>: "generic" | "ntfy", <see cref="PushEndpoint"/>:
 /// full publish URL — a secret, never echoed for another user) and
 /// <see cref="CreatedAt"/> (unix ms; null on rows written before schema v4)
-/// were added by the v4 migration.
+/// were added by the v4 migration. <see cref="Model"/> and
+/// <see cref="CapsJson"/> (JSON array of self-reported capability strings,
+/// e.g. ["silent-push"]) were added by the v7 migration;
+/// <see cref="Revoked"/> marks a device the owner retired: it is excluded from
+/// push fan-out and every settings write carrying its device id is rejected.
 /// </summary>
 public sealed record DeviceRow(
     string DeviceId,
@@ -45,7 +61,45 @@ public sealed record DeviceRow(
     long LastSeen,
     string? PushKind = null,
     string? PushEndpoint = null,
-    long? CreatedAt = null);
+    long? CreatedAt = null,
+    string? Model = null,
+    string? CapsJson = null,
+    bool Revoked = false);
+
+/// <summary>
+/// The device registration write input: everything
+/// <see cref="JellyPlayDatabase.UpsertDevice"/> applies. Deliberately carries
+/// NO revoked field — the upsert never touches the flag (a revoked device
+/// cannot un-revoke itself by re-registering); only
+/// <see cref="JellyPlayDatabase.SetDeviceRevoked"/> flips it. Read rows come
+/// back as <see cref="DeviceRow"/>.
+/// </summary>
+public sealed record DeviceWrite(
+    string DeviceId,
+    string UserId,
+    string Name,
+    string Platform,
+    string AppVersion,
+    long LastSeen,
+    string? PushKind = null,
+    string? PushEndpoint = null,
+    long? CreatedAt = null,
+    string? Model = null,
+    string? CapsJson = null);
+
+/// <summary>
+/// One stored settings snapshot (restore point): the full settings payload of
+/// one user (all profiles) at <see cref="CreatedAt"/> (unix ms), captured by
+/// <see cref="Origin"/> ("admin-push" | "profile-copy" | "manual"). Rolling
+/// keep-last-N is enforced at insert time; age retention by the daily prune.
+/// </summary>
+public sealed record SnapshotRow(
+    long Id,
+    string UserId,
+    long CreatedAt,
+    string Origin,
+    int Keys,
+    long Bytes);
 
 public sealed record MessageRow(
     string Id,
@@ -87,14 +141,14 @@ public sealed record SeerrSessionRow(
 public sealed record AdminDefaultsRow(string Scope, byte[] Payload, long UpdatedAt);
 
 /// <summary>
-/// One recorded settings-sync operation (push/pull/reset) for observability.
-/// <see cref="Id"/> doubles as the "seq" the history endpoint reports; Ts is
-/// unix ms. RejectsJson is a capped JSON array of <c>{ns,key,reason}</c>.
-/// <see cref="FromSeq"/>/ToSeq (schema v6) bracket the change-log range the
-/// operation covers — for a push the head before/after the batch, for a pull
-/// the requested <c>since</c> cursor through the served head, for a reset the
-/// head after (both equal: the change log records no deletions, so a reset
-/// has no per-key diff).
+/// One recorded settings-sync operation (push/pull/reset/wipe) for
+/// observability. <see cref="Id"/> doubles as the "seq" the history endpoint
+/// reports; Ts is unix ms. RejectsJson is a capped JSON array of
+/// <c>{ns,key,reason}</c>. <see cref="FromSeq"/>/ToSeq (schema v6) bracket the
+/// change-log range the operation covers — for a push the head before/after
+/// the batch, for a pull the requested <c>since</c> cursor through the served
+/// head, for a reset/wipe the tombstone batch it appended (non-empty since
+/// the change log records deletions too).
 /// </summary>
 public sealed record SyncHistoryRow(
     long Id,

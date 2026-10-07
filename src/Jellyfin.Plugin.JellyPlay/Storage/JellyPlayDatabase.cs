@@ -26,7 +26,7 @@ public sealed partial class JellyPlayDatabase : IDisposable
     public const string BaseProfile = "";
 
     /// <summary>The schema version produced by this build's DDL + migrations.</summary>
-    public const int CurrentSchemaVersion = 6;
+    public const int CurrentSchemaVersion = 7;
 
     private const string SettingsTable = "settings";
     private const string ChangeLogTable = "change_log";
@@ -34,15 +34,16 @@ public sealed partial class JellyPlayDatabase : IDisposable
     private const string PlaybackSessionsTable = "playback_sessions";
     private const string PlaybackRollupsTable = "playback_rollups";
 
-    /// <summary>Canonical device column list (schema v4), shared by every device query.</summary>
+    /// <summary>Canonical device column list (schema v4 + v7), shared by every device query.</summary>
     private const string DeviceColumns =
-        $"select DeviceId, UserId, Name, Platform, AppVersion, LastSeen, PushKind, PushEndpoint, CreatedAt from {DevicesTable}";
+        $"select DeviceId, UserId, Name, Platform, AppVersion, LastSeen, PushKind, PushEndpoint, CreatedAt, Model, CapsJson, Revoked from {DevicesTable}";
     private const string MessagesTable = "messages";
     private const string MessageReadsTable = "message_reads";
     private const string BookmarksTable = "bookmarks";
     private const string SeerrSessionsTable = "seerr_sessions";
     private const string AdminDefaultsTable = "admin_defaults";
     private const string SyncHistoryTable = "sync_history";
+    private const string SnapshotsTable = "user_snapshots";
 
     /// <summary>
     /// Stepwise migrations, each moving <c>user_version</c> to its version.
@@ -119,8 +120,69 @@ public sealed partial class JellyPlayDatabase : IDisposable
                 // change-log range it covered (null on pre-v6 rows).
                 $"alter table {SyncHistoryTable} add column FromSeq INTEGER NULL",
                 $"alter table {SyncHistoryTable} add column ToSeq INTEGER NULL"
-            ]))
+            ])),
+        (7, "tombstones_registry_snapshots",
+            connection =>
+            {
+                // Tombstones: every change-log row records whether it wrote a
+                // value ('put') or deleted one ('del'). Pre-v7 rows are puts.
+                // Column adds are guarded: SQLite has no ADD COLUMN IF NOT
+                // EXISTS, and a hand-rolled (or partially rolled-back) older
+                // file may already carry some of the v7 columns.
+                if (!HasColumn(connection, ChangeLogTable, "Op"))
+                {
+                    connection.RunQueries([$"alter table {ChangeLogTable} add column Op TEXT NOT NULL DEFAULT 'put'"]);
+                }
+
+                connection.RunQueries(
+                [
+                    $"update {ChangeLogTable} set Op = 'put' where Op is null",
+                    $"create index if not exists idx_{ChangeLogTable}_key on {ChangeLogTable}(UserId, Profile, Ns, Key, Seq)"
+                ]);
+
+                foreach (var (column, ddl) in new[]
+                {
+                    ("Model", $"alter table {DevicesTable} add column Model TEXT NULL"),
+                    ("CapsJson", $"alter table {DevicesTable} add column CapsJson TEXT NULL"),
+                    ("Revoked", $"alter table {DevicesTable} add column Revoked INTEGER NOT NULL DEFAULT 0")
+                })
+                {
+                    if (!HasColumn(connection, DevicesTable, column))
+                    {
+                        connection.RunQueries([ddl]);
+                    }
+                }
+
+                // Restore points: rolling full-settings snapshots per user.
+                connection.RunQueries(
+                [
+                    $@"create table if not exists {SnapshotsTable} (
+                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        UserId TEXT NOT NULL,
+                        CreatedAt INTEGER NOT NULL,
+                        Origin TEXT NOT NULL,
+                        Keys INTEGER NOT NULL,
+                        Bytes INTEGER NOT NULL,
+                        Payload BLOB NOT NULL)",
+                    $"create index if not exists idx_{SnapshotsTable}_user on {SnapshotsTable}(UserId, Id)"
+                ]);
+            })
     ];
+
+    /// <summary>Whether the table has the column (pragma table_info scan) — the guard behind migration 7's column adds.</summary>
+    private static bool HasColumn(SqliteConnection connection, string table, string column)
+    {
+        using var statement = connection.Prepare($"pragma table_info({table})");
+        foreach (var row in statement.Select(row => row.GetString(1)))
+        {
+            if (string.Equals(row, column, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private readonly ReaderWriterLockSlim _lock = new(LockRecursionPolicy.NoRecursion);
     private readonly string _dbFilePath;
@@ -386,7 +448,13 @@ public sealed partial class JellyPlayDatabase : IDisposable
     // Plumbing
     // ------------------------------------------------------------------
 
-    public sealed record Quotas(int MaxKeyBytes, int MaxUserBytes, int MaxKeysPerUser);
+    /// <summary>
+    /// Write quotas. <see cref="NamespaceBytes"/> (namespace → byte cap, schema
+    /// v7's per-namespace quotas) bounds each listed namespace across the
+    /// user's profiles on top of the per-user total; namespaces absent from the
+    /// map are bounded only by <see cref="MaxUserBytes"/>.
+    /// </summary>
+    public sealed record Quotas(int MaxKeyBytes, int MaxUserBytes, int MaxKeysPerUser, IReadOnlyDictionary<string, int>? NamespaceBytes = null);
 
     /// <summary>Count of stored keys and their total byte size for one user.</summary>
     private (int KeyCount, long TotalBytes) GetUserSettingsFootprint(SqliteConnection connection, string userId)
@@ -442,7 +510,10 @@ public sealed partial class JellyPlayDatabase : IDisposable
         row.GetInt64(5),
         row.IsDBNull(6) ? null : row.GetString(6),
         row.IsDBNull(7) ? null : row.GetString(7),
-        row.IsDBNull(8) ? null : row.GetInt64(8));
+        row.IsDBNull(8) ? null : row.GetInt64(8),
+        row.IsDBNull(9) ? null : row.GetString(9),
+        row.IsDBNull(10) ? null : row.GetString(10),
+        row.GetInt64(11) != 0);
 
     private static MessageRow ReadMessageRow(SqliteRow row) => new(
         row.GetString(0),

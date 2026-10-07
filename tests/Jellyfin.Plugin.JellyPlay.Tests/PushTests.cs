@@ -139,7 +139,7 @@ public sealed class PushMigrationTests : IDisposable
                 new[] { new SettingWrite("ui", "theme", 1, 100, "d1", Encoding.UTF8.GetBytes("\"v\"")) },
                 new JellyPlayDatabase.Quotas(1024, 4096, 10));
             storedSetting = Encoding.UTF8.GetString(Assert.Single(first.GetSettings("user1", "")).Value);
-            first.UpsertDevice(new DeviceRow("d1", "user1", "Phone", "android", "1.2.3", 5000));
+            first.UpsertDevice(new DeviceWrite("d1", "user1", "Phone", "android", "1.2.3", 5000));
         }
 
         // Roll the file back to a v3 state: push columns dropped, user_version 3.
@@ -171,7 +171,7 @@ public sealed class PushMigrationTests : IDisposable
             Assert.Null(device.PushEndpoint);
 
             // And the new columns are immediately usable.
-            second.UpsertDevice(new DeviceRow("d1", "user1", "Phone", "android", "1.2.3", 5001, "ntfy", "https://ntfy.sh/t", 5000));
+            second.UpsertDevice(new DeviceWrite("d1", "user1", "Phone", "android", "1.2.3", 5001, "ntfy", "https://ntfy.sh/t", 5000));
             Assert.Equal("ntfy", second.GetDeviceById("d1")?.PushKind);
         }
 
@@ -211,7 +211,7 @@ public sealed class PushDeviceStoreTests : IDisposable
         }
     }
 
-    private static DeviceRow Device(string id, string user, string? kind = "generic", string? endpoint = "https://push.example/hook")
+    private static DeviceWrite Device(string id, string user, string? kind = "generic", string? endpoint = "https://push.example/hook")
         => new(id, user, "Name " + id, "android", "1.0", 100, kind, endpoint, 90);
 
     [Fact]
@@ -293,7 +293,7 @@ public sealed class DeviceRegistrationApiTests : IDisposable
             () => new EventsConfig(),
             () => new List<string>(),
             NullLogger<EventService>.Instance);
-        var devices = new DeviceRegistryService(_db, () => new PushConfig());
+        var devices = new DeviceRegistryService(_db, () => new PushConfig(), SettingsServiceFactory.Create(_db, hub));
         var controller = new EventsController(hub, events, devices);
         var context = new DefaultHttpContext
         {
@@ -545,9 +545,9 @@ public sealed class PushDispatcherTests : IDisposable
     [Fact]
     public async Task FanOut_HitsEveryEndpoint_WithKindSpecificBodies()
     {
-        _db.UpsertDevice(new DeviceRow("g1", "u1", "G", "android", "1", 1, "generic", "https://push.example/g1", 1));
-        _db.UpsertDevice(new DeviceRow("n1", "u1", "N", "android", "1", 1, "ntfy", "https://ntfy.sh/mytopic", 1));
-        _db.UpsertDevice(new DeviceRow("other", "u2", "O", "android", "1", 1, "generic", "https://push.example/other", 1));
+        _db.UpsertDevice(new DeviceWrite("g1", "u1", "G", "android", "1", 1, "generic", "https://push.example/g1", 1));
+        _db.UpsertDevice(new DeviceWrite("n1", "u1", "N", "android", "1", 1, "ntfy", "https://ntfy.sh/mytopic", 1));
+        _db.UpsertDevice(new DeviceWrite("other", "u2", "O", "android", "1", 1, "generic", "https://push.example/other", 1));
         var recording = new PushRecording();
 
         await Dispatcher(enabled: true, recording.Sender())
@@ -572,8 +572,8 @@ public sealed class PushDispatcherTests : IDisposable
     [Fact]
     public async Task Failure_Isolated_OtherEndpointsStillAttempted()
     {
-        _db.UpsertDevice(new DeviceRow("a", "u1", "A", "android", "1", 1, "generic", "https://a.example/hook", 1));
-        _db.UpsertDevice(new DeviceRow("b", "u1", "B", "android", "1", 1, "generic", "https://b.example/hook", 1));
+        _db.UpsertDevice(new DeviceWrite("a", "u1", "A", "android", "1", 1, "generic", "https://a.example/hook", 1));
+        _db.UpsertDevice(new DeviceWrite("b", "u1", "B", "android", "1", 1, "generic", "https://b.example/hook", 1));
 
         // First call explodes, second times out — neither may crash the fan-out.
         var recording = new PushRecording();
@@ -593,7 +593,7 @@ public sealed class PushDispatcherTests : IDisposable
     [Fact]
     public async Task Disabled_DispatchesNothing()
     {
-        _db.UpsertDevice(new DeviceRow("a", "u1", "A", "android", "1", 1, "generic", "https://a.example/hook", 1));
+        _db.UpsertDevice(new DeviceWrite("a", "u1", "A", "android", "1", 1, "generic", "https://a.example/hook", 1));
         var recording = new PushRecording();
 
         await Dispatcher(enabled: false, recording.Sender())
@@ -605,8 +605,8 @@ public sealed class PushDispatcherTests : IDisposable
     [Fact]
     public async Task EmptyUserList_DeliversToNobody_WhileNullDeliversToAll()
     {
-        _db.UpsertDevice(new DeviceRow("a", "u1", "A", "android", "1", 1, "generic", "https://a.example/hook", 1));
-        _db.UpsertDevice(new DeviceRow("b", "u2", "B", "android", "1", 1, "generic", "https://b.example/hook", 1));
+        _db.UpsertDevice(new DeviceWrite("a", "u1", "A", "android", "1", 1, "generic", "https://a.example/hook", 1));
+        _db.UpsertDevice(new DeviceWrite("b", "u2", "B", "android", "1", 1, "generic", "https://b.example/hook", 1));
 
         var empty = new PushRecording();
         await Dispatcher(enabled: true, empty.Sender())
@@ -622,7 +622,7 @@ public sealed class PushDispatcherTests : IDisposable
     [Fact]
     public async Task DispatchToUsers_IsFireAndForget_AndStillDelivers()
     {
-        _db.UpsertDevice(new DeviceRow("a", "u1", "A", "android", "1", 1, "generic", "https://a.example/hook", 1));
+        _db.UpsertDevice(new DeviceWrite("a", "u1", "A", "android", "1", 1, "generic", "https://a.example/hook", 1));
         var recording = new PushRecording();
 
         var dispatcher = Dispatcher(enabled: true, recording.Sender());
@@ -637,8 +637,8 @@ public sealed class PushDispatcherTests : IDisposable
     public void AdminOverview_SurfacesHostOnly_AndFallsBackForNamesAndDates()
     {
         var aliceGuid = Guid.NewGuid();
-        _db.UpsertDevice(new DeviceRow("a", aliceGuid.ToString(), "Alice phone", "android", "1", 777, "generic", "https://push.example/secret/path", 111));
-        _db.UpsertDevice(new DeviceRow("b", "ghost", "Ghost dev", "ios", "1", 888, "ntfy", "https://ntfy.sh/topic", null));
+        _db.UpsertDevice(new DeviceWrite("a", aliceGuid.ToString(), "Alice phone", "android", "1", 777, "generic", "https://push.example/secret/path", 111));
+        _db.UpsertDevice(new DeviceWrite("b", "ghost", "Ghost dev", "ios", "1", 888, "ntfy", "https://ntfy.sh/topic", null));
 
         var overview = Dispatcher(enabled: true, static (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)))
             .GetAdminOverview(guid => guid == aliceGuid ? "Alice" : null);
@@ -661,6 +661,97 @@ public sealed class PushDispatcherTests : IDisposable
 }
 
 // ---------------------------------------------------------------------------
+// Silent push: the sync-nudge kind (registry v7, caps-gated)
+// ---------------------------------------------------------------------------
+
+/// <summary>
+/// The sync-nudge fan-out delivers ONLY to devices whose registered caps
+/// include "silent-push" (revoked devices and uncapped devices are skipped) —
+/// old clients render unknown kinds as visible notifications, so the cap is
+/// the safety gate.
+/// </summary>
+public sealed class SyncNudgeDispatcherTests : IDisposable
+{
+    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-nudge-" + Guid.NewGuid().ToString("N"));
+    private readonly JellyPlayDatabase _db;
+
+    public SyncNudgeDispatcherTests()
+    {
+        Directory.CreateDirectory(_tempDir);
+        _db = new JellyPlayDatabase(_tempDir);
+    }
+
+    public void Dispose()
+    {
+        _db.Dispose();
+        try
+        {
+            Directory.Delete(_tempDir, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+    }
+
+    [Fact]
+    public async Task Nudge_GoesOnlyToSilentPushCapableDevices()
+    {
+        // capable (generic + ntfy), uncapped, and revoked-but-capped devices for u1.
+        _db.UpsertDevice(new DeviceWrite("cap-g", "u1", "G", "android", "1", 1, "generic", "https://push.example/g", 1, CapsJson: "[\"silent-push\"]"));
+        _db.UpsertDevice(new DeviceWrite("cap-n", "u1", "N", "android", "1", 1, "ntfy", "https://ntfy.sh/topic", 1, CapsJson: "[\"silent-push\",\"other\"]"));
+        _db.UpsertDevice(new DeviceWrite("plain", "u1", "P", "android", "1", 1, "generic", "https://push.example/plain", 1, CapsJson: "[\"other\"]"));
+        _db.UpsertDevice(new DeviceWrite("gone", "u1", "X", "android", "1", 1, "generic", "https://push.example/gone", 1, CapsJson: "[\"silent-push\"]"));
+        _db.SetDeviceRevoked("u1", "gone", revoked: true);
+        var recording = new PushRecording();
+
+        var dispatcher = new PushDispatcher(
+            _db,
+            () => new PushConfig { Enabled = true },
+            NullLogger<PushDispatcher>.Instance,
+            recording.Sender());
+        await dispatcher.DispatchSyncNudgeAsync("u1");
+
+        Assert.Equal(2, recording.Count);
+        var endpoints = recording.Endpoints.ToList();
+        Assert.Contains("https://push.example/g", endpoints);
+        Assert.Contains("https://ntfy.sh/topic", endpoints);
+        Assert.DoesNotContain("https://push.example/plain", endpoints);
+        Assert.DoesNotContain("https://push.example/gone", endpoints);
+
+        // Every body carries the silent kind.
+        Assert.All(recording.Bodies, body => Assert.Contains("sync-nudge", body));
+        var nudge = JObject.Parse(recording.Bodies.First(body => body.Contains("mytopic") || body.Contains("\"topic\"")));
+        Assert.Equal("sync-nudge", nudge["headers"]!["X-JellyPlay-Kind"]);
+    }
+
+    [Fact]
+    public async Task Nudge_DisabledPush_IssuesNoRequests()
+    {
+        _db.UpsertDevice(new DeviceWrite("cap", "u1", "G", "android", "1", 1, "generic", "https://push.example/g", 1, CapsJson: "[\"silent-push\"]"));
+        var recording = new PushRecording();
+
+        var dispatcher = new PushDispatcher(
+            _db,
+            () => new PushConfig { Enabled = false },
+            NullLogger<PushDispatcher>.Instance,
+            recording.Sender());
+        await dispatcher.DispatchSyncNudgeAsync("u1");
+
+        Assert.Equal(0, recording.Count);
+    }
+
+    [Fact]
+    public void FcmNudgePayload_IsDataOnly()
+    {
+        var payload = JObject.Parse(PushDispatcher.BuildFcmPayload(
+            new PushMessage(PushKinds.SyncNudge, "JellyPlay", "settings-changed"), "regtok"));
+
+        Assert.Equal("sync-nudge", payload["message"]!["data"]!["kind"]);
+        Assert.Null(payload["message"]!["notification"]); // silent: no visible block
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Audience reuse: push targets == SSE targets
 // ---------------------------------------------------------------------------
 
@@ -675,8 +766,8 @@ public sealed class PushAudienceTests : IDisposable
     {
         Directory.CreateDirectory(_tempDir);
         _db = new JellyPlayDatabase(_tempDir);
-        _db.UpsertDevice(new DeviceRow("admin-dev", "admin-1", "A", "android", "1", 1, "generic", "https://push.example/admin", 1));
-        _db.UpsertDevice(new DeviceRow("regular-dev", "regular", "R", "android", "1", 1, "generic", "https://push.example/regular", 1));
+        _db.UpsertDevice(new DeviceWrite("admin-dev", "admin-1", "A", "android", "1", 1, "generic", "https://push.example/admin", 1));
+        _db.UpsertDevice(new DeviceWrite("regular-dev", "regular", "R", "android", "1", 1, "generic", "https://push.example/regular", 1));
     }
 
     public void Dispose()
@@ -894,7 +985,7 @@ public sealed class PushHttpFactoryTests : IDisposable
     public async Task Dispatcher_DiConstructor_SendsThroughTheFactoryClient()
     {
         var handler = new RecordingHttpHandler();
-        _db.UpsertDevice(new DeviceRow("a", "u1", "A", "android", "1", 1, "generic", "https://push.example/a", 1));
+        _db.UpsertDevice(new DeviceWrite("a", "u1", "A", "android", "1", 1, "generic", "https://push.example/a", 1));
         var dispatcher = new PushDispatcher(
             _db,
             () => new PushConfig { Enabled = true },

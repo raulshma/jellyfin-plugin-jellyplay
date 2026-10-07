@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using System.Threading;
@@ -46,28 +47,52 @@ public class EventsController : JellyPlayControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public IActionResult RegisterDevice([FromBody, Required] DeviceRegistrationRequest request)
     {
-        var outcome = _devices.Register(
+        var outcome = _devices.Register(new DeviceRegistration(
             User.GetUserId().ToString(),
             string.IsNullOrEmpty(request.DeviceId) ? User.GetDeviceId() : request.DeviceId,
             request.Name,
             request.Platform,
             request.AppVersion,
-            ParsePushDirective(request.Push));
+            ParsePushDirective(request.Push),
+            request.Model,
+            request.Caps));
         return outcome switch
         {
             RegisterDeviceOutcome.Registered => NoContent(),
             RegisterDeviceOutcome.DeviceIdRequired => JellyPlayResponses.Error(StatusCodes.Status400BadRequest, "deviceId-required"),
             RegisterDeviceOutcome.InvalidPushRegistration => JellyPlayResponses.Error(StatusCodes.Status400BadRequest, "invalid-push-registration"),
             RegisterDeviceOutcome.PushKindUnavailable => JellyPlayResponses.Error(StatusCodes.Status400BadRequest, "push-kind-unavailable"),
+            RegisterDeviceOutcome.DeviceRevoked => JellyPlayResponses.Error(StatusCodes.Status400BadRequest, "device-revoked"),
             _ => JellyPlayResponses.Error(StatusCodes.Status400BadRequest, "invalid-push-registration")
         };
     }
 
+    /// <summary>Registry v7 rename: the owner updates a device's display name (and/or model); unknown fields keep their value.</summary>
+    [HttpPost("devices/{deviceId}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public IActionResult RenameDevice([FromRoute, Required] string deviceId, [FromBody, Required] DeviceRenameRequest request)
+        => _devices.Rename(User.GetUserId().ToString(), deviceId, request.Name, request.Model)
+            ? NoContent()
+            : NotFound();
+
+    /// <summary>
+    /// Registry v7: DELETE is CAPS-GATED. A device that registered caps (the
+    /// app always sends at least "silent-push") is REVOKED — the row survives
+    /// (flagged, excluded from push, writes rejected) and every settings row
+    /// the device wrote is tombstone-wiped so its keys do not resurrect on
+    /// other devices. A device that never registered caps (a legacy pre-v7
+    /// client) gets the OLD semantics: a plain unregister — the row (and its
+    /// push registration) is removed, so the routine push-detach /
+    /// re-register cycle with the same deviceId keeps working.
+    /// </summary>
     [HttpDelete("devices/{deviceId}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public IActionResult UnregisterDevice([FromRoute, Required] string deviceId)
-        => _devices.Unregister(User.GetUserId().ToString(), deviceId) ? NoContent() : NotFound();
+    public IActionResult RevokeDevice([FromRoute, Required] string deviceId)
+        => _devices.RevokeAndWipe(User.GetUserId().ToString(), deviceId) == DeleteDeviceOutcome.NotFound
+            ? NotFound()
+            : NoContent();
 
     /// <summary>The caller's own devices; push blocks are included only here (never for another user).</summary>
     [HttpGet("devices")]
@@ -87,12 +112,24 @@ public class EventsController : JellyPlayControllerBase
         return JellyPlayResponses.Accepted(new { delivered });
     }
 
-    /// <summary>Live events stream: new-media, broadcast, session-started, playback-started, user-locked-out.</summary>
+    /// <summary>
+    /// Live events stream: new-media, broadcast, session-started, playback-started, user-locked-out.
+    /// Reconnects presenting `Last-Event-ID` get the events the per-user
+    /// replay ring still holds replayed first (best-effort catch-up); what
+    /// the ring no longer holds must be reconciled via the inbox.
+    /// </summary>
     [HttpGet("events/stream")]
     public async Task StreamEvents(CancellationToken cancellationToken)
     {
-        var subscriberId = _hub.Subscribe(User.GetUserId().ToString(), "events");
-        await SseStreamWriter.WriteAsync(HttpContext, _hub, subscriberId, cancellationToken);
+        IReadOnlyList<SseEvent>? replay = null;
+        if (Request.Headers.TryGetValue("Last-Event-ID", out var lastEventId)
+            && ulong.TryParse(lastEventId.ToString(), out var after))
+        {
+            replay = _hub.ReplayEvents(User.GetUserId().ToString(), after);
+        }
+
+        var subscriberId = _hub.Subscribe(User.GetUserId().ToString(), SseHub.EventsStream);
+        await SseStreamWriter.WriteAsync(HttpContext, _hub, subscriberId, cancellationToken, replay);
     }
 
     /// <summary>

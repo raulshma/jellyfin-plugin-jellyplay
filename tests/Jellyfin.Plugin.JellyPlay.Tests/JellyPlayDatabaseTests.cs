@@ -133,14 +133,98 @@ public sealed class JellyPlayDatabaseTests : IDisposable
     }
 
     [Fact]
-    public void DeleteNamespace_RemovesSettings_AndChangeLog()
+    public void DeleteNamespace_Tombstones_SettingsAndKeepsChangeLog()
     {
         _db.UpsertSettings("user1", "", new[] { Write("ui", "a", 1), Write("player", "b", 1) }, Quotas);
-        _db.DeleteNamespace("user1", "", "ui");
+        var headBefore = _db.GetChangeLogHead("user1");
 
+        var deleted = _db.DeleteNamespace("user1", "", "ui", tombstoneAt: 500);
+
+        // The rows are gone, but the change log now carries a tombstone per
+        // deleted key (op 'del') so deltas can carry the deletion onward.
+        Assert.Equal(1, deleted);
         var rows = _db.GetSettings("user1", "");
         Assert.Single(rows);
         Assert.Equal("player", rows[0].Ns);
+
+        Assert.True(_db.GetChangeLogHead("user1") > headBefore);
+        Assert.Empty(_db.GetChangedSettings("user1", headBefore));
+        var deletedKeys = Assert.Single(_db.GetDeletedSettings("user1", headBefore));
+        Assert.Equal(("ui", "a"), (deletedKeys.Ns, deletedKeys.Key));
+    }
+
+    [Fact]
+    public void Upsert_Tombstone_RemovesRow_AndAppendsDelLog()
+    {
+        _db.UpsertSettings("user1", "", new[] { Write("ui", "a", 1, "\"v\"") }, Quotas);
+
+        var result = _db.UpsertSettings("user1", "", new[] { new SettingWrite("ui", "a", 1, 5, "d2", Array.Empty<byte>(), IsDelete: true) }, Quotas);
+
+        var applied = Assert.Single(result.Applied);
+        Assert.True(applied.Deleted);
+        Assert.Empty(_db.GetSettings("user1", ""));
+    }
+
+    [Fact]
+    public void Upsert_OlderPut_AfterTombstone_IsRejected()
+    {
+        // Anti-resurrection: once a tombstone is recorded, a put with an older
+        // (or equal) timestamp must not recreate the key.
+        _db.UpsertSettings("user1", "", new[] { Write("ui", "a", 10, "\"v\"") }, Quotas);
+        _db.UpsertSettings("user1", "", new[] { new SettingWrite("ui", "a", 1, 20, "d2", Array.Empty<byte>(), IsDelete: true) }, Quotas);
+
+        var resurrect = _db.UpsertSettings("user1", "", new[] { Write("ui", "a", 15, "\"zombie\"") }, Quotas);
+        Assert.Equal("stale-write", Assert.Single(resurrect.Rejected).Reason);
+        var equalTs = _db.UpsertSettings("user1", "", new[] { Write("ui", "a", 20, "\"zombie\"") }, Quotas);
+        Assert.Equal("stale-write", Assert.Single(equalTs.Rejected).Reason);
+
+        // A strictly newer put legitimately wins over the tombstone (LWW).
+        var newer = _db.UpsertSettings("user1", "", new[] { Write("ui", "a", 21, "\"fresh\"") }, Quotas);
+        Assert.Single(newer.Applied);
+        Assert.Equal("\"fresh\"", System.Text.Encoding.UTF8.GetString(Assert.Single(_db.GetSettings("user1", "")).Value));
+    }
+
+    [Fact]
+    public void Upsert_DeleteOfAbsentKey_StillRecordsTombstone_WhenNewer()
+    {
+        // A device that never saw the key deletes it anyway: the tombstone is
+        // recorded (newer than nothing) so peers holding a stale copy learn
+        // about the deletion; a second identical delete is stale.
+        var first = _db.UpsertSettings("user1", "", new[] { new SettingWrite("ui", "ghost", 1, 5, "d2", Array.Empty<byte>(), IsDelete: true) }, Quotas);
+        Assert.True(Assert.Single(first.Applied).Deleted);
+
+        var second = _db.UpsertSettings("user1", "", new[] { new SettingWrite("ui", "ghost", 1, 5, "d2", Array.Empty<byte>(), IsDelete: true) }, Quotas);
+        Assert.Equal("stale-write", Assert.Single(second.Rejected).Reason);
+    }
+
+    [Fact]
+    public void Upsert_NamespaceQuota_IsEnforced()
+    {
+        // prefs caps at 12 bytes: two 7-byte values fit only once.
+        var quotas = new JellyPlayDatabase.Quotas(1024, 4096, 50, new Dictionary<string, int> { ["prefs"] = 12 });
+        var first = _db.UpsertSettings("user1", "", new[] { Write("prefs", "a", 1, "\"12345\"") }, quotas); // 7 bytes
+        Assert.Single(first.Applied);
+
+        var second = _db.UpsertSettings("user1", "", new[] { Write("prefs", "b", 1, "\"12345\"") }, quotas);
+        Assert.Equal("ns-quota-exceeded", Assert.Single(second.Rejected).Reason);
+
+        // Other namespaces are untouched by the prefs cap.
+        var other = _db.UpsertSettings("user1", "", new[] { Write("player", "a", 1, "\"12345\"") }, quotas);
+        Assert.Single(other.Applied);
+    }
+
+    [Fact]
+    public void TombstoneDeviceSettings_WipesOnlyThatDevicesRows()
+    {
+        _db.UpsertSettings("user1", "", new[] { Write("ui", "mine", 1, "\"a\"", "d1"), Write("player", "theirs", 1, "\"b\"", "d2") }, Quotas);
+        _db.UpsertSettings("user1", "tv", new[] { Write("ui", "also-mine", 2, "\"c\"", "d1") }, Quotas);
+
+        var wiped = _db.TombstoneDeviceSettings("user1", "d1", tombstoneAt: 900);
+
+        Assert.Equal(2, wiped);
+        var remaining = Assert.Single(_db.GetSettings("user1", ""));
+        Assert.Equal("d2", remaining.DeviceId);
+        Assert.Empty(_db.GetSettings("user1", "tv"));
     }
 
     [Fact]
@@ -151,6 +235,26 @@ public sealed class JellyPlayDatabaseTests : IDisposable
 
         _db.PruneChangeLog(retentionDays: 30); // nothing old enough
         Assert.True(_db.GetChangeLogHead("user1") >= 0);
+    }
+
+    [Fact]
+    public void ChangeLog_Prune_KeepsTombstones_SoStalePutsStayRejectedPastRetention()
+    {
+        // Put at t=1, delete at t=2 — both far past any retention window.
+        _db.UpsertSettings("user1", "", new[] { Write("ui", "a", 1, "\"v\"") }, Quotas);
+        _db.UpsertSettings("user1", "", new[] { new SettingWrite("ui", "a", 1, 2, "d2", Array.Empty<byte>(), IsDelete: true) }, Quotas);
+
+        // Retention 0 = everything older than now is eligible — yet only the
+        // 'put' row goes; the tombstone IS the anti-resurrection watermark.
+        var pruned = _db.PruneChangeLog(retentionDays: 0);
+        Assert.Equal(1, pruned);
+
+        // A stale offline put (older than the surviving tombstone) is still
+        // rejected; only a strictly newer put may legitimately re-create.
+        var zombie = _db.UpsertSettings("user1", "", new[] { Write("ui", "a", 1, "\"zombie\"") }, Quotas);
+        Assert.Equal("stale-write", Assert.Single(zombie.Rejected).Reason);
+        var fresh = _db.UpsertSettings("user1", "", new[] { Write("ui", "a", 3, "\"fresh\"") }, Quotas);
+        Assert.Single(fresh.Applied);
     }
 
     [Fact]
@@ -195,5 +299,45 @@ public sealed class JellyPlayDatabaseTests : IDisposable
 
         _db.RestoreAdminDefaults(backup.Take(1).ToList());
         Assert.Single(_db.GetAllAdminDefaults());
+    }
+
+    [Fact]
+    public void Snapshots_InsertListGet_PruneAndKeepLast()
+    {
+        for (var index = 1; index <= 7; index++)
+        {
+            _db.InsertSnapshot("u1", System.Text.Encoding.UTF8.GetBytes($"p{index}"), createdAt: index, "manual", keys: index, bytes: index, keepLast: 5);
+        }
+
+        _db.InsertSnapshot("u2", System.Text.Encoding.UTF8.GetBytes("other"), createdAt: 9, "admin-push", 1, 1, keepLast: 5);
+
+        // Rolling keep-last: only the newest 5 of u1's 7 survive, newest-first.
+        var snapshots = _db.GetSnapshots("u1");
+        Assert.Equal(5, snapshots.Count);
+        Assert.Equal(7, snapshots[0].Id);
+        Assert.Equal(3, snapshots[4].Id);
+        Assert.All(snapshots, row => Assert.Equal("manual", row.Origin));
+
+        // Owner-scoped fetch returns the payload; foreign ids do not.
+        var mine = _db.GetSnapshot("u1", snapshots[0].Id);
+        Assert.NotNull(mine);
+        Assert.Equal("p7", System.Text.Encoding.UTF8.GetString(mine!.Value.Payload));
+        Assert.Null(_db.GetSnapshot("u2", snapshots[0].Id));
+
+        // Age-based prune: retention 0 removes everything.
+        Assert.Equal(6, _db.PruneSnapshots(retentionDays: 0));
+        Assert.Empty(_db.GetSnapshots("u1"));
+        Assert.Empty(_db.GetSnapshots("u2"));
+    }
+
+    [Fact]
+    public void GetAllSettingsRows_AndDistinctProfiles_CoverEveryProfile()
+    {
+        _db.UpsertSettings("u1", "", new[] { Write("ui", "a", 1) }, Quotas);
+        _db.UpsertSettings("u1", "tv", new[] { Write("ui", "b", 2) }, Quotas);
+        _db.UpsertSettings("u2", "", new[] { Write("ui", "c", 3) }, Quotas);
+
+        Assert.Equal(2, _db.GetAllSettingsRows("u1").Count);
+        Assert.Equal(new[] { "", "tv" }, _db.GetDistinctSettingProfiles("u1"));
     }
 }

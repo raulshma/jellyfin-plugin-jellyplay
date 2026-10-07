@@ -51,8 +51,8 @@ public class SyncController : JellyPlayControllerBase
     /// <summary>
     /// The per-key diff of one of the caller's recorded operations: the
     /// change-log rows in (fromSeq, toSeq], newest-first (limit defaults to
-    /// 200, clamped 1..200). Resets — and any row without a usable range —
-    /// return an empty key list ("namespace reset"). 404 when the seq is not
+    /// 200, clamped 1..200). Rows without a usable range (pre-v7 resets,
+    /// no-op operations) return an empty key list. 404 when the seq is not
     /// the caller's own history row.
     /// </summary>
     [HttpGet("history/{seq}/keys")]
@@ -75,11 +75,16 @@ public class SyncAdminController : JellyPlayControllerBase
 {
     private readonly SyncInsightsService _insights;
     private readonly AdminUsers _adminUsers;
+    private readonly Services.Devices.DeviceRegistryService _devices;
 
-    public SyncAdminController(SyncInsightsService insights, AdminUsers adminUsers)
+    public SyncAdminController(
+        SyncInsightsService insights,
+        AdminUsers adminUsers,
+        Services.Devices.DeviceRegistryService devices)
     {
         _insights = insights;
         _adminUsers = adminUsers;
+        _devices = devices;
     }
 
     /// <summary>
@@ -91,4 +96,58 @@ public class SyncAdminController : JellyPlayControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetOverview()
         => JellyPlayResponses.Camel(_insights.GetAdminOverview(_adminUsers.ResolveName));
+
+    /// <summary>
+    /// One user's drill-down: the same status fold their own sync/status
+    /// endpoint serves (footprint vs quotas, namespaces, per-device latest
+    /// ops) plus the device registry rows — push endpoint secrets stripped.
+    /// </summary>
+    [HttpGet("user/{userId}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public IActionResult GetDrilldown([FromRoute, Required] string userId)
+        => JellyPlayResponses.Camel(_insights.GetAdminUserDrilldown(userId, _adminUsers.ResolveName));
+
+    /// <summary>
+    /// The admin revoke: identical semantics to the owner's DELETE
+    /// jellyplay/devices/{id} — including the caps gate. A capped (v7)
+    /// device's row survives flagged revoked and every settings row it wrote
+    /// is tombstone-wiped; a capless legacy device is plain-unregistered (row
+    /// removed). 404 when the user owns no such device.
+    /// </summary>
+    [HttpDelete("user/{userId}/devices/{deviceId}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public IActionResult RevokeDevice([FromRoute, Required] string userId, [FromRoute, Required] string deviceId)
+        => _devices.RevokeAndWipe(userId, deviceId) == Services.Devices.DeleteDeviceOutcome.NotFound
+            ? NotFound()
+            : NoContent();
+
+    /// <summary>
+    /// The audit export (history + per-key diffs) for one user:
+    /// <c>format=json</c> (default) returns the newest-first entries with the
+    /// key diffs folded in; <c>format=csv</c> downloads an RFC 4180 file
+    /// (one row per diff key). Anything else is 400 <c>unsupported-format</c>.
+    /// </summary>
+    [HttpGet("export")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public IActionResult ExportAudit(
+        [FromQuery, Required] string userId,
+        [FromQuery] string? format,
+        [FromQuery] int limit = SyncInsightsService.DefaultAuditLimit)
+    {
+        if (!string.Equals(format, "csv", StringComparison.Ordinal)
+            && !string.Equals(format, "json", StringComparison.Ordinal))
+        {
+            return JellyPlayResponses.Error(StatusCodes.Status400BadRequest, "unsupported-format");
+        }
+
+        var export = _insights.ExportAudit(userId, limit);
+        return string.Equals(format, "csv", StringComparison.Ordinal)
+            ? File(
+                System.Text.Encoding.UTF8.GetBytes(SyncAuditCsv.Build(export)),
+                "text/csv",
+                $"jellyplay-sync-{userId}-{System.DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.csv")
+            : JellyPlayResponses.Camel(export);
+    }
 }

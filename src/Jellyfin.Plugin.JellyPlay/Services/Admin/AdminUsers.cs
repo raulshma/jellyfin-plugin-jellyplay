@@ -25,14 +25,18 @@ public sealed class AdminUsers
     /// <summary>Display name for one host user; the id string when the host does not know the user.</summary>
     public string ResolveName(Guid userId) => DisplayName(userId.ToString(), id => _users.GetUserById(id)?.Username);
 
-    /// <summary>
-    /// The host's administrator ids — audience "admins". Fresh per call so
-    /// permission changes apply to the next event without a restart.
-    /// </summary>
+    /// <summary>The host's administrator ids — audience "admins". Fresh per call so
+    /// permission changes apply to the next event without a restart.</summary>
     public IReadOnlyList<string> AdminUserIds => _users.GetUsers()
         .Where(user => user.HasPermission(Jellyfin.Database.Implementations.Enums.PermissionKind.IsAdministrator))
         .Select(user => user.Id.ToString())
         .ToList();
+
+    /// <summary>Every host user (id + username) — the admin pickers' data source (drill-down, preview simulator). Fresh per call.</summary>
+    public IReadOnlyList<Api.AdminUserRef> AllUsers()
+        => _users.GetUsers()
+            .Select(user => new Api.AdminUserRef(user.Id.ToString(), user.Username))
+            .ToList();
 
     /// <summary>
     /// The pure fallback decision shared by every admin overview: a Guid row

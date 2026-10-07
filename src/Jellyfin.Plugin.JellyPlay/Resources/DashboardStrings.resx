@@ -364,4 +364,196 @@
   <data name="AnimeOverridesInvalidProvider" xml:space="preserve">
     <value>Override "{0}" needs an AniList id or a MAL id.</value>
   </data>
+  <data name="SyncOpen" xml:space="preserve">
+    <value>Open sync dashboard (drill-down, live monitor, preview)</value>
+  </data>
+  <data name="SyncPageTitle" xml:space="preserve">
+    <value>JellyPlay sync</value>
+  </data>
+  <data name="SyncPageDescription" xml:space="preserve">
+    <value>Per-user drill-down for the client settings sync: quota usage, registered devices, the recorded operation history with per-key diffs, a live monitor, the resolved-settings preview simulator and a push dry run.</value>
+  </data>
+  <data name="SyncBackToConfig" xml:space="preserve">
+    <value>Back to JellyPlay configuration</value>
+  </data>
+  <data name="SectionLiveMonitor" xml:space="preserve">
+    <value>Live monitor</value>
+  </data>
+  <data name="LiveMonitorDescription" xml:space="preserve">
+    <value>Stream of sync operations (push / pull / reset / wipe) as the server records them, for every user. Keeps the last 200 entries; the durable record is the history below.</value>
+  </data>
+  <data name="LiveMonitorConnect" xml:space="preserve">
+    <value>Connect</value>
+  </data>
+  <data name="LiveMonitorDisconnect" xml:space="preserve">
+    <value>Disconnect</value>
+  </data>
+  <data name="LiveMonitorIdle" xml:space="preserve">
+    <value>Idle.</value>
+  </data>
+  <data name="LiveMonitorConnected" xml:space="preserve">
+    <value>Connected.</value>
+  </data>
+  <data name="LiveMonitorReconnecting" xml:space="preserve">
+    <value>Reconnecting…</value>
+  </data>
+  <data name="LiveMonitorFailed" xml:space="preserve">
+    <value>Stream failed: {0}</value>
+  </data>
+  <data name="LiveMonitorEmpty" xml:space="preserve">
+    <value>No sync operations observed yet.</value>
+  </data>
+  <data name="ColumnTime" xml:space="preserve">
+    <value>Time</value>
+  </data>
+  <data name="ColumnUser" xml:space="preserve">
+    <value>User</value>
+  </data>
+  <data name="ColumnOp" xml:space="preserve">
+    <value>Op</value>
+  </data>
+  <data name="ColumnDevice" xml:space="preserve">
+    <value>Device</value>
+  </data>
+  <data name="ColumnApplied" xml:space="preserve">
+    <value>Applied</value>
+  </data>
+  <data name="ColumnRejected" xml:space="preserve">
+    <value>Rejected</value>
+  </data>
+  <data name="SectionDrilldown" xml:space="preserve">
+    <value>Per-user drill-down</value>
+  </data>
+  <data name="DrilldownDescription" xml:space="preserve">
+    <value>Pick a user to inspect their sync footprint against the configured quotas, their registered devices (revoke wipes that device's synced keys) and their recorded operations — expand one to see exactly which keys it touched.</value>
+  </data>
+  <data name="DrilldownUser" xml:space="preserve">
+    <value>User</value>
+  </data>
+  <data name="DrilldownLoad" xml:space="preserve">
+    <value>Load</value>
+  </data>
+  <data name="DrilldownQuotas" xml:space="preserve">
+    <value>Quota usage</value>
+  </data>
+  <data name="QuotaKeysLabel" xml:space="preserve">
+    <value>Keys</value>
+  </data>
+  <data name="QuotaBytesLabel" xml:space="preserve">
+    <value>Bytes</value>
+  </data>
+  <data name="QuotaUsageText" xml:space="preserve">
+    <value>{0} of {1} ({2}%)</value>
+  </data>
+  <data name="DrilldownNamespaces" xml:space="preserve">
+    <value>Namespaces</value>
+  </data>
+  <data name="ColumnNamespace" xml:space="preserve">
+    <value>Namespace</value>
+  </data>
+  <data name="ColumnKeys" xml:space="preserve">
+    <value>Keys</value>
+  </data>
+  <data name="ColumnBytes" xml:space="preserve">
+    <value>Bytes</value>
+  </data>
+  <data name="NamespacesEmpty" xml:space="preserve">
+    <value>No synced settings yet.</value>
+  </data>
+  <data name="DrilldownDevices" xml:space="preserve">
+    <value>Devices</value>
+  </data>
+  <data name="ColumnName" xml:space="preserve">
+    <value>Name</value>
+  </data>
+  <data name="ColumnPlatform" xml:space="preserve">
+    <value>Platform</value>
+  </data>
+  <data name="ColumnModel" xml:space="preserve">
+    <value>Model</value>
+  </data>
+  <data name="ColumnVersion" xml:space="preserve">
+    <value>Version</value>
+  </data>
+  <data name="ColumnLastSeen" xml:space="preserve">
+    <value>Last seen</value>
+  </data>
+  <data name="DeviceRevoke" xml:space="preserve">
+    <value>Revoke</value>
+  </data>
+  <data name="DeviceRevoked" xml:space="preserve">
+    <value>Revoked</value>
+  </data>
+  <data name="DeviceRevokeFailed" xml:space="preserve">
+    <value>Revoke failed: {0}</value>
+  </data>
+  <data name="DevicesEmpty" xml:space="preserve">
+    <value>No devices registered.</value>
+  </data>
+  <data name="DrilldownHistory" xml:space="preserve">
+    <value>History</value>
+  </data>
+  <data name="HistoryExportCsv" xml:space="preserve">
+    <value>Export CSV</value>
+  </data>
+  <data name="HistoryExportJson" xml:space="preserve">
+    <value>Export JSON</value>
+  </data>
+  <data name="HistoryEmpty" xml:space="preserve">
+    <value>No recorded sync operations.</value>
+  </data>
+  <data name="HistoryEntrySummary" xml:space="preserve">
+    <value>#{0} · {1} · {2} · device {3} · {4} applied, {5} rejected · {6} key(s)</value>
+  </data>
+  <data name="HistoryRejectLine" xml:space="preserve">
+    <value>rejected {0}/{1}: {2}</value>
+  </data>
+  <data name="HistoryNoKeys" xml:space="preserve">
+    <value>No per-key changes recorded.</value>
+  </data>
+  <data name="SectionPreview" xml:space="preserve">
+    <value>Resolved preview</value>
+  </data>
+  <data name="PreviewDescription" xml:space="preserve">
+    <value>What a client would resolve for the chosen user and device profile: base settings merged with the profile overlay and your tri-state defaults. Pure simulation — nothing is written.</value>
+  </data>
+  <data name="PreviewProfile" xml:space="preserve">
+    <value>Profile</value>
+  </data>
+  <data name="PreviewProfileBase" xml:space="preserve">
+    <value>Base</value>
+  </data>
+  <data name="PreviewRun" xml:space="preserve">
+    <value>Preview</value>
+  </data>
+  <data name="PreviewEmpty" xml:space="preserve">
+    <value>Pick a user and profile, then run the preview.</value>
+  </data>
+  <data name="PreviewNoKeys" xml:space="preserve">
+    <value>Nothing to resolve — the user has no settings and no defaults apply.</value>
+  </data>
+  <data name="SectionPushDryRun" xml:space="preserve">
+    <value>Push defaults — dry run</value>
+  </data>
+  <data name="PushDryRunDescription" xml:space="preserve">
+    <value>Simulate the defaults push for one user (or all users): how many keys would apply, how many would be rejected as stale, and any catalog problems in your stored defaults. Writes nothing — use Push on the main configuration page for the real thing.</value>
+  </data>
+  <data name="PushDryRunRun" xml:space="preserve">
+    <value>Simulate push</value>
+  </data>
+  <data name="PushDryRunScopeAll" xml:space="preserve">
+    <value>All users</value>
+  </data>
+  <data name="PushDryRunSummary" xml:space="preserve">
+    <value>Would apply {0} key(s); {1} would be rejected (stale) across {2} user(s). Nothing was written.</value>
+  </data>
+  <data name="PushDryRunProblem" xml:space="preserve">
+    <value>Catalog problem: {0}</value>
+  </data>
+  <data name="PushDryRunRejectLine" xml:space="preserve">
+    <value>{0}: {1}/{2} — {3}</value>
+  </data>
+  <data name="PushDryRunUnsupported" xml:space="preserve">
+    <value>The server did not return a dry-run report.</value>
+  </data>
 </root>

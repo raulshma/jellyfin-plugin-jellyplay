@@ -10,6 +10,26 @@ using Xunit;
 
 namespace Jellyfin.Plugin.JellyPlay.Tests;
 
+/// <summary>Shared construction helper for tests that need a SettingsService over a real SQLite database.</summary>
+internal static class SettingsServiceFactory
+{
+    public static Services.Settings.SettingsService Create(
+        JellyPlayDatabase db,
+        SseHub hub,
+        Configuration.SyncConfig? config = null,
+        Services.Settings.SnapshotService? snapshots = null,
+        Services.Push.PushDispatcher? push = null,
+        TimeProvider? clock = null)
+        => new(
+            db,
+            hub,
+            () => config ?? new Configuration.SyncConfig(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<Services.Settings.SettingsService>.Instance,
+            snapshots ?? new Services.Settings.SnapshotService(db, () => config ?? new Configuration.SyncConfig()),
+            push,
+            clock);
+}
+
 public sealed class SettingsServiceTests : IDisposable
 {
     private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-svc-tests-" + Guid.NewGuid().ToString("N"));
@@ -21,7 +41,7 @@ public sealed class SettingsServiceTests : IDisposable
     {
         Directory.CreateDirectory(_tempDir);
         _db = new JellyPlayDatabase(_tempDir);
-        _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => _syncConfig, NullLogger<SettingsService>.Instance);
+        _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => _syncConfig, NullLogger<SettingsService>.Instance, new SnapshotService(_db, () => _syncConfig));
     }
 
     public void Dispose()
@@ -210,5 +230,332 @@ public sealed class SettingsServiceTests : IDisposable
 
         Assert.Null(_service.GetAll("u1", "").Modes);
         Assert.Null(_service.GetChanged("u1", "", 0, "d1").Modes);
+    }
+
+    // ------------------------------------------------------------------
+    // Tombstones (schema v7)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void ApplyBatch_Delete_RemovesKey_AndDeltaCarriesDeleted()
+    {
+        var first = _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "keep", 1), Dto("ui", "gone", 1) });
+
+        var delete = new Api.SettingsWriteDto { Ns = "ui", Key = "gone", UpdatedAt = 2, Deleted = true };
+        var applied = _service.ApplyBatch("u1", "", "d2", new[] { delete });
+
+        Assert.True(applied.Applied.Single().Deleted);
+        Assert.Single(_service.GetAll("u1", "").Settings, entry => entry.Key == "keep");
+
+        // The delta since the first batch: no live rows, one tombstoned key.
+        var delta = _service.GetChanged("u1", "", first.Head, "d2");
+        Assert.Empty(delta.Settings);
+        var deleted = Assert.Single(delta.Deleted!);
+        Assert.Equal(("ui", "gone"), (deleted.Ns, deleted.Key));
+    }
+
+    [Fact]
+    public void ApplyBatch_NullValueWithoutFlag_IsStoredNotDeleted()
+    {
+        // The flag is the ONLY tombstone form: a JSON-null value without it is
+        // a stored value ("null" bytes, the pre-v7 behavior), never a delete.
+        var applied = _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "theme", 1, "null") });
+
+        Assert.Single(applied.Applied);
+        Assert.False(Assert.Single(applied.Applied).Deleted);
+        var stored = Assert.Single(_service.GetAll("u1", "").Settings);
+        Assert.Equal(JsonValueKind.Null, stored.Value.ValueKind);
+        Assert.Null(_service.GetChanged("u1", "", 0, "d2").Deleted);
+    }
+
+    [Fact]
+    public void ApplyBatch_StalePut_AfterDelete_IsRejectedAntiResurrection()
+    {
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "theme", 10) });
+        _service.ApplyBatch("u1", "", "d2", new[] { new Api.SettingsWriteDto { Ns = "ui", Key = "theme", UpdatedAt = 20, Deleted = true } });
+
+        // A peer still holding the old copy must not resurrect it (older or
+        // equal timestamp loses to the tombstone; strictly newer wins LWW).
+        var zombie = _service.ApplyBatch("u1", "", "d3", new[] { Dto("ui", "theme", 15, "\"zombie\"") });
+        Assert.Equal("stale-write", Assert.Single(zombie.Rejected).Reason);
+        Assert.Empty(_service.GetAll("u1", "").Settings);
+
+        var newer = _service.ApplyBatch("u1", "", "d3", new[] { Dto("ui", "theme", 21, "\"fresh\"") });
+        Assert.Single(newer.Applied);
+        Assert.Single(_service.GetAll("u1", "").Settings);
+    }
+
+    [Fact]
+    public void ResetNamespace_TombstonedKeysReachTheDelta()
+    {
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1), Dto("ui", "b", 2) });
+        var head = _service.GetAll("u1", "").Head;
+
+        _service.ResetNamespace("u1", "", "ui", "d1");
+
+        var delta = _service.GetChanged("u1", "", head, "d2");
+        Assert.Empty(delta.Settings);
+        Assert.Equal(new[] { ("ui", "a"), ("ui", "b") }, delta.Deleted!.Select(key => (key.Ns, key.Key)).ToList());
+    }
+
+    // ------------------------------------------------------------------
+    // Clock-skew clamp
+    // ------------------------------------------------------------------
+
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    [Fact]
+    public void ApplyBatch_WriteTooFarAhead_IsRejectedClockSkew()
+    {
+        var at = DateTimeOffset.Parse("2026-01-01T00:00:00Z");
+        var service = SettingsServiceFactory.Create(_db, new SseHub(NullLogger<SseHub>.Instance), clock: new FixedTimeProvider(at));
+        var serverNow = at.ToUnixTimeMilliseconds();
+
+        var farAhead = service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", serverNow + SettingsService.MaxClockSkewMilliseconds + 1) });
+        Assert.Equal("clock-skew", Assert.Single(farAhead.Rejected).Reason);
+
+        // Exactly at the 5-minute bound is still fine (pure client-clock LWW).
+        var atBound = service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", serverNow + SettingsService.MaxClockSkewMilliseconds) });
+        Assert.Single(atBound.Applied);
+
+        // And so is anything in the past (LWW decides).
+        var past = service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "b", 1) });
+        Assert.Single(past.Applied);
+    }
+
+    // ------------------------------------------------------------------
+    // Pagination
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void GetAll_Paginates_WithNextCursor()
+    {
+        _service.ApplyBatch("u1", "", "d1", Enumerable.Range(0, 5).Select(index => Dto("ui", $"k{index}", index + 1)).ToList());
+
+        var page1 = _service.GetAll("u1", "", cursor: null, limit: 2);
+        Assert.Equal(2, page1.Settings.Count);
+        Assert.Equal(2, page1.NextCursor);
+
+        var page2 = _service.GetAll("u1", "", page1.NextCursor, 2);
+        Assert.Equal(2, page2.Settings.Count);
+        Assert.Equal(4, page2.NextCursor);
+
+        var last = _service.GetAll("u1", "", page2.NextCursor, 2);
+        Assert.Single(last.Settings);
+        Assert.Null(last.NextCursor); // absent = last page
+    }
+
+    [Fact]
+    public void GetChanged_PaginatesRows_WhileDeletedStaysWhole()
+    {
+        _service.ApplyBatch("u1", "", "d1", Enumerable.Range(0, 4).Select(index => Dto("ui", $"k{index}", index + 1)).ToList());
+        _service.ApplyBatch("u1", "", "d2", new[] { new Api.SettingsWriteDto { Ns = "ui", Key = "gone", UpdatedAt = 99, Deleted = true } });
+
+        // Delta from the beginning of time: 4 live rows + 1 tombstoned key.
+        var page = _service.GetChanged("u1", "", 0, "d2", cursor: null, limit: 2);
+        Assert.Equal(2, page.Settings.Count);
+        Assert.Equal(2, page.NextCursor);
+        Assert.Single(page.Deleted!); // deleted[] is never paginated
+
+        var last = _service.GetChanged("u1", "", 0, "d2", page.NextCursor, 2);
+        Assert.Equal(2, last.Settings.Count);
+        Assert.Null(last.NextCursor);
+        Assert.Single(last.Deleted!);
+    }
+
+    // ------------------------------------------------------------------
+    // Device registry integration: revoked devices
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void ApplyBatch_RevokedDevice_WritesRejectedDeviceRevoked()
+    {
+        var devices = new Services.Devices.DeviceRegistryService(_db, () => new Configuration.PushConfig());
+        Assert.Equal(Services.Devices.RegisterDeviceOutcome.Registered, devices.Register(new Services.Devices.DeviceRegistration("u1", "d1", "Phone", "android", "1.0", null)));
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "theme", 1) });
+
+        Assert.True(devices.Revoke("u1", "d1"));
+
+        var rejected = _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "theme", 9, "\"new\"") });
+        Assert.Equal("device-revoked", Assert.Single(rejected.Rejected).Reason);
+        Assert.Empty(rejected.Applied);
+
+        // Unknown devices are never considered revoked.
+        var unknown = _service.ApplyBatch("u1", "", "never-seen", new[] { Dto("ui", "other", 9) });
+        Assert.Single(unknown.Applied);
+    }
+
+    [Fact]
+    public void WipeDevice_TombstonesOnlyThatDevicesRows_AndRecordsWipe()
+    {
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "mine", 1), Dto("player", "theirs", 1) });
+        _service.ApplyBatch("u1", "", "d2", new[] { Dto("ui", "d2key", 1) });
+        var head = _service.GetAll("u1", "").Head;
+
+        _service.WipeDevice("u1", "d1");
+
+        var remaining = _service.GetAll("u1", "");
+        Assert.Single(remaining.Settings, entry => entry.DeviceId == "d2");
+
+        var delta = _service.GetChanged("u1", "", head, "d2");
+        Assert.Empty(delta.Settings);
+        Assert.Equal(2, delta.Deleted!.Count); // d1's rows (both profiles/namespaces) tombstoned
+
+        var wipe = Assert.Single(_db.GetSyncHistory("u1", 0, 50), row => row.Op == "wipe");
+        Assert.Equal(2, wipe.KeysApplied);
+    }
+
+    // ------------------------------------------------------------------
+    // Restore points
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void RestoreSnapshot_ReturnsTheStoreToItsCapturedState()
+    {
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1, "\"one\""), Dto("ui", "b", 1, "\"two\"") });
+        var snapshotId = _service.CreateSnapshot("u1")!.Value;
+
+        // Destructive drift after the capture: overwrite one key, delete another.
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 2, "\"CHANGED\"") });
+        _service.ApplyBatch("u1", "", "d1", new[] { new Api.SettingsWriteDto { Ns = "ui", Key = "b", UpdatedAt = 3, Deleted = true } });
+        var preRestoreHead = _service.GetAll("u1", "").Head;
+
+        var response = _service.RestoreSnapshot("u1", snapshotId);
+
+        Assert.NotNull(response);
+        var restored = _service.GetAll("u1", "");
+        Assert.Equal(2, restored.Settings.Count);
+        Assert.Equal("\"one\"", restored.Settings.Single(entry => entry.Key == "a").Value.GetRawText());
+        Assert.Equal("\"two\"", restored.Settings.Single(entry => entry.Key == "b").Value.GetRawText());
+
+        // Peers learn about the restore through the ordinary delta: since the
+        // pre-restore head they see the re-applied (and re-created) keys.
+        var delta = _service.GetChanged("u1", "", preRestoreHead, "d2");
+        Assert.NotNull(delta);
+        Assert.Equal(2, delta.Settings.Count);
+        Assert.Null(delta.Deleted); // nothing stays deleted: the restore re-created every key
+    }
+
+    [Fact]
+    public void RestoreSnapshot_ForeignOrUnknownId_IsNull()
+    {
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1) });
+        _service.CreateSnapshot("u1");
+
+        Assert.Null(_service.RestoreSnapshot("u1", 999));
+        Assert.Empty(_service.ListSnapshots("u2")); // snapshots are owner-scoped
+    }
+
+    [Fact]
+    public void RestoreSnapshot_TombstonesPerProfile_DelRowsCarryTheirOwnProfile()
+    {
+        // A snapshot spanning the base profile AND a device profile.
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1, "\"one\"") });
+        _service.ApplyBatch("u1", "tv", "d1", new[] { Dto("ui", "layout", 1, "\"tv\"") });
+        var snapshotId = _service.CreateSnapshot("u1")!.Value;
+
+        // Drift after the capture: both keys overwritten, plus a tv-only key
+        // the snapshot does not hold (it must stay gone after the restore).
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 2, "\"CHANGED\"") });
+        _service.ApplyBatch("u1", "tv", "d1", new[] { Dto("ui", "layout", 2, "\"CHANGED\""), Dto("ui", "extra", 2, "\"drift\"") });
+        var preRestoreHead = _service.GetAll("u1", "").Head;
+
+        var response = _service.RestoreSnapshot("u1", snapshotId);
+
+        Assert.NotNull(response);
+        // The wire response folds every profile's re-apply batch: applied[]
+        // carries BOTH profiles' keys (not just the last batch's), and the
+        // head is the final change-log head.
+        Assert.Contains(response!.Applied, entry => entry.Key == "a"); // base profile
+        Assert.Contains(response!.Applied, entry => entry.Key == "layout"); // tv profile
+        Assert.Equal(2, response!.Applied.Count); // the tv-only drift key is not re-applied
+        Assert.Equal(_db.GetChangeLogHead("u1"), response!.Head);
+
+        Assert.Equal("\"one\"", _service.GetAll("u1", "").Settings.Single(entry => entry.Key == "a").Value.GetRawText());
+        var tv = _service.GetAll("u1", "tv");
+        Assert.Single(tv.Settings, entry => entry.Key == "layout"); // extra stayed gone
+
+        // The restore's change-log range attributes each tombstone to the
+        // profile its key lives in — no base-profile 'del' rows for tv keys.
+        var rows = _db.GetChangeLogRange("u1", preRestoreHead, _service.GetAll("u1", "").Head, 200);
+        Assert.DoesNotContain(rows, row => row.Profile == JellyPlayDatabase.BaseProfile && row.Key == "layout");
+        Assert.DoesNotContain(rows, row => row.Profile == JellyPlayDatabase.BaseProfile && row.Key == "extra");
+        Assert.Contains(rows, row => row.Profile == "tv" && row.Key == "layout");
+
+        // The still-absent tv-only key is tombstoned under tv, not base.
+        var deleted = _db.GetDeletedSettings("u1", preRestoreHead);
+        Assert.Equal("tv", deleted.Single(key => key.Key == "extra").Profile);
+    }
+
+    [Fact]
+    public void SetDeviceProfile_CapturesProfileCopyRestorePoint_AdminPushCapturesAdminPush()
+    {
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "theme", 1, "\"base\"") });
+
+        _service.SetDeviceProfile("u1", "tv", "d1", new[] { Dto("ui", "theme", 2, "\"tv\"") });
+        Assert.Single(_service.ListSnapshots("u1"), row => row.Origin == "profile-copy");
+
+        var snapshots = new SnapshotService(_db, () => new Configuration.SyncConfig());
+        var admin = new Services.Admin.AdminDefaultsService(
+            _service,
+            _db,
+            snapshots,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<Services.Admin.AdminDefaultsService>.Instance);
+        _service.SetAdminDefaults(
+            SettingsService.GlobalDefaultsScope,
+            JsonDocument.Parse("{\"player/skip\":{\"mode\":\"forced\",\"value\":15}}").RootElement);
+        admin.PushDefaults("u1");
+
+        Assert.Single(_service.ListSnapshots("u1"), row => row.Origin == "admin-push");
+        // Manual captures work too.
+        Assert.NotNull(_service.CreateSnapshot("u1"));
+        Assert.Single(_service.ListSnapshots("u1"), row => row.Origin == "manual");
+    }
+
+    // ------------------------------------------------------------------
+    // Export / import
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Export_CarriesAllProfilesModesAndCatalogStamp()
+    {
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "theme", 1, "\"base\"") });
+        _service.ApplyBatch("u1", "tv", "d1", new[] { Dto("ui", "layout", 1, "\"tv\"") });
+        _service.SetAdminDefaults(
+            SettingsService.GlobalDefaultsScope,
+            JsonDocument.Parse("{\"ui/theme\":{\"mode\":\"forced\",\"value\":\"dark\"}}").RootElement);
+
+        var bundle = _service.Export("u1");
+
+        Assert.Equal(Services.Settings.ClientSettingsCatalog.CatalogSchema, bundle.CatalogSchema);
+        Assert.True(bundle.CatalogSettings > 0);
+        Assert.Equal(2, bundle.Profiles.Count);
+        var tv = bundle.Profiles.Single(profile => profile.Profile == "tv");
+        Assert.Single(tv.Settings, entry => entry.Key == "layout");
+        Assert.Equal("forced", bundle.Modes[""][ "ui/theme"]); // provenance travels with the bundle
+
+        // The export contains the USER's stored value, not the forced default.
+        Assert.Equal("\"base\"", bundle.Profiles.Single(profile => profile.Profile == "").Settings.Single(entry => entry.Key == "theme").Value.GetRawText());
+    }
+
+    [Fact]
+    public void Import_ReappliesWithServerNowTimestamps()
+    {
+        var donor = SettingsServiceFactory.Create(_db, new SseHub(NullLogger<SseHub>.Instance));
+        donor.ApplyBatch("donor", "", "d1", new[] { Dto("ui", "theme", 1, "\"exported\"") });
+        donor.ApplyBatch("donor", "tv", "d1", new[] { Dto("ui", "layout", 1, "\"tv\"") });
+        var bundle = donor.Export("donor");
+
+        var response = _service.Import("u1", "d9", bundle);
+
+        Assert.Equal(2, response.Applied.Count);
+        var baseAll = _service.GetAll("u1", "");
+        Assert.Equal("\"exported\"", baseAll.Settings.Single(entry => entry.Key == "theme").Value.GetRawText());
+        Assert.Equal("d9", baseAll.Settings.Single(entry => entry.Key == "theme").DeviceId);
+        Assert.NotEqual(1, baseAll.Settings.Single(entry => entry.Key == "theme").UpdatedAt); // server-stamped, not the donor's ts
+        Assert.Equal("\"tv\"", _service.GetAll("u1", "tv").Settings.Single().Value.GetRawText());
     }
 }

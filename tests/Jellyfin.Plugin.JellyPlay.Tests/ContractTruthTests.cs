@@ -377,6 +377,30 @@ public sealed class AnimeOverrideResolutionTests
         var second = round.Anime.SeriesOverrides[1];
         Assert.Equal(("def", null, "9", null), (second.SeriesId, second.AniListId, second.MalId, second.Label));
     }
+
+    /// <summary>
+    /// Jellyfin persists the plugin config with its XML serializer — the whole
+    /// configuration must survive a reflection round-trip (a Dictionary member
+    /// fails XmlSerializer import with "implements IDictionary"; this pins the
+    /// NamespaceQuotaBytes surrogate).
+    /// </summary>
+    [Fact]
+    public void PluginConfiguration_XmlRoundTrip_PreservesNamespaceQuotas()
+    {
+        var config = new PluginConfiguration();
+        config.Sync.NamespaceQuotaBytes["prefs"] = 2 * 1024 * 1024;
+        config.Sync.NamespaceQuotaBytes["custom"] = 4096;
+
+        var serializer = new System.Xml.Serialization.XmlSerializer(typeof(PluginConfiguration));
+        using var stream = new System.IO.MemoryStream();
+        serializer.Serialize(stream, config);
+        stream.Position = 0;
+        var round = (PluginConfiguration)serializer.Deserialize(stream);
+
+        Assert.Equal(2 * 1024 * 1024, round.Sync.NamespaceQuotaBytes["prefs"]);
+        Assert.Equal(4096, round.Sync.NamespaceQuotaBytes["custom"]);
+        Assert.Equal(1536 * 1024, round.Sync.NamespaceQuotaBytes["reader"]); // untouched default survives
+    }
 }
 
 /// <summary>The scorer terms per contract: genres x3, tags x2, studios x1.5, shared people x1.5 (cap 5), year bands, franchise bonus.</summary>

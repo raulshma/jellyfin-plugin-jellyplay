@@ -32,16 +32,28 @@ public class SettingsController : JellyPlayControllerBase
 
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public IActionResult GetAll([FromQuery] string? profile)
-        => JellyPlayResponses.Camel(_settings.GetAll(User.GetUserId().ToString(), profile ?? JellyPlayDatabase.BaseProfile));
+    public IActionResult GetAll([FromQuery] string? profile, [FromQuery] long? cursor, [FromQuery] int? limit)
+        => JellyPlayResponses.Camel(_settings.GetAll(
+            User.GetUserId().ToString(),
+            profile ?? JellyPlayDatabase.BaseProfile,
+            cursor,
+            limit));
 
     [HttpGet("changed")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetChanged(
         [FromQuery, Required] long since,
         [FromQuery] string? profile,
-        [FromQuery] string? deviceId)
-        => JellyPlayResponses.Camel(_settings.GetChanged(User.GetUserId().ToString(), profile ?? JellyPlayDatabase.BaseProfile, since, deviceId));
+        [FromQuery] string? deviceId,
+        [FromQuery] long? cursor,
+        [FromQuery] int? limit)
+        => JellyPlayResponses.Camel(_settings.GetChanged(
+            User.GetUserId().ToString(),
+            profile ?? JellyPlayDatabase.BaseProfile,
+            since,
+            deviceId,
+            cursor,
+            limit));
 
     [HttpPost]
     [RateLimit(typeof(Services.Admin.SettingsRateLimiter), "settings")]
@@ -97,6 +109,63 @@ public class SettingsController : JellyPlayControllerBase
             profile,
             request.DeviceId ?? User.GetDeviceId(),
             request.Writes));
+
+    // ------------------------------------------------------------------
+    // Restore points (schema v7)
+    // ------------------------------------------------------------------
+
+    /// <summary>The caller's restore points, newest-first (metadata only).</summary>
+    [HttpGet("snapshots")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public IActionResult GetSnapshots()
+        => JellyPlayResponses.Camel(_settings.ListSnapshots(User.GetUserId().ToString()).Select(row => new SnapshotDto(
+            row.Id,
+            row.CreatedAt,
+            row.Origin,
+            row.Keys,
+            row.Bytes)));
+
+    /// <summary>Captures a manual restore point of the caller's whole settings store.</summary>
+    [HttpPost("snapshots")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public IActionResult CreateSnapshot()
+    {
+        var id = _settings.CreateSnapshot(User.GetUserId().ToString());
+        return id is null
+            ? JellyPlayResponses.Error(StatusCodes.Status500InternalServerError, "snapshot-failed")
+            : JellyPlayResponses.Camel(new SnapshotCreateResponse(id.Value));
+    }
+
+    /// <summary>
+    /// Restores one of the caller's snapshots: tombstone batch over every
+    /// current row, then the snapshot re-applied with a server-stamped LWW
+    /// clock (so it wins), riding the ordinary batch pipeline (change log,
+    /// anchored SSE event, history). 404 when the id is not the caller's own.
+    /// </summary>
+    [HttpPost("snapshots/{id}/restore")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public IActionResult RestoreSnapshot([FromRoute, Required] long id)
+    {
+        var response = _settings.RestoreSnapshot(User.GetUserId().ToString(), id);
+        return response is null ? NotFound() : JellyPlayResponses.Camel(response);
+    }
+
+    // ------------------------------------------------------------------
+    // Export / import (schema v7)
+    // ------------------------------------------------------------------
+
+    /// <summary>The caller's whole settings store as a portable bundle (all profiles + modes + catalog stamp).</summary>
+    [HttpGet("export")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public IActionResult Export()
+        => JellyPlayResponses.Camel(_settings.Export(User.GetUserId().ToString()));
+
+    /// <summary>Re-applies an exported bundle for the caller with server-now timestamps (LWW: beats anything older).</summary>
+    [HttpPost("import")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public IActionResult Import([FromBody, Required] SettingsExportBundle bundle, [FromQuery] string? deviceId)
+        => JellyPlayResponses.Camel(_settings.Import(User.GetUserId().ToString(), deviceId ?? User.GetDeviceId(), bundle));
 
     /// <summary>Live settings stream for the authenticated user (event: settings.changed / settings.reset).</summary>
     [HttpGet("stream")]

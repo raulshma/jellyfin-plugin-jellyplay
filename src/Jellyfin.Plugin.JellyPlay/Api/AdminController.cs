@@ -1,6 +1,11 @@
-using System.Text.Json;
+using System.ComponentModel.DataAnnotations;
+using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyPlay.Helpers;
+using Jellyfin.Plugin.JellyPlay.Realtime;
 using Jellyfin.Plugin.JellyPlay.Services.Admin;
+using Jellyfin.Plugin.JellyPlay.Services.Settings;
+using Jellyfin.Plugin.JellyPlay.Storage;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -15,20 +20,68 @@ public class AdminController : JellyPlayControllerBase
 {
     private readonly AdminDefaultsService _defaults;
     private readonly ConfigBackupService _backup;
+    private readonly SettingsService _settings;
+    private readonly AdminUsers _adminUsers;
+    private readonly SseHub _hub;
 
-    public AdminController(AdminDefaultsService defaults, ConfigBackupService backup)
+    public AdminController(
+        AdminDefaultsService defaults,
+        ConfigBackupService backup,
+        SettingsService settings,
+        AdminUsers adminUsers,
+        SseHub hub)
     {
         _defaults = defaults;
         _backup = backup;
+        _settings = settings;
+        _adminUsers = adminUsers;
+        _hub = hub;
     }
 
-    /// <summary>Push stored tri-state defaults into user base settings (all users or one).</summary>
+    /// <summary>
+    /// Push stored tri-state defaults into user base settings (all users or
+    /// one). The additive <c>?dryRun=true</c> simulates the push: it reports
+    /// would-apply/would-reject (and catalog problems) and writes NOTHING —
+    /// no rows, no restore points, no history.
+    /// </summary>
     [HttpPost("pushDefaults/{userId?}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public IActionResult PushDefaults([FromRoute] string? userId)
+    public IActionResult PushDefaults([FromRoute] string? userId, [FromQuery] bool dryRun = false)
     {
-        var outcome = _defaults.PushDefaults(string.IsNullOrEmpty(userId) ? null : userId);
+        var outcome = _defaults.PushDefaults(string.IsNullOrEmpty(userId) ? null : userId, dryRun);
         return JellyPlayResponses.Camel(outcome);
+    }
+
+    /// <summary>
+    /// Resolved-settings preview for ANY user (admin simulator): the same
+    /// pure merge the user's own resolved endpoint serves — base + profile
+    /// overlay + tri-state defaults with the additive modes map. Reads only;
+    /// nothing is written, no restore point or history entry is created.
+    /// </summary>
+    [HttpGet("settings/preview")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public IActionResult PreviewResolved(
+        [FromQuery, Required] string userId,
+        [FromQuery] string? profile)
+        => JellyPlayResponses.Camel(_settings.ResolveProfile(userId, profile ?? JellyPlayDatabase.BaseProfile));
+
+    /// <summary>Every host user (the admin pickers' data source).</summary>
+    [HttpGet("users")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public IActionResult GetUsers()
+        => JellyPlayResponses.Camel(new AdminUserListResponse(_adminUsers.AllUsers()));
+
+    /// <summary>
+    /// Live monitor stream (elevated subscribers only): one <c>sync.op</c>
+    /// event per recorded settings-sync operation — push/pull/reset/wipe,
+    /// every user. Broadcast delivery, hub-monotonic ids (a live view; the
+    /// history endpoints are the durable record).
+    /// </summary>
+    [HttpGet("stream")]
+    public async Task Stream(CancellationToken cancellationToken)
+    {
+        var subscriberId = _hub.Subscribe(User.GetUserId().ToString(), SseHub.AdminStream);
+        await SseStreamWriter.WriteAsync(HttpContext, _hub, subscriberId, cancellationToken);
     }
 
     [HttpGet("configBackup")]

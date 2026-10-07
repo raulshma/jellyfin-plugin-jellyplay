@@ -519,8 +519,8 @@ public sealed class FcmDispatchTests : IDisposable
     {
         _config.FcmProjectId = "proj-x";
         _config.FcmServiceAccountJson = _sa.Json();
-        _db.UpsertDevice(new DeviceRow("f1", "u1", "F", "android", "1", 1, "fcm", "fcm-reg-token-1", 1));
-        _db.UpsertDevice(new DeviceRow("g1", "u1", "G", "android", "1", 1, "generic", "https://push.example/g1", 1));
+        _db.UpsertDevice(new DeviceWrite("f1", "u1", "F", "android", "1", 1, "fcm", "fcm-reg-token-1", 1));
+        _db.UpsertDevice(new DeviceWrite("g1", "u1", "G", "android", "1", 1, "generic", "https://push.example/g1", 1));
         var recording = new HeaderRecording();
 
         await Dispatcher(recording).DispatchAsync(new PushMessage(PushKinds.NewMedia, "Title", "Body", "itm1"), new[] { "u1" });
@@ -541,8 +541,8 @@ public sealed class FcmDispatchTests : IDisposable
     [Fact]
     public async Task FcmUnconfigured_SkipsFcmDevices_DebugPath_NoHttp()
     {
-        _db.UpsertDevice(new DeviceRow("f1", "u1", "F", "android", "1", 1, "fcm", "fcm-reg-token-1", 1));
-        _db.UpsertDevice(new DeviceRow("g1", "u1", "G", "android", "1", 1, "generic", "https://push.example/g1", 1));
+        _db.UpsertDevice(new DeviceWrite("f1", "u1", "F", "android", "1", 1, "fcm", "fcm-reg-token-1", 1));
+        _db.UpsertDevice(new DeviceWrite("g1", "u1", "G", "android", "1", 1, "generic", "https://push.example/g1", 1));
         var recording = new HeaderRecording();
 
         await Dispatcher(recording).DispatchAsync(new PushMessage(PushKinds.Broadcast, "T", "B"), new[] { "u1" });
@@ -558,9 +558,9 @@ public sealed class FcmDispatchTests : IDisposable
         _config.FcmProjectId = "proj-x";
         _config.FcmServiceAccountJson = _sa.Json();
         _endpoint.Responder = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError);
-        _db.UpsertDevice(new DeviceRow("f1", "u1", "F", "android", "1", 1, "fcm", "fcm-reg-token-1", 1));
-        _db.UpsertDevice(new DeviceRow("f2", "u1", "F2", "android", "1", 1, "fcm", "fcm-reg-token-2", 1));
-        _db.UpsertDevice(new DeviceRow("g1", "u1", "G", "android", "1", 1, "generic", "https://push.example/g1", 1));
+        _db.UpsertDevice(new DeviceWrite("f1", "u1", "F", "android", "1", 1, "fcm", "fcm-reg-token-1", 1));
+        _db.UpsertDevice(new DeviceWrite("f2", "u1", "F2", "android", "1", 1, "fcm", "fcm-reg-token-2", 1));
+        _db.UpsertDevice(new DeviceWrite("g1", "u1", "G", "android", "1", 1, "generic", "https://push.example/g1", 1));
         var recording = new HeaderRecording();
 
         await Dispatcher(recording).DispatchAsync(new PushMessage(PushKinds.Broadcast, "T", "B"), new[] { "u1" });
@@ -573,7 +573,7 @@ public sealed class FcmDispatchTests : IDisposable
     [Fact]
     public void AdminOverview_ReportsFcmConfiguredBoolean_AndHidesTokenHost()
     {
-        _db.UpsertDevice(new DeviceRow("f1", "u1", "F", "android", "1", 1, "fcm", "super-secret-registration-token", 1));
+        _db.UpsertDevice(new DeviceWrite("f1", "u1", "F", "android", "1", 1, "fcm", "super-secret-registration-token", 1));
 
         var dispatcher = Dispatcher(new HeaderRecording());
         var unconfigured = dispatcher.GetAdminOverview(_ => null);
@@ -632,7 +632,7 @@ public sealed class FcmRegistrationApiTests : IDisposable
         var controller = new EventsController(
             hub,
             events,
-            new DeviceRegistryService(_db, () => _pushConfig));
+            new DeviceRegistryService(_db, () => _pushConfig, SettingsServiceFactory.Create(_db, hub)));
         var context = new DefaultHttpContext
         {
             User = new ClaimsPrincipal(new ClaimsIdentity(

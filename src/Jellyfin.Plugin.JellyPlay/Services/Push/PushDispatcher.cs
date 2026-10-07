@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyPlay.Configuration;
 using Jellyfin.Plugin.JellyPlay.Services.Admin;
+using Jellyfin.Plugin.JellyPlay.Services.Devices;
 using Jellyfin.Plugin.JellyPlay.Storage;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
 using Microsoft.Extensions.Logging;
@@ -23,6 +24,22 @@ public static class PushKinds
     public const string NewMedia = "new-media";
     public const string Broadcast = "broadcast";
     public const string Message = "message";
+
+    /// <summary>
+    /// The silent trigger kind (registry v7): a data-only nudge telling the
+    /// client to flush its sync queue. Delivered ONLY to devices whose
+    /// registered caps include "silent-push" — devices that never advertised
+    /// the cap must not receive it, because clients without silent handling
+    /// render unknown kinds as visible notifications.
+    /// </summary>
+    public const string SyncNudge = "sync-nudge";
+}
+
+/// <summary>Device capability strings (registry v7, self-reported at registration) the dispatcher gates on.</summary>
+public static class DeviceCaps
+{
+    /// <summary>The cap that opts a device into sync-nudge delivery.</summary>
+    public const string SilentPush = "silent-push";
 }
 
 /// <summary>One push notification fanned out to every push-registered device of the target users.</summary>
@@ -156,6 +173,94 @@ public sealed class PushDispatcher
         }
     }
 
+    /// <summary>
+    /// Fire-and-forget sync-nudge to the user's silent-push-capable devices —
+    /// the settings-sync trigger for devices not presumed connected via the
+    /// settings SSE stream. Skipped entirely when the user's devices lack the
+    /// "silent-push" cap or push is disabled.
+    /// </summary>
+    public void DispatchSyncNudge(string userId)
+    {
+        if (!_config().Enabled)
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await DispatchSyncNudgeAsync(userId).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Sync-nudge fan-out crashed unexpectedly");
+            }
+        });
+    }
+
+    /// <summary>Synchronous-for-the-caller sync-nudge fan-out. Never throws.</summary>
+    internal async Task DispatchSyncNudgeAsync(string userId)
+    {
+        if (!_config().Enabled)
+        {
+            return;
+        }
+
+        List<DeviceRow> devices;
+        try
+        {
+            devices = new List<DeviceRow>(_db.GetPushDevices(new[] { userId }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Sync-nudge dispatch: could not query push-registered devices");
+            return;
+        }
+
+        var capable = devices
+            .Where(device => !device.Revoked && CapsInclude(device.CapsJson, DeviceCaps.SilentPush))
+            .ToList();
+        if (capable.Count == 0)
+        {
+            return;
+        }
+
+        // One token per fan-out (cached inside the provider), resolved lazily
+        // and only when an fcm-capable device is present.
+        string? fcmToken = null;
+        var fcmResolved = false;
+        var message = new PushMessage(PushKinds.SyncNudge, "JellyPlay", "settings-changed");
+        foreach (var device in capable)
+        {
+            if (IsFcmKind(device.PushKind))
+            {
+                if (!fcmResolved)
+                {
+                    fcmResolved = true;
+                    fcmToken = _fcmTokens is null
+                        ? null
+                        : await _fcmTokens.GetTokenAsync(CancellationToken.None).ConfigureAwait(false);
+                    if (fcmToken is null)
+                    {
+                        _logger.LogDebug("Sync-nudge dispatch: FCM transport unavailable (unconfigured or token fetch failed)");
+                    }
+                }
+
+                if (fcmToken is null)
+                {
+                    continue;
+                }
+            }
+
+            await DispatchOneAsync(device, message, fcmToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Whether the device's registered caps JSON includes the capability.</summary>
+    internal static bool CapsInclude(string? capsJson, string cap)
+        => DeviceRegistryService.ParseCaps(capsJson).Contains(cap, StringComparer.Ordinal);
+
     private async Task DispatchOneAsync(DeviceRow device, PushMessage message, string? fcmToken)
     {
         try
@@ -253,7 +358,9 @@ public sealed class PushDispatcher
     /// <summary>
     /// FCM HTTP v1 send body: the device's endpoint IS the FCM registration
     /// token; machine fields ride the string-typed "data" map (FCM forbids
-    /// non-string data values); itemId present only when set.
+    /// non-string data values); itemId present only when set. The silent
+    /// sync-nudge kind ships DATA-ONLY (no notification block) — a visible
+    /// payload would defeat its purpose.
     /// </summary>
     internal static string BuildFcmPayload(PushMessage message, string fcmRegistrationToken)
     {
@@ -263,21 +370,20 @@ public sealed class PushDispatcher
             data["itemId"] = message.ItemId;
         }
 
-        var payload = new JObject
+        var inner = new JObject { ["token"] = fcmRegistrationToken };
+        if (!string.Equals(message.Kind, PushKinds.SyncNudge, StringComparison.Ordinal))
         {
-            ["message"] = new JObject
+            inner["notification"] = new JObject
             {
-                ["token"] = fcmRegistrationToken,
-                ["notification"] = new JObject
-                {
-                    ["title"] = message.Title,
-                    ["body"] = message.Body
-                },
-                ["data"] = data,
-                ["android"] = new JObject { ["priority"] = "NORMAL" }
-            }
-        };
+                ["title"] = message.Title,
+                ["body"] = message.Body
+            };
+        }
 
+        inner["data"] = data;
+        inner["android"] = new JObject { ["priority"] = "NORMAL" };
+
+        var payload = new JObject { ["message"] = inner };
         return payload.ToString(Formatting.None);
     }
 

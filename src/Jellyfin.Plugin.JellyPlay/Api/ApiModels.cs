@@ -22,6 +22,14 @@ public sealed class SettingsWriteDto
     public long UpdatedAt { get; set; }
 
     public JsonElement Value { get; set; }
+
+    /// <summary>
+    /// ADDITIVE (tombstones): true marks a delete — the key is removed, a
+    /// 'del' change-log row is appended, and the deletion roams to peers via
+    /// the delta's deleted[] list. The value is ignored; LWW still applies
+    /// (a delete loses to a strictly newer put and vice versa).
+    /// </summary>
+    public bool Deleted { get; set; }
 }
 
 public sealed class SettingsBatchRequest
@@ -51,6 +59,9 @@ public sealed class SettingsEntryDto
     public JsonElement Value { get; set; }
 }
 
+/// <summary>A key deleted since a delta cursor (the delta's deleted[] half).</summary>
+public sealed record DeletedKeyDto(string Ns, string Key);
+
 public sealed class SettingsSnapshotResponse
 {
     public long Head { get; set; }
@@ -58,6 +69,19 @@ public sealed class SettingsSnapshotResponse
     public string Profile { get; set; } = string.Empty;
 
     public List<SettingsEntryDto> Settings { get; set; } = new();
+
+    /// <summary>
+    /// ADDITIVE (tombstones), populated only by the delta endpoint: keys
+    /// deleted since the requested cursor. Old clients ignore it.
+    /// </summary>
+    public List<DeletedKeyDto>? Deleted { get; set; }
+
+    /// <summary>
+    /// ADDITIVE (pagination), populated only when more rows follow: the opaque
+    /// cursor to pass as ?cursor= for the next page. Absent on the last page
+    /// (and on unpaginated responses) — old clients ignore it.
+    /// </summary>
+    public long? NextCursor { get; set; }
 
     /// <summary>
     /// ADDITIVE, populated only by the resolved-profile endpoint: the
@@ -80,7 +104,7 @@ public sealed class SettingsBatchResponse
     public List<RejectedSettingDto> Rejected { get; set; } = new();
 }
 
-public sealed record AppliedSettingDto(string Ns, string Key, long UpdatedAt, long Seq);
+public sealed record AppliedSettingDto(string Ns, string Key, long UpdatedAt, long Seq, bool Deleted = false);
 
 public sealed record RejectedSettingDto(string Ns, string Key, string Reason);
 
@@ -120,8 +144,9 @@ public sealed record SyncRejectDto(string Ns, string Key, string Reason);
 /// <summary>
 /// GET jellyplay/sync/history/{seq}/keys — the per-key diff of one of the
 /// caller's recorded operations: the change-log rows in (fromSeq, toSeq],
-/// newest-first. Reset rows (and any row without a usable range) carry an
-/// empty key list.
+/// newest-first. Since tombstones (schema v7) a reset/wipe range lists the
+/// keys it removed; only rows without a usable range (zero-width or pre-v7)
+/// carry an empty key list.
 /// </summary>
 public sealed record SyncHistoryKeysResponse(long Seq, string Op, IReadOnlyList<SyncHistoryKeyDto> Keys);
 
@@ -136,6 +161,56 @@ public sealed record AdminSyncUserRow(
     long Bytes,
     long? LastSyncAt,
     int DeviceCount);
+
+// ---------------------------------------------------------------------------
+// Admin drill-down / live monitor / preview / audit (Phase 4, additive)
+// ---------------------------------------------------------------------------
+
+/// <summary>One host user reference for the admin pickers (dashboard user + profile selectors).</summary>
+public sealed record AdminUserRef(string UserId, string UserName);
+
+public sealed record AdminUserListResponse(IReadOnlyList<AdminUserRef> Users);
+
+/// <summary>
+/// One device row as the ADMIN drill-down sees it: identity and liveness
+/// only — the push endpoint URL (a secret) is structurally absent, unlike the
+/// owner-scoped <see cref="DeviceDto"/>.
+/// </summary>
+public sealed record AdminDeviceRow(
+    string DeviceId,
+    string Name,
+    string Platform,
+    string AppVersion,
+    long LastSeen,
+    string? Model = null,
+    IReadOnlyList<string>? Caps = null,
+    bool Revoked = false);
+
+/// <summary>Per-user admin drill-down: quota status plus the device list (no push secrets).</summary>
+public sealed record AdminUserDrilldownResponse(
+    string UserId,
+    string UserName,
+    SyncStatusResponse Status,
+    IReadOnlyList<AdminDeviceRow> Devices);
+
+/// <summary>One audit-exported operation with its per-key diff folded in.</summary>
+public sealed record AuditEntryDto(
+    long Seq,
+    long Ts,
+    string DeviceId,
+    string Op,
+    int KeysApplied,
+    int KeysRejected,
+    IReadOnlyList<SyncRejectDto>? Rejects,
+    long? FromSeq,
+    long? ToSeq,
+    IReadOnlyList<SyncHistoryKeyDto> Keys);
+
+/// <summary>The admin sync audit export (JSON shape): newest-first history, each entry carrying its key diff.</summary>
+public sealed record AuditExportResponse(
+    string UserId,
+    long ExportedAt,
+    IReadOnlyList<AuditEntryDto> History);
 
 public sealed class BroadcastRequest
 {
@@ -156,6 +231,16 @@ public sealed class DeviceRegistrationRequest
 
     public string AppVersion { get; set; } = string.Empty;
 
+    /// <summary>ADDITIVE (registry v7): self-reported hardware model (informational).</summary>
+    public string? Model { get; set; }
+
+    /// <summary>
+    /// ADDITIVE (registry v7): self-reported capability strings, e.g.
+    /// ["silent-push"] — the sync-nudge push is delivered only to devices
+    /// whose caps include it. Overwritten on each registration.
+    /// </summary>
+    public List<string>? Caps { get; set; }
+
     /// <summary>
     /// Optional push registration, bound raw so the three wire shapes stay
     /// distinguishable: object = validate and overwrite; absent = preserve any
@@ -163,6 +248,14 @@ public sealed class DeviceRegistrationRequest
     /// the device row).
     /// </summary>
     public JsonElement? Push { get; set; }
+}
+
+/// <summary>Body of POST jellyplay/devices/{id} (registry v7 rename); null fields keep their stored value.</summary>
+public sealed class DeviceRenameRequest
+{
+    public string? Name { get; set; }
+
+    public string? Model { get; set; }
 }
 
 /// <summary>Inbound push registration block of <see cref="DeviceRegistrationRequest"/>.</summary>
@@ -178,7 +271,13 @@ public sealed class DevicePushRegistration
 /// <summary>The push block of a device row, only ever serialized to its owning user.</summary>
 public sealed record DevicePushDto(string Kind, string Endpoint);
 
-/// <summary>Device row as returned by GET jellyplay/devices (push omitted when unregistered).</summary>
+/// <summary>
+/// Device row as returned by GET jellyplay/devices (push omitted when
+/// unregistered). Model/caps/revoked are additive (registry v7): caps is the
+/// parsed self-reported capability list, revoked marks a device whose
+/// settings writes are rejected (the DELETE route revokes + wipes instead of
+/// removing the row).
+/// </summary>
 public sealed record DeviceDto(
     string DeviceId,
     string UserId,
@@ -186,7 +285,51 @@ public sealed record DeviceDto(
     string Platform,
     string AppVersion,
     long LastSeen,
-    DevicePushDto? Push);
+    DevicePushDto? Push,
+    string? Model = null,
+    IReadOnlyList<string>? Caps = null,
+    bool Revoked = false);
+
+// ---------------------------------------------------------------------------
+// Restore points (GET/POST jellyplay/settings/snapshots, POST …/{id}/restore)
+// ---------------------------------------------------------------------------
+
+/// <summary>One restore point (metadata; payloads ride the restore action).</summary>
+public sealed record SnapshotDto(long Id, long CreatedAt, string Origin, int Keys, long Bytes);
+
+public sealed record SnapshotCreateResponse(long Id);
+
+// ---------------------------------------------------------------------------
+// Settings export / import (GET jellyplay/settings/export, POST …/import)
+// ---------------------------------------------------------------------------
+
+/// <summary>
+/// The portable settings bundle: every stored profile's rows plus the
+/// tri-state modes maps (per profile) and the settings-catalog stamp the
+/// export was produced against. The import route takes the same shape back.
+/// </summary>
+public sealed class SettingsExportBundle
+{
+    public long ExportedAt { get; set; }
+
+    public string PluginVersion { get; set; } = string.Empty;
+
+    public int CatalogSchema { get; set; }
+
+    public int CatalogSettings { get; set; }
+
+    public List<SettingsExportProfile> Profiles { get; set; } = new();
+
+    /// <summary>Per-profile modes map ("ns/key" → "forced"|"suggested"|"unset") from the resolve merge.</summary>
+    public Dictionary<string, Dictionary<string, string>> Modes { get; set; } = new();
+}
+
+public sealed class SettingsExportProfile
+{
+    public string Profile { get; set; } = string.Empty;
+
+    public List<SettingsEntryDto> Settings { get; set; } = new();
+}
 
 public sealed record MessageDto(
     string Id,

@@ -14,17 +14,25 @@ public sealed partial class JellyPlayDatabase
     // Devices
     // ------------------------------------------------------------------
 
-    public void UpsertDevice(DeviceRow device)
+    /// <summary>
+    /// Idempotent device upsert. Every <see cref="DeviceWrite"/> field is
+    /// overwritten from the registration; Revoked is intentionally NOT an
+    /// input — a revoked device cannot un-revoke itself by re-registering
+    /// (only <see cref="SetDeviceRevoked"/> flips the flag).
+    /// </summary>
+    public void UpsertDevice(DeviceWrite device)
     {
         using (_lock.Write())
         using (var connection = CreateConnection())
         using (var statement = connection.Prepare(
-                   $@"insert into {DevicesTable} (DeviceId, UserId, Name, Platform, AppVersion, LastSeen, PushKind, PushEndpoint, CreatedAt)
-                      values (@DeviceId, @UserId, @Name, @Platform, @AppVersion, @LastSeen, @PushKind, @PushEndpoint, @CreatedAt)
+                   $@"insert into {DevicesTable} (DeviceId, UserId, Name, Platform, AppVersion, LastSeen, PushKind, PushEndpoint, CreatedAt, Model, CapsJson, Revoked)
+                      values (@DeviceId, @UserId, @Name, @Platform, @AppVersion, @LastSeen, @PushKind, @PushEndpoint, @CreatedAt, @Model, @CapsJson,
+                              coalesce((select Revoked from {DevicesTable} where DeviceId = @DeviceId), 0))
                       on conflict (DeviceId) do update set
                           UserId = @UserId, Name = @Name, Platform = @Platform,
                           AppVersion = @AppVersion, LastSeen = @LastSeen,
-                          PushKind = @PushKind, PushEndpoint = @PushEndpoint, CreatedAt = @CreatedAt"))
+                          PushKind = @PushKind, PushEndpoint = @PushEndpoint, CreatedAt = @CreatedAt,
+                          Model = @Model, CapsJson = @CapsJson"))
         {
             statement.Bind("@DeviceId", device.DeviceId);
             statement.Bind("@UserId", device.UserId);
@@ -35,6 +43,8 @@ public sealed partial class JellyPlayDatabase
             BindNullableText(statement, "@PushKind", device.PushKind);
             BindNullableText(statement, "@PushEndpoint", device.PushEndpoint);
             BindNullable(statement, "@CreatedAt", device.CreatedAt);
+            BindNullableText(statement, "@Model", device.Model);
+            BindNullableText(statement, "@CapsJson", device.CapsJson);
             statement.ExecuteNonQuery();
         }
     }
@@ -45,6 +55,49 @@ public sealed partial class JellyPlayDatabase
         using (var connection = CreateConnection())
         using (var statement = connection.Prepare($"delete from {DevicesTable} where DeviceId = @DeviceId and UserId = @UserId"))
         {
+            statement.Bind("@DeviceId", deviceId);
+            statement.Bind("@UserId", userId);
+            return statement.ExecuteNonQuery() > 0;
+        }
+    }
+
+    /// <summary>
+    /// Sets the revoked flag on an owned device row (the row survives — the
+    /// registry keeps the record and settings writes carrying the id are
+    /// rejected). Returns false when the caller owns no such device.
+    /// </summary>
+    public bool SetDeviceRevoked(string userId, string deviceId, bool revoked)
+    {
+        using (_lock.Write())
+        using (var connection = CreateConnection())
+        using (var statement = connection.Prepare(
+                   $"update {DevicesTable} set Revoked = @Revoked where DeviceId = @DeviceId and UserId = @UserId"))
+        {
+            statement.Bind("@Revoked", revoked ? 1L : 0L);
+            statement.Bind("@DeviceId", deviceId);
+            statement.Bind("@UserId", userId);
+            return statement.ExecuteNonQuery() > 0;
+        }
+    }
+
+    /// <summary>Whether the device row is revoked (unknown ids are never revoked).</summary>
+    public bool IsDeviceRevoked(string deviceId)
+        => GetDeviceById(deviceId)?.Revoked ?? false;
+
+    /// <summary>
+    /// Owner-scoped partial update: fields left null keep their stored value
+    /// (the rename route's body). Returns false when the caller owns no such
+    /// device.
+    /// </summary>
+    public bool RenameDevice(string userId, string deviceId, string? name, string? model)
+    {
+        using (_lock.Write())
+        using (var connection = CreateConnection())
+        using (var statement = connection.Prepare(
+                   $"update {DevicesTable} set Name = coalesce(@Name, Name), Model = coalesce(@Model, Model) where DeviceId = @DeviceId and UserId = @UserId"))
+        {
+            BindNullableText(statement, "@Name", name);
+            BindNullableText(statement, "@Model", model);
             statement.Bind("@DeviceId", deviceId);
             statement.Bind("@UserId", userId);
             return statement.ExecuteNonQuery() > 0;

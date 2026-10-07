@@ -135,7 +135,7 @@ public sealed class SyncRecordingTests : IDisposable
     {
         Directory.CreateDirectory(_tempDir);
         _db = new JellyPlayDatabase(_tempDir);
-        _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => new Configuration.SyncConfig(), NullLogger<SettingsService>.Instance);
+        _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => new Configuration.SyncConfig(), NullLogger<SettingsService>.Instance, new SnapshotService(_db, () => new Configuration.SyncConfig()));
     }
 
     public void Dispose()
@@ -401,7 +401,7 @@ public sealed class SyncDiffCaptureTests : IDisposable
     {
         Directory.CreateDirectory(_tempDir);
         _db = new JellyPlayDatabase(_tempDir);
-        _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => new Configuration.SyncConfig(), NullLogger<SettingsService>.Instance);
+        _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => new Configuration.SyncConfig(), NullLogger<SettingsService>.Instance, new SnapshotService(_db, () => new Configuration.SyncConfig()));
     }
 
     public void Dispose()
@@ -462,17 +462,19 @@ public sealed class SyncDiffCaptureTests : IDisposable
     }
 
     [Fact]
-    public void Reset_RecordsZeroWidthRangeAtTheHeadAfter()
+    public void Reset_RecordsTheTombstoneBatchRange()
     {
         _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1), Dto("ui", "b", 2), Dto("player", "c", 3) });
+        var headBefore = _db.GetChangeLogHead("u1");
 
         _service.ResetNamespace("u1", "", "ui", "d1");
 
+        // Tombstone semantics (schema v7): the reset's range brackets exactly
+        // the 'del' change-log rows it appended (one per removed key).
         var reset = SingleOp("u1", "reset");
         Assert.Equal(2, reset.KeysApplied); // the deleted key count
-        var head = _db.GetChangeLogHead("u1");
-        Assert.Equal(head, reset.FromSeq);
-        Assert.Equal(head, reset.ToSeq);
+        Assert.Equal(headBefore, reset.FromSeq);
+        Assert.Equal(_db.GetChangeLogHead("u1"), reset.ToSeq);
     }
 }
 
@@ -487,7 +489,7 @@ public sealed class SyncHistoryKeysTests : IDisposable
     {
         Directory.CreateDirectory(_tempDir);
         _db = new JellyPlayDatabase(_tempDir);
-        _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => new Configuration.SyncConfig(), NullLogger<SettingsService>.Instance);
+        _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => new Configuration.SyncConfig(), NullLogger<SettingsService>.Instance, new SnapshotService(_db, () => new Configuration.SyncConfig()));
     }
 
     public void Dispose()
@@ -551,18 +553,20 @@ public sealed class SyncHistoryKeysTests : IDisposable
     }
 
     [Fact]
-    public void Keys_ResetRows_AndMissingRanges_YieldAnEmptyList()
+    public void Keys_ResetRows_CarryTheirTombstonedKeys_MissingRangesYieldEmpty()
     {
         _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1), Dto("ui", "b", 2) });
         _service.ResetNamespace("u1", "", "ui", "d1");
         var reset = Assert.Single(_db.GetSyncHistory("u1", 0, 50), row => row.Op == "reset");
 
+        // Tombstone semantics (schema v7): the reset's range holds the 'del'
+        // rows, so the per-key diff lists the keys the reset removed.
         var response = Service.GetHistoryKeys("u1", reset.Id, 200);
         Assert.NotNull(response);
         Assert.Equal("reset", response!.Op);
-        Assert.Empty(response.Keys);
+        Assert.Equal(new[] { ("ui", "b"), ("ui", "a") }, response.Keys.Select(key => (key.Ns, key.Key)).ToList());
 
-        // A legacy row recorded before the range existed (nulls) degrades the same way.
+        // A legacy row recorded before the range existed (nulls) degrades to an empty list.
         var legacyId = _db.InsertSyncHistory("u1", "d2", "push", 1, 0, 0, null, 42);
         Assert.Empty(Service.GetHistoryKeys("u1", legacyId, 200)!.Keys);
     }

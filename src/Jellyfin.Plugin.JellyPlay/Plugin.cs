@@ -83,6 +83,16 @@ public class JellyPlayPlugin : BasePlugin<PluginConfiguration>, IHasWebPages
             {
                 Name = "JellyPlayYaml.js",
                 EmbeddedResourcePath = prefix + ".Pages.yaml.js"
+            },
+            new PluginPageInfo
+            {
+                Name = "JellyPlaySync",
+                EmbeddedResourcePath = prefix + ".Pages.sync.html"
+            },
+            new PluginPageInfo
+            {
+                Name = "JellyPlaySync.js",
+                EmbeddedResourcePath = prefix + ".Pages.sync.js"
             }
         ];
     }
