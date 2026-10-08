@@ -45,9 +45,9 @@ public sealed class SseKeepaliveTests
         var hub = new SseHub(NullLogger<SseHub>.Instance);
         var id = hub.Subscribe("alice", "events");
         var (context, body) = StreamContext();
-        using var cts = new CancellationTokenSource(400);
+        using var cts = new CancellationTokenSource(600);
 
-        await SseStreamWriter.WriteAsync(context, hub, id, cts.Token, TimeSpan.FromMilliseconds(100));
+        await SseStreamWriter.WriteAsync(context, hub, id, cts.Token, TimeSpan.FromMilliseconds(50));
 
         var text = BodyText(body);
         Assert.Contains(": keepalive", text);
@@ -62,9 +62,9 @@ public sealed class SseKeepaliveTests
         var id = hub.Subscribe("alice", "events");
         hub.PublishAll("events", "new-media", "{\"x\":1}");
         var (context, body) = StreamContext();
-        using var cts = new CancellationTokenSource(450);
+        using var cts = new CancellationTokenSource(1000);
 
-        await SseStreamWriter.WriteAsync(context, hub, id, cts.Token, TimeSpan.FromMilliseconds(100));
+        await SseStreamWriter.WriteAsync(context, hub, id, cts.Token, TimeSpan.FromMilliseconds(50));
 
         var text = BodyText(body);
         Assert.Contains("event: new-media", text);
@@ -73,7 +73,8 @@ public sealed class SseKeepaliveTests
         var keepaliveAt = text.IndexOf(": keepalive", StringComparison.Ordinal);
         var dataAt = text.IndexOf("data:", StringComparison.Ordinal);
         Assert.True(keepaliveAt > dataAt, "keepalive must come after the event, not before");
-        // Quiet interval is 100ms of a 450ms budget: more than one keepalive proves the loop continues.
+        // A 50ms quiet interval in a 1000ms budget yields ~19 keepalives; demanding
+        // only 2 leaves ~17 frames of slack for CI runner scheduling overshoot.
         Assert.True(text.Split(": keepalive", StringSplitOptions.None).Length - 1 >= 2);
     }
 

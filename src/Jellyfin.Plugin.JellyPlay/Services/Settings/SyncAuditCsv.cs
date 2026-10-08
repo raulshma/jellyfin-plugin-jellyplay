@@ -21,7 +21,7 @@ public static class SyncAuditCsv
     public static string Build(AuditExportResponse export)
     {
         var builder = new System.Text.StringBuilder();
-        builder.AppendLine(Header);
+        builder.Append(Header).Append("\r\n"); // RFC 4180 requires CRLF regardless of host OS
         foreach (var entry in export.History)
         {
             if (entry.Keys.Count == 0)
