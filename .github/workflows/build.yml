@@ -34,6 +34,9 @@ jobs:
       - name: Build and package
         run: ./build.sh "${GITHUB_REF#refs/tags/v}"
       - name: Update manifest
+        # sourceUrl MUST be the release-asset .zip URL: the server downloads
+        # from it and refuses any non-.zip sourceUrl ("Only zip packages are
+        # supported" — Emby.Server.Implementations Updates.InstallationManager).
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
           ZIP_MD5=$(md5sum "dist/Jellyfin.Plugin.JellyPlay.zip" | cut -d' ' -f1)
@@ -48,7 +51,7 @@ jobs:
               'version': '$VERSION',
               'changelog': 'https://github.com/raulshma/jellyfin-plugin-jellyplay/releases/tag/v$VERSION',
               'targetAbi': '10.11.11.0',
-              'sourceUrl': 'https://github.com/raulshma/jellyfin-plugin-jellyplay',
+              'sourceUrl': 'https://github.com/raulshma/jellyfin-plugin-jellyplay/releases/download/v$VERSION/Jellyfin.Plugin.JellyPlay.zip',
               'timestamp': '$TIMESTAMP',
               'checksum': '$ZIP_MD5'
           })
