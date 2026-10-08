@@ -58,8 +58,8 @@ jobs:
           with open('manifest.json', 'w') as f:
               json.dump(manifest, f, indent=2)
           EOF
-          git config user.name "release-bot"
-          git config user.email "bot@raulshma.dev"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add manifest.json
           git commit -m "manifest: v$VERSION"
           git push
