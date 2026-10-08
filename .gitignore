@@ -480,3 +480,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# build.sh output (release artifact; CI builds it fresh per tag)
+dist/

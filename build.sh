@@ -11,6 +11,7 @@ fi
 
 STAMPED="src/Jellyfin.Plugin.JellyPlay/Jellyfin.Plugin.JellyPlay.csproj"
 sed -i.bak "s|<Version>.*</Version>|<Version>${VERSION}</Version>|; s|<AssemblyVersion>.*</AssemblyVersion>|<AssemblyVersion>${VERSION}.0</AssemblyVersion>|; s|<FileVersion>.*</FileVersion>|<FileVersion>${VERSION}.0</FileVersion>|" "$STAMPED"
+rm -f "${STAMPED}.bak"
 
 dotnet publish "$STAMPED" -c Release -o dist/publish
 
