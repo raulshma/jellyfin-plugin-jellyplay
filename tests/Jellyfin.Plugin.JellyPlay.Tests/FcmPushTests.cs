@@ -458,13 +458,13 @@ public sealed class FcmPayloadTests
     {
         Assert.Equal(
             "{\"message\":{\"token\":\"regtok-1\",\"notification\":{\"title\":\"Hello\",\"body\":\"World\"},\"data\":{\"kind\":\"new-media\",\"itemId\":\"abc123\"},\"android\":{\"priority\":\"NORMAL\"}}}",
-            PushDispatcher.BuildFcmPayload(new PushMessage(PushKinds.NewMedia, "Hello", "World", "abc123"), "regtok-1"));
+            PushPayloads.BuildFcmPayload(new PushMessage(PushKinds.NewMedia, "Hello", "World", "abc123"), "regtok-1"));
     }
 
     [Fact]
     public void FcmPayload_OmitsItemId_AndCoercesDataToStrings()
     {
-        var json = PushDispatcher.BuildFcmPayload(new PushMessage(PushKinds.Broadcast, "T", "B"), "regtok-2");
+        var json = PushPayloads.BuildFcmPayload(new PushMessage(PushKinds.Broadcast, "T", "B"), "regtok-2");
 
         Assert.Equal(
             "{\"message\":{\"token\":\"regtok-2\",\"notification\":{\"title\":\"T\",\"body\":\"B\"},\"data\":{\"kind\":\"broadcast\"},\"android\":{\"priority\":\"NORMAL\"}}}",

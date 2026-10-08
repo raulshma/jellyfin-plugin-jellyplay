@@ -54,6 +54,9 @@ public sealed class TranscodeInsightsService
     /// One live session → a dashboard row. Sessions without a now-playing item
     /// are not streams (auth-only / idle sessions) and fold to null; everything
     /// else folds, with the transcode fields null when the play is direct.
+    /// Deepening: transcode detail folds through the shared module (same
+    /// payload as the analytics recorder); this keeps host wiring (session
+    /// enumeration, item/play-state shaping) and the null-for-idle rule.
     /// </summary>
     internal static ActiveTranscodeDto? Fold(SessionInfo session)
     {
@@ -63,31 +66,43 @@ public sealed class TranscodeInsightsService
             return null;
         }
 
-        var transcode = session.TranscodingInfo;
+        var detail = Analytics.TranscodeFold.Fold(session.TranscodingInfo);
         return new ActiveTranscodeDto(
             session.Id,
             session.UserName,
             session.DeviceName,
             item.Name,
-            transcode is null || transcode.IsVideoDirect ? null : transcode.VideoCodec,
-            transcode is null || transcode.IsAudioDirect ? null : transcode.AudioCodec,
+            detail.VideoCodec,
+            detail.AudioCodec,
             session.PlayState?.PlayMethod?.ToString(),
-            transcode?.Bitrate,
-            Reasons(transcode?.TranscodeReasons ?? default),
+            detail.Bitrate,
+            detail.Reasons,
             session.PlayState?.PositionTicks ?? 0,
             session.PlayState?.IsPaused ?? false);
     }
 
     /// <summary>
-    /// The host's [Flags] TranscodeReason decomposed into its named bits —
-    /// a raw numeric flag word is unreadable on a dashboard row. The logic
-    /// lives in the shared helper (the analytics recorder needs it too).
+    /// The caller's own live streams in a single pass over the session module:
+    /// fold each session once, keeping the non-null rows whose UserName matches
+    /// (OrdinalIgnoreCase). Locality deepening — the old two-pass seam
+    /// (GetActiveTranscodes().Where(...)) folded every session, then filtered;
+    /// this leverages the same Fold interface with one enumeration.
+    /// GetActiveTranscodes is unchanged.
     /// </summary>
-    private static string[]? Reasons(TranscodeReason reasons)
-        => Helpers.TranscodeReasonNames.Decompose(reasons);
-
     public IReadOnlyList<ActiveTranscodeDto> GetMine(string userName)
-        => GetActiveTranscodes().Where(transcode => string.Equals(transcode.UserName, userName, StringComparison.OrdinalIgnoreCase)).ToList();
+    {
+        var mine = new List<ActiveTranscodeDto>();
+        foreach (var session in _sessionManager.Sessions)
+        {
+            var folded = Fold(session);
+            if (folded is not null && string.Equals(folded.UserName, userName, StringComparison.OrdinalIgnoreCase))
+            {
+                mine.Add(folded);
+            }
+        }
+
+        return mine;
+    }
 
     public async Task<bool> CancelAsync(string sessionId)
     {

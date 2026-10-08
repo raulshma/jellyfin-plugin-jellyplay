@@ -31,26 +31,26 @@ public enum RateLimitKeyStrategy
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
 public sealed class RateLimitAttribute : TypeFilterAttribute
 {
-    /// <param name="limiterType">A DI-registered <see cref="RateLimiter"/> subtype owning the window/budget.</param>
+    /// <param name="kind">Which abuse-containment budget the route draws from (one registry, four budgets).</param>
     /// <param name="keyPrefix">Stable key namespace ("settings", "broadcast", "webhook") — combined with the key.</param>
     /// <param name="strategy">User id (default) or client identity for anonymous routes.</param>
-    public RateLimitAttribute(Type limiterType, string keyPrefix, RateLimitKeyStrategy strategy = RateLimitKeyStrategy.User)
+    public RateLimitAttribute(RateLimiterKind kind, string keyPrefix, RateLimitKeyStrategy strategy = RateLimitKeyStrategy.User)
         : base(typeof(RateLimitFilter))
     {
-        Arguments = new object[] { limiterType, keyPrefix, strategy };
+        Arguments = new object[] { kind, keyPrefix, strategy };
     }
 }
 
 /// <summary>Implementation behind <see cref="RateLimitAttribute"/>. Runs before the action, so the limit check precedes any secret/cookie work.</summary>
 public sealed class RateLimitFilter : IAsyncActionFilter
 {
-    private readonly Type _limiterType;
+    private readonly RateLimiterKind _kind;
     private readonly string _keyPrefix;
     private readonly RateLimitKeyStrategy _strategy;
 
-    public RateLimitFilter(Type limiterType, string keyPrefix, RateLimitKeyStrategy strategy)
+    public RateLimitFilter(RateLimiterKind kind, string keyPrefix, RateLimitKeyStrategy strategy)
     {
-        _limiterType = limiterType;
+        _kind = kind;
         _keyPrefix = keyPrefix;
         _strategy = strategy;
     }
@@ -58,7 +58,7 @@ public sealed class RateLimitFilter : IAsyncActionFilter
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
         var services = context.HttpContext.RequestServices;
-        var limiter = (RateLimiter)services.GetRequiredService(_limiterType);
+        var limiter = services.GetRequiredService<RateLimiterRegistry>().Get(_kind);
         // Limiter ticks through the injectable clock when one is registered
         // (host/tests), so the window math is pinnable like the webhook's.
         var clock = services.GetService<TimeProvider>() ?? TimeProvider.System;
@@ -82,19 +82,5 @@ public sealed class RateLimitFilter : IAsyncActionFilter
             ? keyPrefix + ":" + Services.Admin.WebhookSecurity.ClientIpKey(
                 httpContext,
                 services.GetService<Func<Configuration.SeerrConfig>>()?.Invoke().TrustProxyHeaders ?? false)
-            : keyPrefix + ":" + httpContext.User.GetUserId();
-}
-
-/// <summary>
-/// POST admin/pushDefaults: 5/min per admin — the route rewrites every user's
-/// base settings in one call, so the abuse budget is the tightest of the
-/// mutating routes. (The sibling limiter budgets live in
-/// Services/Admin/RateLimiter.cs; this one sits beside the attribute it feeds
-/// because the admin push route is an Api-surface concern.)
-/// </summary>
-public sealed class PushDefaultsRateLimiter : RateLimiter
-{
-    public PushDefaultsRateLimiter() : base(limit: 5, windowMs: 60_000)
-    {
-    }
+            : keyPrefix + ":" + httpContext.User.GetUserIdString();
 }

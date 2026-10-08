@@ -288,7 +288,7 @@ public sealed class AnalyticsRecordingTests : IDisposable
     }
 
     [Fact]
-    public void Stop_RecordsRow_WithTranscodeDetailAndEstimatedStart()
+    public async Task Stop_RecordsRow_WithTranscodeDetailAndEstimatedStart()
     {
         var runTime = 40 * TimeSpan.TicksPerMinute;
         var service = Service();
@@ -298,6 +298,7 @@ public sealed class AnalyticsRecordingTests : IDisposable
             Guid.Parse("11111111-1111-1111-1111-111111111111"),
             positionTicks: 30 * TimeSpan.TicksPerMinute,
             playMethod: "Transcode"));
+        await service.FlushPendingWritesAsync(); // rows persist on the background writer
 
         var row = Assert.Single(_db.GetPlaybackSessions(null, 0, 50));
         Assert.Equal("11111111-1111-1111-1111-111111111111", row.UserId);
@@ -314,7 +315,7 @@ public sealed class AnalyticsRecordingTests : IDisposable
     }
 
     [Fact]
-    public void Stop_TranscodingSession_CarriesCodecsAndNamedReasons()
+    public async Task Stop_TranscodingSession_CarriesCodecsAndNamedReasons()
     {
         var item = Movie(runTimeTicks: 40 * TimeSpan.TicksPerMinute);
         var args = Stop(item, Guid.NewGuid(), positionTicks: 10 * TimeSpan.TicksPerMinute, playMethod: "Transcode");
@@ -328,7 +329,9 @@ public sealed class AnalyticsRecordingTests : IDisposable
             TranscodeReasons = TranscodeReason.VideoCodecNotSupported | TranscodeReason.ContainerNotSupported,
         };
 
-        Service().OnPlaybackStopped(args);
+        var service = Service();
+        service.OnPlaybackStopped(args);
+        await service.FlushPendingWritesAsync();
 
         var row = Assert.Single(_db.GetPlaybackSessions(null, 0, 50));
         Assert.Equal("h264", row.VideoCodec);
@@ -341,10 +344,12 @@ public sealed class AnalyticsRecordingTests : IDisposable
     }
 
     [Fact]
-    public void Stop_Episode_RecordsItemTypeAndSeriesName()
+    public async Task Stop_Episode_RecordsItemTypeAndSeriesName()
     {
         var episode = new Episode { Id = Guid.NewGuid(), Name = "Pilot", SeriesName = "Brennan & Booth" };
-        Service().OnPlaybackStopped(Stop(episode, Guid.NewGuid(), positionTicks: 20 * TimeSpan.TicksPerMinute));
+        var service = Service();
+        service.OnPlaybackStopped(Stop(episode, Guid.NewGuid(), positionTicks: 20 * TimeSpan.TicksPerMinute));
+        await service.FlushPendingWritesAsync();
 
         var row = Assert.Single(_db.GetPlaybackSessions(null, 0, 50));
         Assert.Equal("Episode", row.ItemType);
@@ -352,11 +357,12 @@ public sealed class AnalyticsRecordingTests : IDisposable
     }
 
     [Fact]
-    public void Stop_SkipsSessionsWithoutUsableItems()
+    public async Task Stop_SkipsSessionsWithoutUsableItems()
     {
         var service = Service();
         service.OnPlaybackStopped(new PlaybackStopEventArgs { Item = null, Session = new SessionInfo(null!, null!) { UserId = Guid.NewGuid() } });
         service.OnPlaybackStopped(Stop(new Movie { Id = Guid.Empty }, Guid.NewGuid(), positionTicks: 30 * TimeSpan.TicksPerMinute));
+        await service.FlushPendingWritesAsync();
 
         Assert.Empty(_db.GetPlaybackSessions(null, 0, 50));
     }
@@ -364,24 +370,28 @@ public sealed class AnalyticsRecordingTests : IDisposable
     [Theory]
     [InlineData(59 * TimeSpan.TicksPerSecond, false)] // scrubbed away
     [InlineData(60 * TimeSpan.TicksPerSecond, true)]
-    public void Stop_AppliesThePositionFloor(long positionTicks, bool expected)
+    public async Task Stop_AppliesThePositionFloor(long positionTicks, bool expected)
     {
-        Service().OnPlaybackStopped(Stop(Movie(runTimeTicks: 100 * TimeSpan.TicksPerMinute), Guid.NewGuid(), positionTicks));
+        var service = Service();
+        service.OnPlaybackStopped(Stop(Movie(runTimeTicks: 100 * TimeSpan.TicksPerMinute), Guid.NewGuid(), positionTicks));
+        await service.FlushPendingWritesAsync();
 
         Assert.Equal(expected, _db.GetPlaybackSessions(null, 0, 50).Count == 1);
     }
 
     [Fact]
-    public void Stop_ShortWallTime_IsNoise()
+    public async Task Stop_ShortWallTime_IsNoise()
     {
         // No tracked start: wall ≈ position, so a tiny position on a stop
         // without progress never records (wall and position floors coincide).
-        Service().OnPlaybackStopped(Stop(Movie(runTimeTicks: 40 * TimeSpan.TicksPerMinute), Guid.NewGuid(), positionTicks: 5 * TimeSpan.TicksPerSecond));
+        var service = Service();
+        service.OnPlaybackStopped(Stop(Movie(runTimeTicks: 40 * TimeSpan.TicksPerMinute), Guid.NewGuid(), positionTicks: 5 * TimeSpan.TicksPerSecond));
+        await service.FlushPendingWritesAsync();
         Assert.Empty(_db.GetPlaybackSessions(null, 0, 50));
     }
 
     [Fact]
-    public void ProgressThenStop_RecordsWithTrackedStart_AndDedupesReplays()
+    public async Task ProgressThenStop_RecordsWithTrackedStart_AndDedupesReplays()
     {
         var clock = new FakeClock(FixedNow.AddMinutes(-30));
         var service = Service(clock: () => clock.Now);
@@ -393,6 +403,7 @@ public sealed class AnalyticsRecordingTests : IDisposable
         service.OnPlaybackProgress(Progress(item, userId, positionTicks: 30 * TimeSpan.TicksPerMinute, playSessionId: "ps-1"));
         clock.Advance(TimeSpan.FromMinutes(1));
         service.OnPlaybackStopped(Stop(item, userId, positionTicks: 31 * TimeSpan.TicksPerMinute, playSessionId: "ps-1"));
+        await service.FlushPendingWritesAsync();
 
         var row = Assert.Single(_db.GetPlaybackSessions(null, 0, 50));
         Assert.Equal(FixedNow.AddMinutes(-30).ToUnixTimeMilliseconds(), row.StartedAt);
@@ -403,11 +414,12 @@ public sealed class AnalyticsRecordingTests : IDisposable
         service.OnPlaybackProgress(Progress(item, userId, positionTicks: 31 * TimeSpan.TicksPerMinute, playSessionId: "ps-1"));
         clock.Advance(TimeSpan.FromSeconds(20));
         service.OnPlaybackStopped(Stop(item, userId, positionTicks: 31 * TimeSpan.TicksPerMinute, playSessionId: "ps-1"));
+        await service.FlushPendingWritesAsync();
         Assert.Single(_db.GetPlaybackSessions(null, 0, 50));
     }
 
     [Fact]
-    public void ProgressToAnotherItem_ClosesTheAbandonedSession()
+    public async Task ProgressToAnotherItem_ClosesTheAbandonedSession()
     {
         var clock = new FakeClock(FixedNow.AddMinutes(-30));
         var service = Service(clock: () => clock.Now);
@@ -419,6 +431,7 @@ public sealed class AnalyticsRecordingTests : IDisposable
         clock.Advance(TimeSpan.FromMinutes(10));
         // The host moved on without a stop event: the first session ends now.
         service.OnPlaybackProgress(Progress(second, userId, positionTicks: 1 * TimeSpan.TicksPerMinute, playSessionId: "ps-2"));
+        await service.FlushPendingWritesAsync();
 
         var row = _db.GetPlaybackSessions(null, 0, 50).Single(row => row.ItemName == "First");
         Assert.Equal(FixedNow.AddMinutes(-20).ToUnixTimeMilliseconds(), row.EndedAt);
@@ -426,7 +439,7 @@ public sealed class AnalyticsRecordingTests : IDisposable
     }
 
     [Fact]
-    public void StaleSessions_CloseAtTheirLastSeenTime()
+    public async Task StaleSessions_CloseAtTheirLastSeenTime()
     {
         var clock = new FakeClock(FixedNow.AddMinutes(-30));
         var service = Service(clock: () => clock.Now);
@@ -440,6 +453,7 @@ public sealed class AnalyticsRecordingTests : IDisposable
         service.OnPlaybackProgress(Progress(item, userId, positionTicks: 3 * TimeSpan.TicksPerMinute, playSessionId: "ps-1"));
         clock.Advance(TimeSpan.FromMinutes(11));
         service.OnPlaybackProgress(Progress(item, Guid.NewGuid(), positionTicks: 2 * TimeSpan.TicksPerMinute, playSessionId: "ps-2"));
+        await service.FlushPendingWritesAsync();
 
         var row = _db.GetPlaybackSessions(null, 0, 50).Single(row => row.UserId == userId.ToString());
         Assert.Equal(FixedNow.AddMinutes(-29).ToUnixTimeMilliseconds(), row.EndedAt); // last seen, not sweep time
@@ -448,11 +462,12 @@ public sealed class AnalyticsRecordingTests : IDisposable
     }
 
     [Fact]
-    public void DisabledConfig_RecordsNothing()
+    public async Task DisabledConfig_RecordsNothing()
     {
         var service = Service(config: () => new AnalyticsConfig { Enabled = false });
         service.OnPlaybackStopped(Stop(Movie(runTimeTicks: 40 * TimeSpan.TicksPerMinute), Guid.NewGuid(), positionTicks: 30 * TimeSpan.TicksPerMinute));
         service.OnPlaybackProgress(Progress(Movie(), Guid.NewGuid(), positionTicks: 30 * TimeSpan.TicksPerMinute, playSessionId: "ps-x"));
+        await service.FlushPendingWritesAsync();
         Assert.Empty(_db.GetPlaybackSessions(null, 0, 50));
     }
 

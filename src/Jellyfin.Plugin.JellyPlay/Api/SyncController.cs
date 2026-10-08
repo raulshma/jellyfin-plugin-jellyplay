@@ -33,25 +33,27 @@ public class SyncController : JellyPlayControllerBase
     [HttpGet("status")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetStatus()
-        => JellyPlayResponses.Camel(_insights.GetStatus(User.GetUserId().ToString()));
+        => JellyPlayResponses.Camel(_insights.GetStatus(User.GetUserIdString()));
 
     /// <summary>
     /// The caller's recorded sync operations (push/pull/reset), newest-first.
     /// seq is the sync-history id; since filters to entries newer than the
     /// given unix-ms timestamp. fromSeq/toSeq bracket the change-log range the
     /// operation covered (both null on pre-v6 rows; zero-width on resets).
+    /// The page size rides the shared <c>Paged</c> seam (?limit= defaults when
+    /// 0, clamps 1..max).
     /// </summary>
     [HttpGet("history")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetHistory(
         [FromQuery] long? since,
         [FromQuery] int limit = SyncInsightsService.DefaultHistoryLimit)
-        => JellyPlayResponses.Camel(_insights.GetHistory(User.GetUserId().ToString(), since, limit));
+        => JellyPlayResponses.Camel(_insights.GetHistory(User.GetUserIdString(), since, limit));
 
     /// <summary>
     /// The per-key diff of one of the caller's recorded operations: the
     /// change-log rows in (fromSeq, toSeq], newest-first (limit defaults to
-    /// 200, clamped 1..200). Rows without a usable range (pre-v7 resets,
+    /// 200, clamped 1..200 via the shared <c>Paged</c> seam). Rows without a usable range (pre-v7 resets,
     /// no-op operations) return an empty key list. 404 when the seq is not
     /// the caller's own history row.
     /// </summary>
@@ -62,7 +64,7 @@ public class SyncController : JellyPlayControllerBase
         [FromRoute, Required] long seq,
         [FromQuery] int limit = SyncInsightsService.DefaultKeysLimit)
     {
-        var response = _insights.GetHistoryKeys(User.GetUserId().ToString(), seq, limit);
+        var response = _insights.GetHistoryKeys(User.GetUserIdString(), seq, limit);
         return response is null ? NotFound() : JellyPlayResponses.Camel(response);
     }
 }
@@ -127,6 +129,7 @@ public class SyncAdminController : JellyPlayControllerBase
     /// <c>format=json</c> (default) returns the newest-first entries with the
     /// key diffs folded in; <c>format=csv</c> downloads an RFC 4180 file
     /// (one row per diff key). Anything else is 400 <c>unsupported-format</c>.
+    /// The page size rides the shared <c>Paged</c> seam.
     /// </summary>
     [HttpGet("export")]
     [ProducesResponseType(StatusCodes.Status200OK)]

@@ -2,10 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Threading.Channels;
+using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyPlay.Api;
 using Jellyfin.Plugin.JellyPlay.Configuration;
 using Jellyfin.Plugin.JellyPlay.Helpers;
 using Jellyfin.Plugin.JellyPlay.Services.Admin;
+using Jellyfin.Plugin.JellyPlay.Services.Shared;
 using Jellyfin.Plugin.JellyPlay.Storage;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
 using MediaBrowser.Controller.Entities;
@@ -25,7 +28,7 @@ namespace Jellyfin.Plugin.JellyPlay.Services.Analytics;
 /// aggregation over the plugin database (per-day/per-user from the daily
 /// rollups, top items from raw rows), so it is unit-testable without a host.
 /// </summary>
-public sealed class AnalyticsService
+public sealed class AnalyticsService : IDisposable
 {
     public const int DefaultOverviewDays = 30;
     public const int MaxOverviewDays = 365;
@@ -39,12 +42,25 @@ public sealed class AnalyticsService
     private const long MsPerDay = 86_400_000;
     private const long TicksPerMs = 10_000;
 
+    /// <summary>
+    /// Pending-write bound: a burst past this drops the NEWEST row (counted —
+    /// losing one analytics row is acceptable telemetry loss) so the host
+    /// event thread never blocks on the store.
+    /// </summary>
+    internal const int PendingWriteCapacity = 4096;
+
     private readonly JellyPlayDatabase _db;
     private readonly Func<AnalyticsConfig> _config;
     private readonly Func<DateTimeOffset> _clock;
     private readonly ILogger<AnalyticsService> _logger;
     private readonly object _openLock = new();
     private readonly Dictionary<string, OpenPlayback> _open = new(StringComparer.Ordinal);
+
+    private readonly Channel<PlaybackSessionRow> _pendingWrites = Channel.CreateBounded<PlaybackSessionRow>(
+        new BoundedChannelOptions(PendingWriteCapacity) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
+    private readonly object _writeLock = new();
+    private readonly Task _writeLoop;
+    private int _droppedWrites;
 
     /// <summary>Gate timestamp for the cadence-bounded stale-session scan (shared SweepGate).</summary>
     private long _lastStaleSweepMs;
@@ -59,6 +75,28 @@ public sealed class AnalyticsService
         _config = config;
         _logger = logger;
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
+        _writeLoop = Task.Run(WriteLoopAsync);
+    }
+
+    /// <summary>Rows dropped by queue saturation (telemetry; dropped rows are acceptable loss by contract).</summary>
+    internal int DroppedWrites => Volatile.Read(ref _droppedWrites);
+
+    /// <summary>
+    /// Stops the background writer after draining what is queued (the DI
+    /// container disposes this singleton at shutdown; tests drive the queue
+    /// synchronously through <see cref="FlushPendingWritesAsync"/> instead).
+    /// </summary>
+    public void Dispose()
+    {
+        _pendingWrites.Writer.TryComplete();
+        try
+        {
+            _writeLoop.GetAwaiter().GetResult();
+        }
+        catch (Exception)
+        {
+            // The loop's own catch-all owns failure reporting; disposal never throws.
+        }
     }
 
     // ------------------------------------------------------------------
@@ -165,6 +203,24 @@ public sealed class AnalyticsService
         var session = args.Session;
         var key = SessionKey(args.PlaySessionId, resolvedUser, itemId, session?.Client, session?.DeviceName);
 
+        // The transcode detail depends only on the event args — fold and
+        // serialize it BEFORE the lock; the lock block stays the pure
+        // map-shaping critical section.
+        var transcode = session?.TranscodingInfo;
+        string? transcodeVideoCodec = null;
+        string? transcodeAudioCodec = null;
+        long? transcodeBitrate = null;
+        string? transcodeReasonsJson = null;
+        if (transcode is not null)
+        {
+            // Deepening: transcode detail folds through the shared module (same payload as the monitor).
+            var detail = TranscodeFold.Fold(transcode);
+            transcodeVideoCodec = detail.VideoCodec;
+            transcodeAudioCodec = detail.AudioCodec;
+            transcodeBitrate = detail.Bitrate;
+            transcodeReasonsJson = detail.Reasons is null ? null : JsonSerializer.Serialize(detail.Reasons);
+        }
+
         // ONE atomic lock block: collecting-and-removing the replaced sessions
         // and upserting the current one. Two acquisitions would let a stop
         // event land in between and observe replaced rows removed from the
@@ -210,13 +266,12 @@ public sealed class AnalyticsService
                 open.PlayMethod = method.ToString();
             }
 
-            var transcode = session?.TranscodingInfo;
             if (transcode is not null)
             {
-                open.VideoCodec = transcode.IsVideoDirect ? null : transcode.VideoCodec;
-                open.AudioCodec = transcode.IsAudioDirect ? null : transcode.AudioCodec;
-                open.Bitrate = transcode.Bitrate;
-                open.TranscodeReasonsJson = ToReasonsJson(transcode.TranscodeReasons);
+                open.VideoCodec = transcodeVideoCodec;
+                open.AudioCodec = transcodeAudioCodec;
+                open.Bitrate = transcodeBitrate;
+                open.TranscodeReasonsJson = transcodeReasonsJson;
             }
 
             if (args.PlaybackPositionTicks is { } progressTicks)
@@ -269,7 +324,12 @@ public sealed class AnalyticsService
         }
     }
 
-    /// <summary>The anti-noise gate + deduped insert; the one place rows are written.</summary>
+    /// <summary>
+    /// The anti-noise gate + row build; the finished row leaves the host
+    /// event thread via the bounded pending-write queue (never blocks, never
+    /// throws into the host pipeline — a full queue drops the row, counted).
+    /// The insert itself is the background writer's job.
+    /// </summary>
     private void Persist(OpenPlayback open, long endedAtMs)
     {
         var wallSeconds = Math.Max(0, (endedAtMs - open.StartedAtMs) / 1000);
@@ -299,11 +359,67 @@ public sealed class AnalyticsService
             ClientName: open.ClientName,
             DeviceName: open.DeviceName);
 
-        if (_db.InsertPlaybackSession(row) == 0)
+        if (!_pendingWrites.Writer.TryWrite(row))
         {
-            // Same (user, item, start-minute) already recorded — replay of the
-            // same play through both the progress and stop paths.
-            _logger.LogDebug("JellyPlay analytics: deduplicated playback row for user {UserId} item {ItemId}", open.UserId, open.ItemId);
+            Interlocked.Increment(ref _droppedWrites);
+            _logger.LogDebug("JellyPlay analytics: pending-write queue full; dropped a playback row for user {UserId} item {ItemId}", open.UserId, open.ItemId);
+        }
+    }
+
+    /// <summary>
+    /// Drains every queued row NOW — the test seam. Drain-completes: when it
+    /// returns, everything queued before the call is in the store (the
+    /// background writer's in-flight drain and this share one lock, so
+    /// neither can hold rows past the other's return).
+    /// </summary>
+    internal Task FlushPendingWritesAsync()
+    {
+        try
+        {
+            lock (_writeLock)
+            {
+                DrainPendingWrites();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "JellyPlay analytics: pending-write flush failed");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>The background writer: drains the queue, one store write per row. Never throws.</summary>
+    private async Task WriteLoopAsync()
+    {
+        var reader = _pendingWrites.Reader;
+        while (await reader.WaitToReadAsync().ConfigureAwait(false))
+        {
+            try
+            {
+                lock (_writeLock)
+                {
+                    DrainPendingWrites();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "JellyPlay analytics: background persist failed");
+            }
+        }
+    }
+
+    /// <summary>Row-by-row deduped inserts. Caller holds <see cref="_writeLock"/>.</summary>
+    private void DrainPendingWrites()
+    {
+        while (_pendingWrites.Reader.TryRead(out var row))
+        {
+            if (_db.InsertPlaybackSession(row) == 0)
+            {
+                // Same (user, item, start-minute) already recorded — replay of the
+                // same play through both the progress and stop paths.
+                _logger.LogDebug("JellyPlay analytics: deduplicated playback row for user {UserId} item {ItemId}", row.UserId, row.ItemId);
+            }
         }
     }
 
@@ -323,16 +439,18 @@ public sealed class AnalyticsService
         string? deviceName)
     {
         var transcode = session?.TranscodingInfo;
+        // Deepening: transcode detail folds through the shared module (same payload as the monitor); open-tracked values win.
+        var detail = TranscodeFold.Fold(transcode);
         return new OpenPlayback(key, userId, itemId)
         {
             ItemName = open?.ItemName ?? itemName,
             ItemType = open?.ItemType ?? itemType,
             SeriesName = open?.SeriesName ?? seriesName,
             PlayMethod = open?.PlayMethod ?? session?.PlayState?.PlayMethod?.ToString() ?? "DirectPlay",
-            VideoCodec = open?.VideoCodec ?? (transcode is null || transcode.IsVideoDirect ? null : transcode.VideoCodec),
-            AudioCodec = open?.AudioCodec ?? (transcode is null || transcode.IsAudioDirect ? null : transcode.AudioCodec),
-            Bitrate = open?.Bitrate ?? (long?)transcode?.Bitrate,
-            TranscodeReasonsJson = open?.TranscodeReasonsJson ?? ToReasonsJson(transcode?.TranscodeReasons ?? default),
+            VideoCodec = open?.VideoCodec ?? detail.VideoCodec,
+            AudioCodec = open?.AudioCodec ?? detail.AudioCodec,
+            Bitrate = open?.Bitrate ?? (long?)detail.Bitrate,
+            TranscodeReasonsJson = open?.TranscodeReasonsJson ?? (detail.Reasons is null ? null : JsonSerializer.Serialize(detail.Reasons)),
             PositionTicks = positionTicks,
             DurationTicks = durationTicks,
             StartedAtMs = startedAtMs,
@@ -349,11 +467,6 @@ public sealed class AnalyticsService
         var playedMs = Math.Max(0, capped / TicksPerMs);
         return endedAtMs - playedMs;
     }
-
-    private static string? ToReasonsJson(MediaBrowser.Model.Session.TranscodeReason reasons)
-        => TranscodeReasonNames.Decompose(reasons) is { } bits
-            ? JsonSerializer.Serialize(bits)
-            : null;
 
     private static (string? ItemId, string ItemName, string ItemType, string? SeriesName, long? RunTimeTicks) ResolveItem(BaseItem? item)
     {
@@ -401,44 +514,17 @@ public sealed class AnalyticsService
     /// </summary>
     public AnalyticsOverviewResponse GetOverview(int days, Func<Guid, string?> resolveUserName)
     {
-        var clampedDays = RequestLimits.Clamp(days, DefaultOverviewDays, MaxOverviewDays);
+        var clampedDays = Paged.Clamp(days, DefaultOverviewDays, MaxOverviewDays);
         var todayUtc = _clock().UtcDateTime.Date;
         var fromDayDate = todayUtc.AddDays(-(clampedDays - 1));
         var fromMs = ToUnixMs(fromDayDate);
         var toMs = ToUnixMs(todayUtc.AddDays(1));
 
+        // DB/host wiring stays here; the pure aggregation lives in the fold module.
         var rollups = _db.GetPlaybackRollups(DayString(fromDayDate), DayString(todayUtc));
-        var totals = new AnalyticsTotals(
-            Plays: rollups.Sum(row => row.ItemsPlayed),
-            PlaySeconds: rollups.Sum(row => row.PlaySeconds),
-            TranscodeSeconds: rollups.Sum(row => row.TranscodeSeconds),
-            UniqueUsers: rollups.Select(row => row.UserId).Distinct().Count(),
-            UniqueItems: _db.CountDistinctPlaybackItems(fromMs, toMs));
-
-        var perDay = rollups
-            .GroupBy(row => row.Day, StringComparer.Ordinal)
-            .OrderBy(group => group.Key, StringComparer.Ordinal)
-            .Select(group => new AnalyticsPerDayRow(
-                group.Key,
-                group.Sum(row => row.ItemsPlayed),
-                group.Sum(row => row.PlaySeconds),
-                group.Sum(row => row.TranscodeSeconds)))
-            .ToList();
-
-        var perUser = rollups
-            .GroupBy(row => row.UserId, StringComparer.Ordinal)
-            .OrderBy(group => group.Key, StringComparer.Ordinal)
-            .Select(group => new AnalyticsPerUserRow(
-                group.Key,
-                AdminUsers.DisplayName(group.Key, resolveUserName),
-                group.Sum(row => row.ItemsPlayed),
-                group.Sum(row => row.PlaySeconds),
-                group.Sum(row => row.TranscodeSeconds)))
-            .ToList();
-
-        var topItems = _db.GetTopPlaybackItems(fromMs, toMs, MaxTopItems)
-            .Select(row => new AnalyticsTopItemRow(row.ItemId, row.ItemName, row.ItemType, row.Plays, row.PlaySeconds))
-            .ToList();
+        var uniqueItems = _db.CountDistinctPlaybackItems(fromMs, toMs);
+        var (totals, perDay, perUser) = AnalyticsFold.FoldRollups(rollups, resolveUserName, uniqueItems);
+        var topItems = AnalyticsFold.FoldTopItems(_db.GetTopPlaybackItems(fromMs, toMs, MaxTopItems));
 
         return new AnalyticsOverviewResponse(clampedDays, totals, perDay, perUser, topItems);
     }
@@ -446,13 +532,11 @@ public sealed class AnalyticsService
     /// <summary>Raw finished sessions newest-first, optional user/since (unix ms) filters.</summary>
     public AnalyticsSessionsResponse GetSessions(string? userId, long? since, int limit)
     {
-        var clamped = RequestLimits.Clamp(limit, DefaultSessionLimit, MaxSessionLimit);
-        var sessions = _db.GetPlaybackSessions(
+        var clamped = Paged.Clamp(limit, DefaultSessionLimit, MaxSessionLimit);
+        var sessions = AnalyticsFold.FoldSessions(_db.GetPlaybackSessions(
                 string.IsNullOrWhiteSpace(userId) ? null : userId,
                 since ?? 0,
-                clamped)
-            .Select(ToDto)
-            .ToList();
+                clamped));
         return new AnalyticsSessionsResponse(sessions);
     }
 
@@ -465,71 +549,19 @@ public sealed class AnalyticsService
     /// </summary>
     public AnalyticsMeResponse GetMyOverview(string userId, int days)
     {
-        var clampedDays = RequestLimits.Clamp(days, DefaultOverviewDays, MaxOverviewDays);
+        var clampedDays = Paged.Clamp(days, DefaultOverviewDays, MaxOverviewDays);
         var todayUtc = _clock().UtcDateTime.Date;
         var fromDayDate = todayUtc.AddDays(-(clampedDays - 1));
         var fromMs = ToUnixMs(fromDayDate);
         var toMs = ToUnixMs(todayUtc.AddDays(1));
 
+        // DB/host wiring stays here; the pure aggregation lives in the fold module.
         var rollups = _db.GetPlaybackRollups(DayString(fromDayDate), DayString(todayUtc), userId);
-
-        var totals = new AnalyticsMeTotals(
-            Plays: rollups.Sum(row => row.ItemsPlayed),
-            PlaySeconds: rollups.Sum(row => row.PlaySeconds),
-            TranscodeSeconds: rollups.Sum(row => row.TranscodeSeconds),
-            UniqueItems: _db.CountDistinctPlaybackItems(fromMs, toMs, userId));
-
-        var perDay = rollups
-            .GroupBy(row => row.Day, StringComparer.Ordinal)
-            .OrderBy(group => group.Key, StringComparer.Ordinal)
-            .Select(group => new AnalyticsPerDayRow(
-                group.Key,
-                group.Sum(row => row.ItemsPlayed),
-                group.Sum(row => row.PlaySeconds),
-                group.Sum(row => row.TranscodeSeconds)))
-            .ToList();
-
-        var topItems = _db.GetTopPlaybackItems(fromMs, toMs, MaxTopItems, userId)
-            .Select(row => new AnalyticsTopItemRow(row.ItemId, row.ItemName, row.ItemType, row.Plays, row.PlaySeconds))
-            .ToList();
+        var uniqueItems = _db.CountDistinctPlaybackItems(fromMs, toMs, userId);
+        var (totals, perDay) = AnalyticsFold.FoldUserRollups(rollups, uniqueItems);
+        var topItems = AnalyticsFold.FoldTopItems(_db.GetTopPlaybackItems(fromMs, toMs, MaxTopItems, userId));
 
         return new AnalyticsMeResponse(clampedDays, totals, perDay, topItems);
-    }
-
-    private static AnalyticsSessionDto ToDto(PlaybackSessionRow row) => new(
-        row.Id,
-        row.UserId,
-        row.ItemId,
-        row.ItemName,
-        row.ItemType,
-        row.SeriesName,
-        row.PlayMethod,
-        row.VideoCodec,
-        row.AudioCodec,
-        row.Bitrate,
-        ParseReasons(row.TranscodeReasonsJson),
-        row.PositionTicks,
-        row.DurationTicks,
-        row.StartedAt,
-        row.EndedAt,
-        row.ClientName,
-        row.DeviceName);
-
-    private static string[]? ParseReasons(string? json)
-    {
-        if (string.IsNullOrEmpty(json))
-        {
-            return null;
-        }
-
-        try
-        {
-            return JsonSerializer.Deserialize<string[]>(json);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
     }
 
     // ------------------------------------------------------------------

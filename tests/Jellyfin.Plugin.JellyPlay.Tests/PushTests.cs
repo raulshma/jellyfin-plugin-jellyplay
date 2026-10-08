@@ -18,6 +18,7 @@ using Jellyfin.Plugin.JellyPlay.Services.Devices;
 using Jellyfin.Plugin.JellyPlay.Services.Events;
 using Jellyfin.Plugin.JellyPlay.Services.Messages;
 using Jellyfin.Plugin.JellyPlay.Services.Push;
+using Jellyfin.Plugin.JellyPlay.Services.Shared;
 using Jellyfin.Plugin.JellyPlay.Storage;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
 using Microsoft.AspNetCore.Http;
@@ -245,12 +246,23 @@ public sealed class PushDeviceStoreTests : IDisposable
         _db.UpsertDevice(Device("plain", "u3", null, null)); // not push-registered
         _db.UpsertDevice(Device("half", "u3", "generic", "")); // blank endpoint → excluded
 
-        Assert.Equal(2, _db.GetPushDevices(null).Count); // all users
+        Assert.Equal(2, _db.GetPushDevices((IReadOnlyCollection<string>?)null).Count); // all users
         Assert.Equal(new[] { "p1" }, _db.GetPushDevices(new[] { "u1" }).Select(row => row.DeviceId));
         Assert.Equal(2, _db.GetPushDevices(new[] { "u1", "u2" }).Count);
         Assert.Empty(_db.GetPushDevices(new[] { "nobody" }));
         Assert.Empty(_db.GetPushDevices(Array.Empty<string>())); // empty = nobody (never "all")
         Assert.Equal(2, _db.GetAllPushDevices().Count);
+    }
+
+    [Fact]
+    public void GetAllPushDevices_ExcludesRevoked()
+    {
+        _db.UpsertDevice(Device("r1", "u1"));
+        _db.UpsertDevice(Device("r2", "u1"));
+        Assert.Equal(2, _db.GetAllPushDevices().Count);
+
+        Assert.True(_db.SetDeviceRevoked("u1", "r1", true));
+        Assert.Equal(new[] { "r2" }, _db.GetAllPushDevices().Select(row => row.DeviceId));
     }
 }
 
@@ -445,9 +457,9 @@ public sealed class PushPayloadTests
     [InlineData("webpush", false)] // unknown kinds stay invalid
     public void IsValidRegistration_GatesKindAndEndpoint(string? kind, bool valid)
     {
-        Assert.Equal(valid, PushRegistrations.IsValidRegistration(kind, "https://push.example/x"));
-        Assert.False(PushRegistrations.IsValidRegistration(kind, " "));
-        Assert.False(PushRegistrations.IsValidRegistration(kind, null));
+        Assert.Equal(valid, PushPolicy.IsValidRegistration(kind, "https://push.example/x"));
+        Assert.False(PushPolicy.IsValidRegistration(kind, " "));
+        Assert.False(PushPolicy.IsValidRegistration(kind, null));
     }
 
     [Fact]
@@ -455,24 +467,24 @@ public sealed class PushPayloadTests
     {
         Assert.Equal(
             "{\"title\":\"Hello\",\"body\":\"World\",\"kind\":\"new-media\",\"itemId\":\"abc123\"}",
-            PushDispatcher.BuildGenericPayload(new PushMessage(PushKinds.NewMedia, "Hello", "World", "abc123")));
+            PushPayloads.BuildGenericPayload(new PushMessage(PushKinds.NewMedia, "Hello", "World", "abc123")));
 
         Assert.Equal(
             "{\"title\":\"Hello\",\"body\":\"World\",\"kind\":\"message\"}",
-            PushDispatcher.BuildGenericPayload(new PushMessage(PushKinds.Message, "Hello", "World")));
+            PushPayloads.BuildGenericPayload(new PushMessage(PushKinds.Message, "Hello", "World")));
     }
 
     [Fact]
     public void NtfyPayload_ExactShape_TopicTagsPriorityHeaders()
     {
-        var json = PushDispatcher.BuildNtfyPayload(
+        var json = PushPayloads.BuildNtfyPayload(
             new PushMessage(PushKinds.Broadcast, "Hello", "World", "itm"), "mytopic");
 
         Assert.Equal(
             "{\"topic\":\"mytopic\",\"title\":\"Hello\",\"message\":\"World\",\"tags\":[\"jellyplay\"],\"priority\":\"default\",\"headers\":{\"X-JellyPlay-Kind\":\"broadcast\",\"X-JellyPlay-ItemId\":\"itm\"}}",
             json);
 
-        var withoutItem = JObject.Parse(PushDispatcher.BuildNtfyPayload(new PushMessage(PushKinds.Message, "T", "B"), "t"));
+        var withoutItem = JObject.Parse(PushPayloads.BuildNtfyPayload(new PushMessage(PushKinds.Message, "T", "B"), "t"));
         Assert.Null(withoutItem["headers"]!["X-JellyPlay-ItemId"]);
         Assert.Equal("message", withoutItem["headers"]!["X-JellyPlay-Kind"]!.ToString());
     }
@@ -484,7 +496,7 @@ public sealed class PushPayloadTests
     [InlineData("https://ntfy.sh/my%20topic", "my topic")]
     public void ExtractNtfyTopic_TakesLastPathSegment(string endpoint, string topic)
     {
-        Assert.Equal(topic, PushDispatcher.ExtractNtfyTopic(endpoint));
+        Assert.Equal(topic, PushPayloads.ExtractNtfyTopic(endpoint));
     }
 
     [Theory]
@@ -494,15 +506,15 @@ public sealed class PushPayloadTests
     [InlineData("https://ntfy.sh/")]
     public void ExtractNtfyTopic_Unresolvable_YieldsNull(string? endpoint)
     {
-        Assert.Null(PushDispatcher.ExtractNtfyTopic(endpoint));
+        Assert.Null(PushPayloads.ExtractNtfyTopic(endpoint));
     }
 
     [Fact]
     public void EndpointHost_IsHostOnly_NeverPathOrScheme()
     {
-        Assert.Equal("ntfy.sh", PushDispatcher.EndpointHost("https://ntfy.sh/secret-topic/sub?x=1"));
-        Assert.Equal(string.Empty, PushDispatcher.EndpointHost("garbage"));
-        Assert.Equal(string.Empty, PushDispatcher.EndpointHost(null));
+        Assert.Equal("ntfy.sh", PushPayloads.EndpointHost("https://ntfy.sh/secret-topic/sub?x=1"));
+        Assert.Equal(string.Empty, PushPayloads.EndpointHost("garbage"));
+        Assert.Equal(string.Empty, PushPayloads.EndpointHost(null));
     }
 }
 
@@ -597,7 +609,7 @@ public sealed class PushDispatcherTests : IDisposable
 
         // Broadcast (null = every user): the revoked rows must not be consulted at all.
         await Dispatcher(enabled: true, recording.Sender())
-            .DispatchAsync(new PushMessage(PushKinds.Broadcast, "T", "B"), null);
+            .DispatchAsync(new PushMessage(PushKinds.Broadcast, "T", "B"), (IReadOnlyCollection<string>?)null);
 
         Assert.Equal(2, recording.Count);
         var endpoints = recording.Endpoints.ToList();
@@ -631,7 +643,7 @@ public sealed class PushDispatcherTests : IDisposable
         var recording = new PushRecording();
 
         await Dispatcher(enabled: false, recording.Sender())
-            .DispatchAsync(new PushMessage(PushKinds.Broadcast, "T", "B"), null);
+            .DispatchAsync(new PushMessage(PushKinds.Broadcast, "T", "B"), (IReadOnlyCollection<string>?)null);
 
         Assert.Equal(0, recording.Count);
     }
@@ -649,7 +661,7 @@ public sealed class PushDispatcherTests : IDisposable
 
         var all = new PushRecording();
         await Dispatcher(enabled: true, all.Sender())
-            .DispatchAsync(new PushMessage(PushKinds.Message, "T", "B"), null);
+            .DispatchAsync(new PushMessage(PushKinds.Message, "T", "B"), (IReadOnlyCollection<string>?)null);
         Assert.Equal(2, all.Count);
     }
 
@@ -777,7 +789,7 @@ public sealed class SyncNudgeDispatcherTests : IDisposable
     [Fact]
     public void FcmNudgePayload_IsDataOnly()
     {
-        var payload = JObject.Parse(PushDispatcher.BuildFcmPayload(
+        var payload = JObject.Parse(PushPayloads.BuildFcmPayload(
             new PushMessage(PushKinds.SyncNudge, "JellyPlay", "settings-changed"), "regtok"));
 
         Assert.Equal("sync-nudge", payload["message"]!["data"]!["kind"]);
@@ -825,29 +837,31 @@ public sealed class PushAudienceTests : IDisposable
     [Fact]
     public void ResolveMessageAudience_AdminUsersAll()
     {
-        var admins = MessageService.ResolveAudienceTargets("admins", new List<string>(), new[] { "a1", "a2" });
+        var admins = Audience.ResolveTargets("admins", new List<string>(), new[] { "a1", "a2" });
         Assert.NotNull(admins);
         Assert.Equal(new[] { "a1", "a2" }, admins!.OrderBy(x => x));
 
-        var users = MessageService.ResolveAudienceTargets("users", new List<string> { "u9" }, new[] { "a1" });
+        var users = Audience.ResolveTargets("users", new List<string> { "u9" }, new[] { "a1" });
         Assert.Equal(new[] { "u9" }, users);
 
-        Assert.Empty(MessageService.ResolveAudienceTargets("users", new List<string>(), new[] { "a1" })!); // empty = nobody
-        Assert.Null(MessageService.ResolveAudienceTargets("all", new List<string>(), Array.Empty<string>()));
+        Assert.Empty(Audience.ResolveTargets("users", new List<string>(), new[] { "a1" })!); // empty = nobody
+        Assert.Null(Audience.ResolveTargets("all", new List<string>(), Array.Empty<string>()));
     }
 
     [Fact]
     public async Task NewMediaAdminsAudience_PushesExactlyTheSseSet()
     {
         var admins = new List<string> { "admin-1" };
+        Func<EventsConfig> config = () => new EventsConfig { NewMediaEnabled = true, NewMediaAudience = "admins" };
         var events = new EventService(
             new SseHub(NullLogger<SseHub>.Instance),
-            () => new EventsConfig { NewMediaEnabled = true, NewMediaAudience = "admins" },
+            config,
             () => admins,
+            new NewMediaPipeline(new EpisodeGroupBuffer(), config),
             NullLogger<EventService>.Instance,
             Dispatcher());
 
-        var sseTargets = EventService.ResolveAudienceTargets("admins", admins);
+        var sseTargets = Audience.ResolveEventTargets("admins", admins);
         events.PublishNewMedia(Group(Guid.NewGuid()));
         await _recording.WaitAsync(1);
 
@@ -864,10 +878,12 @@ public sealed class PushAudienceTests : IDisposable
     [Fact]
     public async Task NewMediaAllAudience_PushesEveryRegisteredUser()
     {
+        Func<EventsConfig> config = () => new EventsConfig { NewMediaEnabled = true, NewMediaAudience = "all" };
         var events = new EventService(
             new SseHub(NullLogger<SseHub>.Instance),
-            () => new EventsConfig { NewMediaEnabled = true, NewMediaAudience = "all" },
+            config,
             () => new List<string> { "admin-1" },
+            new NewMediaPipeline(new EpisodeGroupBuffer(), config),
             NullLogger<EventService>.Instance,
             Dispatcher());
 
@@ -882,10 +898,12 @@ public sealed class PushAudienceTests : IDisposable
     [Fact]
     public async Task Broadcast_PushesAllUsers_FireAndForget()
     {
+        Func<EventsConfig> config = () => new EventsConfig();
         var events = new EventService(
             new SseHub(NullLogger<SseHub>.Instance),
-            () => new EventsConfig(),
+            config,
             () => new List<string> { "admin-1" },
+            new NewMediaPipeline(new EpisodeGroupBuffer(), config),
             NullLogger<EventService>.Instance,
             Dispatcher());
 
@@ -934,10 +952,12 @@ public sealed class PushAudienceTests : IDisposable
     [Fact]
     public async Task DisabledPush_IssuesNoRequests()
     {
+        Func<EventsConfig> config = () => new EventsConfig { NewMediaEnabled = true, NewMediaAudience = "all" };
         var events = new EventService(
             new SseHub(NullLogger<SseHub>.Instance),
-            () => new EventsConfig { NewMediaEnabled = true, NewMediaAudience = "all" },
+            config,
             () => new List<string> { "admin-1" },
+            new NewMediaPipeline(new EpisodeGroupBuffer(), config),
             NullLogger<EventService>.Instance,
             Dispatcher(enabled: false));
 

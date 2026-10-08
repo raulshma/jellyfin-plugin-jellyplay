@@ -70,7 +70,7 @@ public sealed class SettingsServiceTests : IDisposable
         var resolved = _service.ResolveProfile("u1", "tv");
 
         var theme = resolved.Settings.Single(entry => entry.Key == "theme");
-        Assert.Equal("\"tv\"", theme.Value.GetRawText());
+        Assert.Equal("\"tv\"", theme.Value.Json);
         Assert.Equal(2, resolved.Settings.Count); // skip inherited from base
     }
 
@@ -84,7 +84,7 @@ public sealed class SettingsServiceTests : IDisposable
 
         var resolved = _service.ResolveProfile("u1", "");
 
-        Assert.Equal("\"dark\"", resolved.Settings.Single(entry => entry.Key == "theme").Value.GetRawText());
+        Assert.Equal("\"dark\"", resolved.Settings.Single(entry => entry.Key == "theme").Value.Json);
     }
 
     [Fact]
@@ -96,7 +96,7 @@ public sealed class SettingsServiceTests : IDisposable
 
         var resolved = _service.ResolveProfile("u2", "");
 
-        Assert.Equal(15, resolved.Settings.Single(entry => entry.Key == "skip").Value.GetInt32());
+        Assert.Equal("15", resolved.Settings.Single(entry => entry.Key == "skip").Value.Json);
     }
 
     [Fact]
@@ -109,7 +109,7 @@ public sealed class SettingsServiceTests : IDisposable
 
         var resolved = _service.ResolveProfile("u1", "");
 
-        Assert.Equal(30, resolved.Settings.Single(entry => entry.Key == "skip").Value.GetInt32());
+        Assert.Equal("30", resolved.Settings.Single(entry => entry.Key == "skip").Value.Json);
     }
 
     [Fact]
@@ -154,7 +154,7 @@ public sealed class SettingsServiceTests : IDisposable
         // forced replaces the user value; suggested fills the unset key; the
         // plain user key (and the user's locked value before the override)
         // reads as unset.
-        Assert.True(resolved.Settings.Single(entry => entry.Key == "locked").Value.GetBoolean());
+        Assert.Equal("true", resolved.Settings.Single(entry => entry.Key == "locked").Value.Json);
         Assert.Equal(
             new Dictionary<string, string>
             {
@@ -177,7 +177,7 @@ public sealed class SettingsServiceTests : IDisposable
 
         var resolved = _service.ResolveProfile("u1", "");
 
-        Assert.Equal(30, resolved.Settings.Single(entry => entry.Key == "skip").Value.GetInt32());
+        Assert.Equal("30", resolved.Settings.Single(entry => entry.Key == "skip").Value.Json);
         Assert.Equal("unset", resolved.Modes!["player/skip"]);
     }
 
@@ -195,7 +195,7 @@ public sealed class SettingsServiceTests : IDisposable
 
         var resolved = _service.ResolveProfile("u1", "");
 
-        Assert.Equal(80, resolved.Settings.Single(entry => entry.Key == "volume").Value.GetInt32());
+        Assert.Equal("80", resolved.Settings.Single(entry => entry.Key == "volume").Value.Json);
         Assert.Equal("forced", resolved.Modes!["ui/volume"]);
 
         // And the reverse: a user-scope suggested downgrade loses to nothing —
@@ -208,7 +208,7 @@ public sealed class SettingsServiceTests : IDisposable
             JsonDocument.Parse("{\"ui/volume\":{\"mode\":\"forced\",\"value\":90}}").RootElement);
 
         var u2 = _service.ResolveProfile("u2", "");
-        Assert.Equal(40, u2.Settings.Single(entry => entry.Key == "volume").Value.GetInt32());
+        Assert.Equal("40", u2.Settings.Single(entry => entry.Key == "volume").Value.Json);
         Assert.Equal("suggested", u2.Modes!["ui/volume"]);
     }
 
@@ -266,7 +266,7 @@ public sealed class SettingsServiceTests : IDisposable
         Assert.Single(applied.Applied);
         Assert.False(Assert.Single(applied.Applied).Deleted);
         var stored = Assert.Single(_service.GetAll("u1", "").Settings);
-        Assert.Equal(JsonValueKind.Null, stored.Value.ValueKind);
+        Assert.Equal("null", stored.Value.Json);
         Assert.Null(_service.GetChanged("u1", "", 0, "d2").Deleted);
     }
 
@@ -430,8 +430,8 @@ public sealed class SettingsServiceTests : IDisposable
         Assert.NotNull(response);
         var restored = _service.GetAll("u1", "");
         Assert.Equal(2, restored.Settings.Count);
-        Assert.Equal("\"one\"", restored.Settings.Single(entry => entry.Key == "a").Value.GetRawText());
-        Assert.Equal("\"two\"", restored.Settings.Single(entry => entry.Key == "b").Value.GetRawText());
+        Assert.Equal("\"one\"", restored.Settings.Single(entry => entry.Key == "a").Value.Json);
+        Assert.Equal("\"two\"", restored.Settings.Single(entry => entry.Key == "b").Value.Json);
 
         // Peers learn about the restore through the ordinary delta: since the
         // pre-restore head they see the re-applied (and re-created) keys.
@@ -456,7 +456,7 @@ public sealed class SettingsServiceTests : IDisposable
 
         Assert.NotNull(response);
         Assert.Single(response!.Applied, entry => entry.Key == "a");
-        Assert.Equal("\"one\"", _service.GetAll("u1", "").Settings.Single().Value.GetRawText());
+        Assert.Equal("\"one\"", _service.GetAll("u1", "").Settings.Single().Value.Json);
 
         // No deletions were recorded by the restore, in any profile.
         Assert.Empty(_db.GetDeletedSettings("u1", preRestoreHead, JellyPlayDatabase.BaseProfile));
@@ -484,7 +484,7 @@ public sealed class SettingsServiceTests : IDisposable
         Assert.NotNull(response);
         Assert.Single(response!.Applied, entry => entry.Key == "a"); // neither stale-write nor clock-skew
         Assert.Empty(response!.Rejected);
-        Assert.Equal("\"keep\"", service.GetAll("u1", "").Settings.Single(entry => entry.Key == "a").Value.GetRawText());
+        Assert.Equal("\"keep\"", service.GetAll("u1", "").Settings.Single(entry => entry.Key == "a").Value.Json);
     }
 
     [Fact]
@@ -510,7 +510,7 @@ public sealed class SettingsServiceTests : IDisposable
         Assert.NotNull(response);
         Assert.Single(response!.Applied, entry => entry.Key == "a");
         Assert.Empty(response!.Rejected); // in particular: no "clock-skew" rejects
-        Assert.Equal("\"keep\"", service.GetAll("u1", "").Settings.Single(entry => entry.Key == "a").Value.GetRawText());
+        Assert.Equal("\"keep\"", service.GetAll("u1", "").Settings.Single(entry => entry.Key == "a").Value.Json);
     }
 
     [Fact]
@@ -548,7 +548,7 @@ public sealed class SettingsServiceTests : IDisposable
         Assert.Equal(2, response!.Applied.Count); // the tv-only drift key is not re-applied
         Assert.Equal(_db.GetChangeLogHead("u1"), response!.Head);
 
-        Assert.Equal("\"one\"", _service.GetAll("u1", "").Settings.Single(entry => entry.Key == "a").Value.GetRawText());
+        Assert.Equal("\"one\"", _service.GetAll("u1", "").Settings.Single(entry => entry.Key == "a").Value.Json);
         var tv = _service.GetAll("u1", "tv");
         Assert.Single(tv.Settings, entry => entry.Key == "layout"); // extra stayed gone
 
@@ -614,7 +614,7 @@ public sealed class SettingsServiceTests : IDisposable
         Assert.Equal("forced", bundle.Modes[""][ "ui/theme"]); // provenance travels with the bundle
 
         // The export contains the USER's stored value, not the forced default.
-        Assert.Equal("\"base\"", bundle.Profiles.Single(profile => profile.Profile == "").Settings.Single(entry => entry.Key == "theme").Value.GetRawText());
+        Assert.Equal("\"base\"", bundle.Profiles.Single(profile => profile.Profile == "").Settings.Single(entry => entry.Key == "theme").Value.Json);
     }
 
     [Fact]
@@ -629,9 +629,9 @@ public sealed class SettingsServiceTests : IDisposable
 
         Assert.Equal(2, response.Applied.Count);
         var baseAll = _service.GetAll("u1", "");
-        Assert.Equal("\"exported\"", baseAll.Settings.Single(entry => entry.Key == "theme").Value.GetRawText());
+        Assert.Equal("\"exported\"", baseAll.Settings.Single(entry => entry.Key == "theme").Value.Json);
         Assert.Equal("d9", baseAll.Settings.Single(entry => entry.Key == "theme").DeviceId);
         Assert.NotEqual(1, baseAll.Settings.Single(entry => entry.Key == "theme").UpdatedAt); // server-stamped, not the donor's ts
-        Assert.Equal("\"tv\"", _service.GetAll("u1", "tv").Settings.Single().Value.GetRawText());
+        Assert.Equal("\"tv\"", _service.GetAll("u1", "tv").Settings.Single().Value.Json);
     }
 }

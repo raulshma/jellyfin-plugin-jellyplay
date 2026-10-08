@@ -53,7 +53,7 @@ public class NewsletterController : JellyPlayControllerBase
         return NoContent();
     }
 
-    /// <summary>The CONTRACT.md 400 body for an unconfigured SMTP setup.</summary>
+    /// <summary>The CONTRACT.md 400 body for an unconfigured SMTP setup — through the error seam, not a local shape.</summary>
     private ContentResult Unconfigured()
-        => JellyPlayResponses.Camel(new { error = "smtp-unconfigured" }, StatusCodes.Status400BadRequest);
+        => JellyPlayResponses.Error(StatusCodes.Status400BadRequest, "smtp-unconfigured");
 }

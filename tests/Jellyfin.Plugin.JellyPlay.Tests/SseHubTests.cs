@@ -11,6 +11,24 @@ namespace Jellyfin.Plugin.JellyPlay.Tests;
 
 public class SseHubTests
 {
+    /// <summary>
+    /// The wire frame pinned byte-for-byte: id/event/retry lines, one data:
+    /// line per payload line (\r\n normalized first), blank-line terminator.
+    /// The frame is built once per event and shared by every writer.
+    /// </summary>
+    [Fact]
+    public void Frame_IsTheExactWireBytes_MultiLineDataNormalized()
+    {
+        var evt = new SseEvent("new-media", "{\"x\":1}", 42);
+        Assert.Equal("id: 42\nevent: new-media\nretry: 3\ndata: {\"x\":1}\n\n", evt.Frame);
+        Assert.Equal("3", evt.RetrySeconds);
+
+        var multiline = new SseEvent("broadcast", "line1\r\nline2\n", 7);
+        Assert.Equal(
+            "id: 7\nevent: broadcast\nretry: 3\ndata: line1\ndata: line2\ndata: \n\n",
+            multiline.Frame);
+    }
+
     [Fact]
     public async Task PublishToUser_OnlyReachesThatUser()
     {

@@ -26,6 +26,50 @@ public sealed record SeriesMarkers(string SeriesId, string? AniListId, string? M
 internal sealed record FribbEntry(string? AniListId, string? MalId, string? TvdbId, string? TmdbId);
 
 /// <summary>
+/// By-kind alias index over the Fribb anime list (anilist/mal/tvdb/tmdb id →
+/// entry), built once per fetched list: the O(1) replacement for the linear
+/// four-way scan <see cref="AnimeIdResolver.FindMapping"/> used to run per
+/// request over tens of thousands of rows. Duplicate ids keep the FIRST
+/// entry — the linear scan's FirstOrDefault semantics.
+/// </summary>
+internal sealed class FribbAliasIndex
+{
+    private readonly Dictionary<string, FribbEntry> _anilist = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FribbEntry> _mal = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FribbEntry> _tvdb = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FribbEntry> _tmdb = new(StringComparer.Ordinal);
+
+    public FribbAliasIndex(IEnumerable<FribbEntry> entries)
+    {
+        foreach (var entry in entries)
+        {
+            Add(_anilist, entry.AniListId);
+            Add(_mal, entry.MalId);
+            Add(_tvdb, entry.TvdbId);
+            Add(_tmdb, entry.TmdbId);
+
+            void Add(Dictionary<string, FribbEntry> map, string? id)
+            {
+                if (id is not null)
+                {
+                    map.TryAdd(id, entry);
+                }
+            }
+        }
+    }
+
+    /// <summary>Probes by id kind in resolution order (anilist &gt; mal &gt; tvdb &gt; tmdb — the LookupKeys order).</summary>
+    public FribbEntry? Find(AnimeProviderIds ids)
+        => Probe(_anilist, ids.AniListId)
+            ?? Probe(_mal, ids.MalId)
+            ?? Probe(_tvdb, ids.TvdbId)
+            ?? Probe(_tmdb, ids.TmdbId);
+
+    private static FribbEntry? Probe(Dictionary<string, FribbEntry> map, string? id)
+        => id is not null && map.TryGetValue(id, out var entry) ? entry : null;
+}
+
+/// <summary>
 /// Provider ids of one anime series: whatever the library's metadata providers
 /// attached (anilist/mal/tvdb/tmdb keys, any casing) plus the endpoint's
 /// explicit providerSeriesId hint, if the caller passed one.
@@ -90,13 +134,9 @@ public static class AnimeIdResolver
             string.IsNullOrWhiteSpace(explicitHint) ? null : explicitHint.Trim());
     }
 
-    /// <summary>Finds the Fribb entry matching ANY known id (ordinal comparison).</summary>
-    internal static FribbEntry? FindMapping(IEnumerable<FribbEntry> entries, AnimeProviderIds ids)
-        => entries.FirstOrDefault(entry =>
-            (ids.AniListId is not null && string.Equals(entry.AniListId, ids.AniListId, StringComparison.Ordinal))
-            || (ids.MalId is not null && string.Equals(entry.MalId, ids.MalId, StringComparison.Ordinal))
-            || (ids.TvdbId is not null && string.Equals(entry.TvdbId, ids.TvdbId, StringComparison.Ordinal))
-            || (ids.TmdbId is not null && string.Equals(entry.TmdbId, ids.TmdbId, StringComparison.Ordinal)));
+    /// <summary>Finds the Fribb entry matching any known id (ordinal, by-kind dictionary probes in the LookupKeys resolution order).</summary>
+    internal static FribbEntry? FindMapping(FribbAliasIndex index, AnimeProviderIds ids)
+        => index.Find(ids);
 
     /// <summary>The admin override matching the series id (first match wins; trimmed ordinal comparison), or null.</summary>
     public static Configuration.AnimeSeriesOverride? FindOverride(IReadOnlyList<Configuration.AnimeSeriesOverride>? overrides, string seriesId)
@@ -140,19 +180,15 @@ public static class AnimeIdResolver
 /// </summary>
 public sealed partial class AnimeMarkersService
 {
-    private const string FillerListBase = "https://www.animefillerlist.com/shows/";
-    private const string TenraiBase = "https://api.tenrai.org/v1/recaps";
-
-    /// <summary>TTL for cached "no markers found" results — shorter than the positive cache so a fixed slug/mapping is picked up quickly. The shared miss-marker TTL (same window the fetch pipeline uses for its own miss markers).</summary>
-    private static readonly TimeSpan MissCacheTtl = ResilientFetcher.DefaultMissTtl;
-
-    private readonly IHttpClientFactory _httpFactory;
     private readonly ResilientFetcher _fetcher;
     private readonly FileCacheStore _cache;
     private readonly ILibraryManager _libraryManager;
     private readonly Func<AnimeConfig> _config;
-    private readonly CircuitBreaker _fillerBreaker = new();
-    private readonly CircuitBreaker _tenraiBreaker = new();
+    private readonly CircuitBreaker _fillerBreaker;
+    private readonly CircuitBreaker _tenraiBreaker;
+    // Deepening: Fribb gets its own breaker locality at the fetch seam so the
+    // mapping module degrades independently of the marker sources.
+    private readonly CircuitBreaker _fribbBreaker;
     private readonly ILogger<AnimeMarkersService> _logger;
     private readonly TimeProvider _clock;
     private readonly Dictionary<string, FribbEntry> _fribbIndex = new(StringComparer.Ordinal);
@@ -160,15 +196,20 @@ public sealed partial class AnimeMarkersService
     private Task? _fribbFetch;
     private DateTime _fribbLoadedUtc;
 
-    public AnimeMarkersService(IHttpClientFactory httpFactory, ResilientFetcher fetcher, FileCacheStore cache, ILibraryManager libraryManager, Func<AnimeConfig> config, ILogger<AnimeMarkersService> logger, TimeProvider? clock = null)
+    /// <summary>By-kind lookup over the latest fetched list (the flat index's kind-aware sibling). Guarded by <see cref="_fribbLock"/>.</summary>
+    private FribbAliasIndex? _fribbAliases;
+
+    public AnimeMarkersService(ResilientFetcher fetcher, FileCacheStore cache, ILibraryManager libraryManager, Func<AnimeConfig> config, ILogger<AnimeMarkersService> logger, TimeProvider? clock = null)
     {
-        _httpFactory = httpFactory;
         _fetcher = fetcher;
         _cache = cache;
         _libraryManager = libraryManager;
         _config = config;
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
+        _fillerBreaker = new(clock: _clock);
+        _tenraiBreaker = new(clock: _clock);
+        _fribbBreaker = new(clock: _clock);
     }
 
     public bool IsEnabled => _config().Enabled;
@@ -178,8 +219,7 @@ public sealed partial class AnimeMarkersService
     {
         get
         {
-            var now = _fetcher.NowMs;
-            return _fillerBreaker.IsOpen(now) && _tenraiBreaker.IsOpen(now);
+            return _fillerBreaker.IsOpen() && _tenraiBreaker.IsOpen() && _fribbBreaker.IsOpen();
         }
     }
 
@@ -191,88 +231,113 @@ public sealed partial class AnimeMarkersService
             return null;
         }
 
-        var cacheKey = $"animemarkers:{seriesId}";
-        var ttl = TimeSpan.FromHours(Math.Max(1, config.RefreshIntervalHours));
-        var cached = _cache.Get<SeriesMarkers>(cacheKey, ttl);
-        if (cached is not null)
-        {
-            return cached;
-        }
+        var cacheKey = CacheKeys.AnimeSeries(seriesId, providerSeriesId, config);
+        var ttl = TtlPolicy.Anime(config.RefreshIntervalHours);
 
-        var series = ResolveSeries(seriesId);
-        // Precedence: explicit admin override (matched by seriesId) > the
-        // library's provider ids + explicit hint > name-slug fallback.
-        var (ids, overridden) = AnimeIdResolver.Resolve(config.SeriesOverrides, seriesId, AnimeIdResolver.FromProviderIds(series?.ProviderIds, providerSeriesId));
-        var mapping = await ResolveMappingAsync(ids, cancellationToken);
-
-        // An explicit override pins the pair directly; otherwise the Fribb
-        // cross-mapping stays authoritative. Tenrai keys on AniList ids: the
-        // resolved one, then a library anilist id, then the caller's explicit
-        // id (legacy behavior).
-        var anilistId = overridden
-            ? ids.AniListId ?? mapping?.AniListId ?? ids.ExplicitHint
-            : mapping?.AniListId ?? ids.AniListId ?? ids.ExplicitHint;
-
-        // AnimeFillerList addresses shows by name slug — never by Jellyfin id.
-        // An explicit providerSeriesId is treated as the slug (that source's
-        // identifier IS a slug); otherwise slugify the series name.
-        var fillerSlug = SlugifyName(!string.IsNullOrEmpty(ids.ExplicitHint)
-            ? ids.ExplicitHint!
-            : series?.Name ?? string.Empty);
-
-        // Source selection only: each candidate carries its own breaker, so an
-        // open circuit means that source is skipped — never a poisoned cache.
-        var sources = new List<ResilientFetcher.MultiSource<List<AnimeMarker>>>();
-        if (config.EnableFillerList && fillerSlug.Length > 0)
-        {
-            sources.Add(new ResilientFetcher.MultiSource<List<AnimeMarker>>(
-                $"filler:{fillerSlug}",
-                (client, ct) => ScrapeFillerListAsync(client, fillerSlug, ct),
-                _fillerBreaker,
-                LogLevel.Debug));
-        }
-
-        if (config.EnableTenrai && !string.IsNullOrEmpty(anilistId))
-        {
-            sources.Add(new ResilientFetcher.MultiSource<List<AnimeMarker>>(
-                $"tenrai:{anilistId}",
-                (client, ct) => ScrapeTenraiRecapsAsync(client, anilistId!, ct),
-                _tenraiBreaker,
-                LogLevel.Debug));
-        }
-
-        // The independent sources run concurrently; the fetch pipeline owns the
-        // cache/miss choreography (a miss is memoized only when a source was
-        // really attempted) and coalesces concurrent cold callers per series.
-        return await _fetcher.GetOrFetchMultiAsync(
+        // Deepening: the outer cache lives behind the fetcher's resolved seam
+        // (single probe + single-flight), not a hand-rolled Get before the
+        // multi-fetch for the same key (the old double-probe). The inner multi
+        // still owns the Attempted-gated miss choreography for this key; the
+        // outer only short-circuits it (positive or miss-marker hit) and
+        // coalesces the mapping + source-building work.
+        return await _fetcher.GetOrFetchResolvedAsync<SeriesMarkers>(
             cacheKey,
             ttl,
-            sources,
-            merge: values =>
+            async cancellation =>
             {
-                var markers = new List<AnimeMarker>();
-                foreach (var value in values)
+                var series = ResolveSeries(seriesId);
+                // Precedence: explicit admin override (matched by seriesId) > the
+                // library's provider ids + explicit hint > name-slug fallback.
+                var (ids, overridden) = AnimeIdResolver.Resolve(config.SeriesOverrides, seriesId, AnimeIdResolver.FromProviderIds(series?.ProviderIds, providerSeriesId));
+                var mapping = await ResolveMappingAsync(ids, cancellation);
+
+                // An explicit override pins the pair directly; otherwise the Fribb
+                // cross-mapping stays authoritative. Tenrai keys on AniList ids: the
+                // resolved one, then a library anilist id, then the caller's explicit
+                // id (legacy behavior).
+                var anilistId = overridden
+                    ? ids.AniListId ?? mapping?.AniListId ?? ids.ExplicitHint
+                    : mapping?.AniListId ?? ids.AniListId ?? ids.ExplicitHint;
+
+                // AnimeFillerList addresses shows by name slug — never by Jellyfin id.
+                // An explicit providerSeriesId is treated as the slug (that source's
+                // identifier IS a slug); otherwise slugify the series name.
+                var fillerSlug = CacheKeys.SlugifyName(!string.IsNullOrEmpty(ids.ExplicitHint)
+                    ? ids.ExplicitHint!
+                    : series?.Name ?? string.Empty);
+
+                // Source selection only: each candidate carries its own breaker, so an
+                // open circuit means that source is skipped — never a poisoned cache.
+                var sources = new List<ResilientFetcher.MultiSource<List<AnimeMarker>>>();
+                if (config.EnableFillerList && fillerSlug.Length > 0)
                 {
-                    markers.AddRange(value ?? new List<AnimeMarker>());
+                    sources.Add(new ResilientFetcher.MultiSource<List<AnimeMarker>>(
+                        $"filler:{fillerSlug}",
+                        (client, ct) => ScrapeFillerListAsync(client, fillerSlug, ct),
+                        _fillerBreaker,
+                        LogLevel.Debug));
                 }
 
-                return markers.Count == 0
-                    ? null
-                    : new SeriesMarkers(seriesId, anilistId, mapping?.MalId, markers.OrderBy(marker => marker.EpisodeNumber).ToList());
+                if (config.EnableTenrai && !string.IsNullOrEmpty(anilistId))
+                {
+                    sources.Add(new ResilientFetcher.MultiSource<List<AnimeMarker>>(
+                        $"tenrai:{anilistId}",
+                        (client, ct) => ScrapeTenraiRecapsAsync(client, anilistId!, ct),
+                        _tenraiBreaker,
+                        LogLevel.Debug));
+                }
+
+                // The independent sources run concurrently; the fetch pipeline owns the
+                // cache/miss choreography (a miss is memoized only when a source was
+                // really attempted) and coalesces concurrent cold callers per series.
+                return await _fetcher.GetOrFetchMultiAsync(
+                    cacheKey,
+                    ttl,
+                    sources,
+                    merge: values =>
+                    {
+                        var markers = new List<AnimeMarker>();
+                        foreach (var value in values)
+                        {
+                            markers.AddRange(value ?? new List<AnimeMarker>());
+                        }
+
+                        return markers.Count == 0
+                            ? null
+                            : new SeriesMarkers(seriesId, anilistId, mapping?.MalId, markers.OrderBy(marker => marker.EpisodeNumber).ToList());
+                    },
+                    missCache: true,
+                    missTtl: TtlPolicy.Miss,
+                    cancellationToken: cancellation);
             },
             missCache: true,
-            missTtl: MissCacheTtl,
+            missTtl: TtlPolicy.Miss,
             cancellationToken: cancellationToken);
     }
 
     /// <summary>Resolves episode marker rows for episode lists (client batches by series).</summary>
-    public async Task<IReadOnlyList<AnimeMarker>> GetEpisodeMarkers(string seriesId, int fromEpisode, int toEpisode, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<AnimeMarker>> GetEpisodeMarkers(string seriesId, int fromEpisode, int toEpisode, string? providerSeriesId = null, CancellationToken cancellationToken = default)
     {
-        var markers = await GetSeriesMarkers(seriesId, providerSeriesId: null, cancellationToken);
+        var markers = await GetSeriesMarkers(seriesId, providerSeriesId: providerSeriesId, cancellationToken);
         return markers?.Markers
             .Where(marker => marker.EpisodeNumber >= fromEpisode && marker.EpisodeNumber <= toEpisode)
             .ToList() ?? new List<AnimeMarker>();
     }
+
+    /// <summary>
+    /// Cache identity for one series' markers: the series id plus every input
+    /// that changes the resolved result (source toggles, the explicit hint,
+    /// and a stable hash of the admin overrides). A toggle/override edit must
+    /// miss the old entry instead of serving stale markers until TTL.
+    /// Deepening: the canonical shape lives in the CacheKeys module (one
+    /// seam); this stays as a thin adapter so existing callers/tests keep
+    /// working byte-identically.
+    /// </summary>
+    internal static string BuildCacheKey(string seriesId, string? providerSeriesId, Configuration.AnimeConfig config)
+        => CacheKeys.AnimeSeries(seriesId, providerSeriesId, config);
+
+    internal static string OverridesHash(IReadOnlyList<Configuration.AnimeSeriesOverride>? overrides)
+        => CacheKeys.OverridesHash(overrides);
 
     private BaseItem? ResolveSeries(string seriesId)
     {
@@ -289,7 +354,7 @@ public sealed partial class AnimeMarkersService
 
     private static async Task<List<AnimeMarker>?> ScrapeFillerListAsync(HttpClient client, string slug, CancellationToken cancellationToken)
     {
-        using var request = ResilientFetcher.BrowserGetRequest($"{FillerListBase}{Uri.EscapeDataString(slug)}");
+        using var request = ResilientFetcher.BrowserGetRequest(AnimeSourceUrls.FillerShow(slug));
         using var response = await client.SendAsync(request, cancellationToken);
         var html = await response.Content.ReadAsStringAsync(cancellationToken);
         var markers = ParseFillerList(html);
@@ -330,7 +395,7 @@ public sealed partial class AnimeMarkersService
     private static partial System.Text.RegularExpressions.Regex FillerRowRegex();
 
     private static async Task<List<AnimeMarker>?> ScrapeTenraiRecapsAsync(HttpClient client, string anilistId, CancellationToken cancellationToken)
-        => ParseTenraiRecaps(await client.GetStringAsync($"{TenraiBase}?anilist_id={Uri.EscapeDataString(anilistId)}", cancellationToken));
+        => ParseTenraiRecaps(await client.GetStringAsync(AnimeSourceUrls.TenraiRecaps(anilistId), cancellationToken));
 
     private static List<AnimeMarker> ParseTenraiRecaps(string json)
     {
@@ -362,7 +427,7 @@ public sealed partial class AnimeMarkersService
                 }
             }
 
-            return AnimeIdResolver.FindMapping(_fribbIndex.Values, ids);
+            return _fribbAliases?.Find(ids);
         }
     }
 
@@ -377,10 +442,13 @@ public sealed partial class AnimeMarkersService
     /// </summary>
     private async Task EnsureFribbIndexAsync(CancellationToken cancellationToken)
     {
+        // Config read hoisted out of the lock (the delegate re-reads per
+        // call — ADR-0002): no cold caller serializes behind it.
+        var staleBefore = _clock.GetUtcNow().UtcDateTime.AddHours(-Math.Max(1, _config().RefreshIntervalHours));
         Task fetch;
         lock (_fribbLock)
         {
-            if (_fribbLoadedUtc > _clock.GetUtcNow().UtcDateTime.AddHours(-Math.Max(1, _config().RefreshIntervalHours)))
+            if (_fribbLoadedUtc > staleBefore)
             {
                 return;
             }
@@ -396,10 +464,22 @@ public sealed partial class AnimeMarkersService
         try
         {
             var url = _config().FribbListUrl;
-            var client = _httpFactory.CreateClient("JellyPlayHttpClient");
-            var json = await client.GetStringAsync(url, cancellationToken);
+            // Leverage the shared fetch interface seam: breaker + logging live in
+            // the fetcher module, so this caller only shapes "no data" (null).
+            var json = await _fetcher.FetchAsync<string>("fribb", async (client, ct) => (string?)await client.GetStringAsync(url, ct), _fribbBreaker, LogLevel.Debug, cancellationToken);
+            if (json is null)
+            {
+                lock (_fribbLock)
+                {
+                    _fribbFetch = null; // cleared so the next caller retries
+                }
+
+                return;
+            }
+
             using var doc = JsonDocument.Parse(json);
             var index = new Dictionary<string, FribbEntry>(StringComparer.Ordinal);
+            var entries = new List<FribbEntry>();
             foreach (var entry in doc.RootElement.EnumerateArray())
             {
                 var anilist = GetString(entry, "anilist_id");
@@ -413,6 +493,7 @@ public sealed partial class AnimeMarkersService
                 }
 
                 var fribb = new FribbEntry(anilist, mal, tvdb, tmdb);
+                entries.Add(fribb);
                 index[key] = fribb;
                 // Alias every known id so the lookup works from whichever id
                 // the library carries (anilist/mal/tvdb/tmdb).
@@ -432,6 +513,9 @@ public sealed partial class AnimeMarkersService
                 }
             }
 
+            // Built in document order (first entry wins a duplicate id); the
+            // flat index above stays last-wins per alias.
+            var aliases = new FribbAliasIndex(entries);
             lock (_fribbLock)
             {
                 foreach (var (key, entry) in index)
@@ -439,6 +523,7 @@ public sealed partial class AnimeMarkersService
                     _fribbIndex[key] = entry;
                 }
 
+                _fribbAliases = aliases;
                 _fribbLoadedUtc = _clock.GetUtcNow().UtcDateTime;
                 _fribbFetch = null;
             }
@@ -460,11 +545,7 @@ public sealed partial class AnimeMarkersService
             ? value.GetString()
             : (value.ValueKind == JsonValueKind.Number ? value.GetRawText() : null);
 
-    /// <summary>AnimeFillerList slugs are kebab-case titles — slugify the series NAME (never the Jellyfin id). Idempotent on valid slugs.</summary>
+    /// <summary>AnimeFillerList slugs are kebab-case titles — slugify the series NAME (never the Jellyfin id). Idempotent on valid slugs. Canonical shape lives in CacheKeys; this stays as a thin adapter.</summary>
     internal static string SlugifyName(string name)
-    {
-        var slug = name.ToLowerInvariant().Replace(' ', '-');
-        slug = new string(slug.Where(c => char.IsLetterOrDigit(c) || c == '-').ToArray());
-        return slug.Trim('-');
-    }
+        => CacheKeys.SlugifyName(name);
 }

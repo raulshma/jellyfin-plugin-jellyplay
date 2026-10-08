@@ -23,19 +23,22 @@ public sealed class MessageService
     private readonly Func<IReadOnlyList<string>>? _adminUserIds;
     private readonly ILogger<MessageService> _logger;
     private readonly TimeProvider _clock;
+    private readonly NotificationFanout? _fanout;
 
     public MessageService(
         JellyPlayDatabase db,
         ILogger<MessageService> logger,
         PushDispatcher? push = null,
         Func<IReadOnlyList<string>>? adminUserIds = null,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        NotificationFanout? fanout = null)
     {
         _db = db;
         _push = push;
         _adminUserIds = adminUserIds;
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
+        _fanout = fanout;
     }
 
     public MessageRow Upsert(MessageAdminRequest request)
@@ -58,25 +61,23 @@ public sealed class MessageService
 
         if (created)
         {
-            _push?.DispatchToUsers(
-                new PushMessage(PushKinds.Message, request.Title, request.Body),
-                ResolveAudienceTargets(request.Audience.Type, request.Audience.UserIds, _adminUserIds?.Invoke() ?? Array.Empty<string>()));
+            // Message-created-only fan-out through the one SSE+push pairing:
+            // inbox messages have no SSE stream, so the SSE leg is opted out
+            // (push-only) — one BroadcastTargets drives the push audience.
+            var targets = Audience.ResolveAudience(request.Audience, _adminUserIds?.Invoke() ?? Array.Empty<string>());
+            var push = new PushMessage(PushKinds.Message, request.Title, request.Body);
+            if (_fanout is not null)
+            {
+                _fanout.Publish("events", "message", string.Empty, push, targets, skipSse: true);
+            }
+            else
+            {
+                _push?.DispatchToUsers(push, targets);
+            }
         }
 
         return row;
     }
-
-    /// <summary>
-    /// Push audience for a message: "admins" → the admin id set, "users" → the
-    /// explicit ids (empty list delivers to nobody), anything else → null =
-    /// every user. Delegates to the shared <see cref="Audience"/> module —
-    /// kept as a member so the pure decision stays pinned by tests here.
-    /// </summary>
-    internal static IReadOnlyCollection<string>? ResolveAudienceTargets(
-        string? audienceType,
-        IReadOnlyList<string> explicitUserIds,
-        IReadOnlyList<string> adminUserIds)
-        => Audience.ResolveTargets(audienceType, explicitUserIds, adminUserIds);
 
     public bool Delete(string messageId) => _db.DeleteMessage(messageId);
 
@@ -124,13 +125,7 @@ public sealed class MessageService
                 audience = new AudiencePayload();
             }
 
-            var visible = audience.Type switch
-            {
-                "admins" => isAdmin,
-                "users" => audience.UserIds.Contains(userId, StringComparer.Ordinal),
-                _ => true
-            };
-
+            var visible = Audience.IsVisible(audience.Type, userId, audience.UserIds, isAdmin);
             if (!visible)
             {
                 continue;

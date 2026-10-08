@@ -12,7 +12,15 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyPlay.Services.Recommendations;
 
-public sealed record ScoredItem(Guid ItemId, string Name, double Score);
+public sealed record ScoredItem(Guid ItemId, string Name, double Score)
+{
+    /// <summary>
+    /// The scored library item itself, threaded from the candidate scan so the
+    /// winner list re-fetches nothing by id. Internal: never serialized on the
+    /// wire (the API projection carries ItemId/Name/Score only).
+    /// </summary>
+    internal BaseItem? Item { get; init; }
+}
 
 /// <summary>Host-agnostic item features the scorer needs; extracted so scoring is unit-testable.</summary>
 public sealed record SimilarityFeatures(
@@ -20,6 +28,19 @@ public sealed record SimilarityFeatures(
     IReadOnlyCollection<string> Tags,
     IReadOnlyCollection<string> Studios,
     IReadOnlyCollection<string> People,
+    string? FranchiseKey,
+    int? ProductionYear);
+
+/// <summary>
+/// The source's set-shaped features, built ONCE per request: per-candidate
+/// scoring then only walks the candidate's collections instead of rebuilding
+/// the source's HashSets for every candidate.
+/// </summary>
+internal sealed record PreparedSource(
+    HashSet<string> Genres,
+    HashSet<string> Tags,
+    HashSet<string> Studios,
+    HashSet<string> People,
     string? FranchiseKey,
     int? ProductionYear);
 
@@ -34,16 +55,25 @@ internal static class SimilarityScorer
     internal const int SharedPersonCap = 5;
     internal const double FranchiseBonus = 4.0;
 
+    /// <summary>Prepares the source for a scoring loop (its sets are loop-invariant).</summary>
+    internal static PreparedSource PrepareSource(SimilarityFeatures source) => new(
+        new HashSet<string>(source.Genres, StringComparer.OrdinalIgnoreCase),
+        new HashSet<string>(source.Tags, StringComparer.OrdinalIgnoreCase),
+        new HashSet<string>(source.Studios, StringComparer.OrdinalIgnoreCase),
+        new HashSet<string>(source.People, StringComparer.OrdinalIgnoreCase),
+        source.FranchiseKey,
+        source.ProductionYear);
+
+    /// <summary>Single-shot convenience (tests, one-off callers): prepares the source inline.</summary>
     internal static double Score(SimilarityFeatures source, SimilarityFeatures candidate)
+        => Score(PrepareSource(source), candidate);
+
+    internal static double Score(PreparedSource source, SimilarityFeatures candidate)
     {
-        var sourceGenres = new HashSet<string>(source.Genres, StringComparer.OrdinalIgnoreCase);
-        double score = Overlap(sourceGenres, candidate.Genres) * 3.0;
-        var sourceTags = new HashSet<string>(source.Tags, StringComparer.OrdinalIgnoreCase);
-        score += Overlap(sourceTags, candidate.Tags) * 2.0;
-        var sourceStudios = new HashSet<string>(source.Studios, StringComparer.OrdinalIgnoreCase);
-        score += Overlap(sourceStudios, candidate.Studios) * 1.5;
-        var sourcePeople = new HashSet<string>(source.People, StringComparer.OrdinalIgnoreCase);
-        score += Math.Min(Overlap(sourcePeople, candidate.People), SharedPersonCap) * SharedPersonWeight;
+        double score = Overlap(source.Genres, candidate.Genres) * 3.0;
+        score += Overlap(source.Tags, candidate.Tags) * 2.0;
+        score += Overlap(source.Studios, candidate.Studios) * 1.5;
+        score += Math.Min(Overlap(source.People, candidate.People), SharedPersonCap) * SharedPersonWeight;
         if (source.ProductionYear is { } sourceYear && candidate.ProductionYear is { } candidateYear)
         {
             var distance = Math.Abs(sourceYear - candidateYear);
@@ -117,8 +147,10 @@ public sealed class SimilarItemsService
         CancellationToken cancellationToken)
     {
         var scoredItems = ScoreAgainst(source, source.GetBaseItemKind(), limit ?? 12, user, excludeItemIds, cancellationToken);
+        // The scan already held every candidate: the threaded BaseItem
+        // reference replaces the per-winner GetItemById re-fetch.
         IReadOnlyList<BaseItem> result = scoredItems
-            .Select(entry => _libraryManager.GetItemById(entry.ItemId))
+            .Select(entry => entry.Item)
             .Where(item => item is not null)
             .Cast<BaseItem>()
             .ToList();
@@ -146,9 +178,19 @@ public sealed class SimilarItemsService
             }
         });
 
+        // Request-scoped memoization (internal seam, same outputs): people and
+        // parent lookups are folded through per-request dictionaries so a repeat
+        // scoring of one item never re-crosses the host seam. A true batch
+        // (one host query for all candidates) is deliberately NOT built: the
+        // host offers no batch people/parent adapter, so that seam would be
+        // hypothetical — the memo is the thin, zero-drift step.
+        var peopleMemo = new Dictionary<Guid, IReadOnlyCollection<string>>();
+        var parentMemo = new Dictionary<Guid, BaseItem?>();
+
         // The source is loop-invariant: its features (one people lookup per
-        // item) are extracted once, not once per candidate.
-        var sourceFeatures = ExtractFeatures(source);
+        // item) are extracted once and set-shaped once, not once per candidate.
+        var sourceFeatures = ExtractFeatures(source, peopleMemo, parentMemo);
+        var preparedSource = SimilarityScorer.PrepareSource(sourceFeatures);
 
         var scored = new List<ScoredItem>(candidates.Count);
         foreach (var candidate in candidates)
@@ -159,13 +201,13 @@ public sealed class SimilarItemsService
                 continue;
             }
 
-            var score = SimilarityScorer.Score(sourceFeatures, ExtractFeatures(candidate));
+            var score = SimilarityScorer.Score(preparedSource, ExtractFeatures(candidate, peopleMemo, parentMemo));
             if (score <= 0)
             {
                 continue;
             }
 
-            scored.Add(new ScoredItem(candidate.Id, candidate.Name ?? string.Empty, Math.Round(score, 2)));
+            scored.Add(new ScoredItem(candidate.Id, candidate.Name ?? string.Empty, Math.Round(score, 2)) { Item = candidate });
         }
 
         return scored
@@ -174,23 +216,21 @@ public sealed class SimilarItemsService
             .ToList();
     }
 
-    /// <summary>Collects the comparable features of one library item (people via the library manager).</summary>
-    private SimilarityFeatures ExtractFeatures(BaseItem item)
+    /// <summary>
+    /// Collects the comparable features of one library item (people via the
+    /// library manager). The memos are the request's lookup cache: a hit
+    /// returns the same features a fresh host read would — same outputs, fewer
+    /// host crossings on repeats.
+    /// </summary>
+    private SimilarityFeatures ExtractFeatures(
+        BaseItem item,
+        Dictionary<Guid, IReadOnlyCollection<string>> peopleMemo,
+        Dictionary<Guid, BaseItem?> parentMemo)
     {
-        IReadOnlyCollection<string> people = Array.Empty<string>();
-        if (item.SupportsPeople)
+        if (!peopleMemo.TryGetValue(item.Id, out var people))
         {
-            try
-            {
-                people = _libraryManager.GetPeople(item)
-                    .Where(person => !string.IsNullOrEmpty(person.Name))
-                    .Select(person => person.Name)
-                    .ToArray();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "People lookup failed for {ItemName}", item.Name);
-            }
+            people = ReadPeople(item);
+            peopleMemo[item.Id] = people;
         }
 
         return new SimilarityFeatures(
@@ -198,8 +238,29 @@ public sealed class SimilarItemsService
             item.Tags ?? Array.Empty<string>(),
             item.Studios ?? Array.Empty<string>(),
             people,
-            FranchiseKey(item),
+            FranchiseKey(item, parentMemo),
             item.ProductionYear);
+    }
+
+    private IReadOnlyCollection<string> ReadPeople(BaseItem item)
+    {
+        if (!item.SupportsPeople)
+        {
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            return _libraryManager.GetPeople(item)
+                .Where(person => !string.IsNullOrEmpty(person.Name))
+                .Select(person => person.Name)
+                .ToArray();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "People lookup failed for {ItemName}", item.Name);
+            return Array.Empty<string>();
+        }
     }
 
     /// <summary>
@@ -208,7 +269,7 @@ public sealed class SimilarItemsService
     /// (aggregate folders, collection folders, user views) are NOT franchises —
     /// everything in one library would otherwise share a key.
     /// </summary>
-    private static string? FranchiseKey(BaseItem item)
+    private static string? FranchiseKey(BaseItem item, Dictionary<Guid, BaseItem?> parentMemo)
     {
         switch (item)
         {
@@ -225,9 +286,15 @@ public sealed class SimilarItemsService
             return "album:" + item.Album;
         }
 
-        if (item.GetParent() is Folder parent && parent is not ICollectionFolder && parent is not UserView)
+        if (!parentMemo.TryGetValue(item.Id, out var parent))
         {
-            return "folder:" + parent.Id;
+            parent = item.GetParent();
+            parentMemo[item.Id] = parent;
+        }
+
+        if (parent is Folder folder && folder is not ICollectionFolder && folder is not UserView)
+        {
+            return "folder:" + folder.Id;
         }
 
         return null;

@@ -29,13 +29,9 @@ public class SimilarItemsProviderManager : IHostedService
     private readonly SimilarItemsService _similarItemsService;
     private readonly ILogger<SimilarItemsProviderManager> _logger;
 
-    private Type? _localProviderType;
-    private MethodInfo? _stockSupports;
-    private MethodInfo? _stockGetSimilarItemsAsync;
     private PropertyInfo? _queryUser;
     private PropertyInfo? _queryLimit;
     private PropertyInfo? _queryExcludeItemIds;
-    private readonly List<object> _stockProviders = [];
 
     /// <summary>
     /// True once this host's similar-items pipeline actually took the plugin's
@@ -241,9 +237,6 @@ public class SimilarItemsProviderManager : IHostedService
             null,
             (Func<BaseItem, object, CancellationToken, Task<IReadOnlyList<BaseItem>>>)HandleGetSimilarAsync);
 
-        _localProviderType = localProvType;
-        _stockSupports = ifaceSupports;
-        _stockGetSimilarItemsAsync = ifaceGetSimilar;
         _queryUser = queryType.GetProperty("User");
         _queryLimit = queryType.GetProperty("Limit");
         _queryExcludeItemIds = queryType.GetProperty("ExcludeItemIds");

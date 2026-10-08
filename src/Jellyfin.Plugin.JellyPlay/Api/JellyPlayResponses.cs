@@ -32,7 +32,7 @@ public static class JellyPlayResponses
             }
         },
         NullValueHandling = NullValueHandling.Ignore,
-        Converters = { new SystemTextJsonElementConverter() }
+        Converters = { new SystemTextJsonElementConverter(), new RawJsonConverter() }
     };
 
     public static ContentResult Camel(object? payload) => Gate(200, JsonConvert.SerializeObject(payload ?? new object(), Settings));
@@ -93,4 +93,48 @@ public sealed class SystemTextJsonElementConverter : JsonConverter
 
     public override object? ReadJson(JsonReader reader, Type objectType, object? existingValue, JsonSerializer serializer)
         => throw new NotSupportedException("System.Text.Json elements are write-only here; input binding uses the host serializer.");
+}
+
+/// <summary>
+/// A pre-encoded JSON payload carried as its exact text — the input type of
+/// the gate's passthrough vocabulary. Settings values arrive from storage as
+/// serialized JSON bytes; wrapping them here lets the gate emit them verbatim
+/// (one WriteRawValue) instead of parse-clone-reserialize through
+/// <see cref="SystemTextJsonElementConverter"/>, which stays for genuinely
+/// parsed values. The text is valid JSON by every construction path: values
+/// are stored serialized (the write paths serialize before store) and the
+/// binding converter below reads whole tokens only.
+/// </summary>
+[System.Text.Json.Serialization.JsonConverter(typeof(RawJsonSystemTextJsonConverter))]
+public readonly record struct RawJson(string Json)
+{
+    /// <summary>The stored-null shape: an empty settings blob reads as a JSON null.</summary>
+    public static RawJson Null { get; } = new("null");
+}
+
+/// <summary>
+/// The gate's half of the passthrough: writes the payload text VERBATIM — the
+/// same WriteRawValue the JsonElement converter uses, skipping its parse.
+/// </summary>
+public sealed class RawJsonConverter : JsonConverter<RawJson>
+{
+    public override void WriteJson(JsonWriter writer, RawJson value, JsonSerializer serializer)
+        => writer.WriteRawValue(value.Json);
+
+    public override RawJson ReadJson(JsonReader reader, Type objectType, RawJson existingValue, bool hasExistingValue, JsonSerializer serializer)
+        => throw new NotSupportedException("RawJson is write-only here; input binding uses the host serializer.");
+}
+
+/// <summary>
+/// The host-serializer half: binds ANY JSON token (import bundles carry
+/// arbitrary value shapes) to its raw text, and serializes back verbatim — so
+/// <c>RawJson</c> round-trips byte-exactly through both serializer worlds.
+/// </summary>
+public sealed class RawJsonSystemTextJsonConverter : System.Text.Json.Serialization.JsonConverter<RawJson>
+{
+    public override RawJson Read(ref System.Text.Json.Utf8JsonReader reader, Type typeToConvert, System.Text.Json.JsonSerializerOptions options)
+        => new(System.Text.Json.JsonElement.ParseValue(ref reader).GetRawText());
+
+    public override void Write(System.Text.Json.Utf8JsonWriter writer, RawJson value, System.Text.Json.JsonSerializerOptions options)
+        => writer.WriteRawValue(value.Json);
 }

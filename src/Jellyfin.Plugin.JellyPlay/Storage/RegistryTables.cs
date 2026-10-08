@@ -157,6 +157,15 @@ public sealed partial class JellyPlayDatabase
     }
 
     /// <summary>
+    /// Broadcast-target overload (additive): the same query behind a
+    /// <see cref="Services.Shared.Audience.BroadcastTargets"/> value — null
+    /// broadcasts, empty matches nobody. Delegates to the nullable-set core
+    /// so the storage interface (the one module per ADR-0003) only grows.
+    /// </summary>
+    public IReadOnlyList<DeviceRow> GetPushDevices(Services.Shared.Audience.BroadcastTargets targets)
+        => GetPushDevices(targets.UserIds);
+
+    /// <summary>
     /// Push-registered devices (PushKind + PushEndpoint both set, not revoked —
     /// ADR-0005: a revoked device is excluded from EVERY push fan-out here, at
     /// the source). Null <paramref name="userIds"/> = every user ("all"
@@ -202,13 +211,13 @@ public sealed partial class JellyPlayDatabase
         }
     }
 
-    /// <summary>Every push-registered device across users (admin overview).</summary>
+    /// <summary>Every push-registered device across users, revoked excluded (admin overview / broadcast fan-out — ADR-0005: revoked exclusion at the source).</summary>
     public IReadOnlyList<DeviceRow> GetAllPushDevices()
     {
         using (_lock.Read())
         using (var connection = CreateConnection())
         using (var statement = connection.Prepare(
-                   $"{DeviceColumns} where PushKind is not null and PushEndpoint is not null and PushEndpoint != '' order by LastSeen desc"))
+                   $"{DeviceColumns} where PushKind is not null and PushEndpoint is not null and PushEndpoint != '' and Revoked = 0 order by LastSeen desc"))
         {
             return statement.Select(ReadDeviceRow).ToList();
         }

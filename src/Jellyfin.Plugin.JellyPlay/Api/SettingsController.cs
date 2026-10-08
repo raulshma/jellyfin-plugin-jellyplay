@@ -32,15 +32,26 @@ public class SettingsController : JellyPlayControllerBase
         _logger = logger;
     }
 
+    /// <summary>
+    /// The caller's settings snapshot, paged. The cursor/limit pair rides the
+    /// shared <c>Paged</c> seam in the settings service (opaque cursor,
+    /// over-fetch detection): <c>nextCursor</c> is present ONLY when more rows
+    /// follow — absent means last page.
+    /// </summary>
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetAll([FromQuery] string? profile, [FromQuery] long? cursor, [FromQuery] int? limit)
         => JellyPlayResponses.Camel(_settings.GetAll(
-            User.GetUserId().ToString(),
+            User.GetUserIdString(),
             profile ?? JellyPlayDatabase.BaseProfile,
             cursor,
             limit));
 
+    /// <summary>
+    /// The delta since a change-log cursor: current values plus the
+    /// <c>deleted[]</c> half. Rows page through the shared <c>Paged</c> seam
+    /// (SQL offset window + over-fetch); <c>deleted[]</c> is never paginated.
+    /// </summary>
     [HttpGet("changed")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetChanged(
@@ -50,7 +61,7 @@ public class SettingsController : JellyPlayControllerBase
         [FromQuery] long? cursor,
         [FromQuery] int? limit)
         => JellyPlayResponses.Camel(_settings.GetChanged(
-            User.GetUserId().ToString(),
+            User.GetUserIdString(),
             profile ?? JellyPlayDatabase.BaseProfile,
             since,
             deviceId,
@@ -58,7 +69,7 @@ public class SettingsController : JellyPlayControllerBase
             limit));
 
     [HttpPost]
-    [RateLimit(typeof(Services.Admin.SettingsRateLimiter), "settings")]
+    [RateLimit(Services.Admin.RateLimiterKind.Settings, "settings")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public IActionResult ApplyBatch([FromBody, Required] SettingsBatchRequest request)
@@ -68,7 +79,7 @@ public class SettingsController : JellyPlayControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public IActionResult ResetNamespace([FromRoute, Required] string ns, [FromQuery] string? profile)
     {
-        _settings.ResetNamespace(User.GetUserId().ToString(), profile, ns, User.GetDeviceId());
+        _settings.ResetNamespace(User.GetUserIdString(), profile, ns, User.GetDeviceId());
         return NoContent();
     }
 
@@ -93,11 +104,11 @@ public class SettingsController : JellyPlayControllerBase
     [HttpGet("resolved/{profile?}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult Resolve([FromRoute] string? profile)
-        => JellyPlayResponses.Camel(_settings.ResolveProfile(User.GetUserId().ToString(), profile ?? JellyPlayDatabase.BaseProfile));
+        => JellyPlayResponses.Camel(_settings.ResolveProfile(User.GetUserIdString(), profile ?? JellyPlayDatabase.BaseProfile));
 
     /// <summary>Both mutating batch routes carry the same limiter — a per-profile route without it would be an open bypass.</summary>
     [HttpPost("profile/{profile}")]
-    [RateLimit(typeof(Services.Admin.SettingsRateLimiter), "settings")]
+    [RateLimit(Services.Admin.RateLimiterKind.Settings, "settings")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public IActionResult SaveDeviceProfile(
@@ -107,9 +118,9 @@ public class SettingsController : JellyPlayControllerBase
 
     private IActionResult ApplyBatchCore(string? profile, SettingsBatchRequest request)
         => JellyPlayResponses.Camel(_settings.ApplyBatch(
-            User.GetUserId().ToString(),
+            User.GetUserIdString(),
             profile,
-            request.DeviceId ?? User.GetDeviceId(),
+            User.ResolveDeviceId(request.DeviceId),
             request.Writes));
 
     // ------------------------------------------------------------------
@@ -120,7 +131,7 @@ public class SettingsController : JellyPlayControllerBase
     [HttpGet("snapshots")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetSnapshots()
-        => JellyPlayResponses.Camel(_snapshots.List(User.GetUserId().ToString()).Select(row => new SnapshotDto(
+        => JellyPlayResponses.Camel(_snapshots.List(User.GetUserIdString()).Select(row => new SnapshotDto(
             row.Id,
             row.CreatedAt,
             row.Origin,
@@ -129,12 +140,12 @@ public class SettingsController : JellyPlayControllerBase
 
     /// <summary>Captures a manual restore point of the caller's whole settings store (full-store copy — rate-limited like the batch routes).</summary>
     [HttpPost("snapshots")]
-    [RateLimit(typeof(Services.Admin.SettingsRateLimiter), "settings")]
+    [RateLimit(Services.Admin.RateLimiterKind.Settings, "settings")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public IActionResult CreateSnapshot()
     {
-        var id = _snapshots.Create(User.GetUserId().ToString(), "manual");
+        var id = _snapshots.Create(User.GetUserIdString(), "manual");
         return id is null
             ? JellyPlayResponses.Error(StatusCodes.Status500InternalServerError, "snapshot-failed")
             : JellyPlayResponses.Camel(new SnapshotCreateResponse(id.Value));
@@ -148,13 +159,13 @@ public class SettingsController : JellyPlayControllerBase
     /// Rate-limited like the batch routes — a restore is a whole-store write.
     /// </summary>
     [HttpPost("snapshots/{id}/restore")]
-    [RateLimit(typeof(Services.Admin.SettingsRateLimiter), "settings")]
+    [RateLimit(Services.Admin.RateLimiterKind.Settings, "settings")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public IActionResult RestoreSnapshot([FromRoute, Required] long id)
     {
-        var response = _settings.RestoreSnapshot(User.GetUserId().ToString(), id);
+        var response = _settings.RestoreSnapshot(User.GetUserIdString(), id);
         return response is null ? NotFound() : JellyPlayResponses.Camel(response);
     }
 
@@ -166,21 +177,19 @@ public class SettingsController : JellyPlayControllerBase
     [HttpGet("export")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult Export()
-        => JellyPlayResponses.Camel(_settings.Export(User.GetUserId().ToString()));
+        => JellyPlayResponses.Camel(_settings.Export(User.GetUserIdString()));
 
     /// <summary>Re-applies an exported bundle for the caller with server-now timestamps (LWW: beats anything older). Rate-limited like the batch routes — an import is a whole-store write.</summary>
     [HttpPost("import")]
-    [RateLimit(typeof(Services.Admin.SettingsRateLimiter), "settings")]
+    [RateLimit(Services.Admin.RateLimiterKind.Settings, "settings")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public IActionResult Import([FromBody, Required] SettingsExportBundle bundle, [FromQuery] string? deviceId)
-        => JellyPlayResponses.Camel(_settings.Import(User.GetUserId().ToString(), deviceId ?? User.GetDeviceId(), bundle));
+        => JellyPlayResponses.Camel(_settings.Import(User.GetUserIdString(), User.ResolveDeviceId(deviceId), bundle));
 
     /// <summary>Live settings stream for the authenticated user (event: settings.changed / settings.reset).</summary>
     [HttpGet("stream")]
-    public async Task Stream(CancellationToken cancellationToken)
-    {
-        var subscriberId = _hub.Subscribe(User.GetUserId().ToString(), SseHub.SettingsStream);
-        await SseStreamWriter.WriteAsync(HttpContext, _hub, subscriberId, cancellationToken);
-    }
+    public Task Stream(CancellationToken cancellationToken)
+        // Leverage the SSE subscription seam: no replay on the settings stream.
+        => SseStreamWriter.WriteSubscribedAsync(HttpContext, _hub, User.GetUserIdString(), SseHub.SettingsStream, cancellationToken);
 }

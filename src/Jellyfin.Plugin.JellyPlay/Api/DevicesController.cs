@@ -1,7 +1,7 @@
 using System.ComponentModel.DataAnnotations;
-using System.Text.Json;
 using Jellyfin.Plugin.JellyPlay.Helpers;
 using Jellyfin.Plugin.JellyPlay.Services.Devices;
+using Jellyfin.Plugin.JellyPlay.Services.Push;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -18,12 +18,6 @@ namespace Jellyfin.Plugin.JellyPlay.Api;
 [Route(JellyPlayContract.RoutePrefix)]
 public class DevicesController : JellyPlayControllerBase
 {
-    /// <summary>Camel-case-insensitive binding for the raw push element (matches ASP.NET's body binding).</summary>
-    internal static class DeviceJson
-    {
-        public static readonly JsonSerializerOptions Options = new() { PropertyNameCaseInsensitive = true };
-    }
-
     private readonly DeviceRegistryService _devices;
 
     public DevicesController(DeviceRegistryService devices)
@@ -31,18 +25,26 @@ public class DevicesController : JellyPlayControllerBase
         _devices = devices;
     }
 
+    /// <summary>
+    /// Registers (or re-registers) the caller's device. Push-wire parsing
+    /// lives behind the Push policy module's seam
+    /// (<see cref="PushPolicy.ParseDirective"/>): object = validate +
+    /// overwrite (idempotent re-registration when the distributor rotates
+    /// endpoints); absent = preserve; explicit JSON null = detach (clear the
+    /// registration, keep the device row).
+    /// </summary>
     [HttpPost("devices")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public IActionResult RegisterDevice([FromBody, Required] DeviceRegistrationRequest request)
     {
         var outcome = _devices.Register(new DeviceRegistration(
-            User.GetUserId().ToString(),
-            string.IsNullOrEmpty(request.DeviceId) ? User.GetDeviceId() : request.DeviceId,
+            User.GetUserIdString(),
+            User.ResolveDeviceId(request.DeviceId),
             request.Name,
             request.Platform,
             request.AppVersion,
-            ParsePushDirective(request.Push),
+            PushPolicy.ParseDirective(request.Push),
             request.Model,
             request.Caps));
         return outcome switch
@@ -61,7 +63,7 @@ public class DevicesController : JellyPlayControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public IActionResult RenameDevice([FromRoute, Required] string deviceId, [FromBody, Required] DeviceRenameRequest request)
-        => _devices.Rename(User.GetUserId().ToString(), deviceId, request.Name, request.Model)
+        => _devices.Rename(User.GetUserIdString(), deviceId, request.Name, request.Model)
             ? NoContent()
             : NotFound();
 
@@ -79,7 +81,7 @@ public class DevicesController : JellyPlayControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public IActionResult RevokeDevice([FromRoute, Required] string deviceId)
-        => _devices.RevokeAndWipe(User.GetUserId().ToString(), deviceId) == DeleteDeviceOutcome.NotFound
+        => _devices.RevokeAndWipe(User.GetUserIdString(), deviceId) == DeleteDeviceOutcome.NotFound
             ? NotFound()
             : NoContent();
 
@@ -87,23 +89,5 @@ public class DevicesController : JellyPlayControllerBase
     [HttpGet("devices")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetDevices()
-        => JellyPlayResponses.Camel(_devices.ListForUser(User.GetUserId().ToString()));
-
-    /// <summary>
-    /// Push wire shapes (see DeviceRegistrationRequest.Push): object = validate
-    /// + overwrite (idempotent re-registration when the distributor rotates
-    /// endpoints); absent = preserve; explicit JSON null = detach (clear the
-    /// registration, keep the device row). Binding the tri-state is transport
-    /// concern — the registry module normalizes it to a PushDirective.
-    /// </summary>
-    private static PushDirective? ParsePushDirective(JsonElement? push)
-        => push switch
-        {
-            null => null,
-            { ValueKind: JsonValueKind.Object } element
-                => element.Deserialize<DevicePushRegistration>(DeviceJson.Options) is { } parsed
-                    ? new PushDirective.Attach(parsed.Kind, parsed.Endpoint)
-                    : new PushDirective.Attach(string.Empty, string.Empty),
-            _ => new PushDirective.Detach()
-        };
+        => JellyPlayResponses.Camel(_devices.ListForUser(User.GetUserIdString()));
 }

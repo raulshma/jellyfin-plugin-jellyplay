@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -56,8 +57,10 @@ public sealed class SseHub
 
     private readonly ConcurrentDictionary<Guid, Subscriber> _subscribers = new();
     private readonly ILogger<SseHub> _logger;
-    private ulong _sequence;
-    private readonly object _sequenceLock = new();
+
+    // Monotonic counter, lock-free: a plain increment under Interlocked is the
+    // only discipline it needs (no other state is read alongside it).
+    private long _sequence;
 
     // Per-user replay rings for the events stream. One global lock (the same
     // discipline as the sequence lock): ring operations are quick queue moves
@@ -99,9 +102,39 @@ public sealed class SseHub
         }
     }
 
+    /// <summary>
+    /// The ONE publish seam behind the fan-out: a null target set broadcasts
+    /// to every subscriber of the stream; a set delivers to its members only
+    /// (an empty set delivers to nobody). <paramref name="eventId"/>, when
+    /// given, is the wire event id verbatim (the settings stream anchors it
+    /// at the user's change-log head); otherwise the hub's monotonic sequence
+    /// is used. The named heads below delegate here for call-site readability.
+    /// </summary>
+    public int Publish(string stream, IReadOnlyCollection<string>? targets, string eventName, string jsonData, ulong? eventId = null)
+    {
+        if (targets is null)
+        {
+            return PublishWhere(stream, static _ => true, eventName, jsonData, eventId);
+        }
+
+        // One set built per publish: O(1) membership per subscriber instead of
+        // a Contains scan over the raw list; the replay pass reads it too.
+        var targetSet = targets as HashSet<string> ?? new HashSet<string>(targets, StringComparer.Ordinal);
+        return PublishWhere(stream, subscriber => targetSet.Contains(subscriber.UserId), eventName, jsonData, eventId, targetSet);
+    }
+
+    /// <summary>
+    /// Broadcast-target overload (additive): the same fan-out behind a
+    /// <see cref="Services.Shared.Audience.BroadcastTargets"/> value — null
+    /// broadcasts, empty delivers to nobody. Delegates to the nullable-set
+    /// core so the public interface only grows.
+    /// </summary>
+    public int Publish(string stream, Services.Shared.Audience.BroadcastTargets targets, string eventName, string jsonData, ulong? eventId = null)
+        => Publish(stream, targets.UserIds, eventName, jsonData, eventId);
+
     /// <summary>Publish to every subscriber of the stream regardless of user.</summary>
     public int PublishAll(string stream, string eventName, string jsonData)
-        => PublishWhere(stream, static _ => true, eventName, jsonData);
+        => Publish(stream, (IReadOnlyCollection<string>?)null, eventName, jsonData);
 
     /// <summary>
     /// Publish to every subscriber of the stream belonging to one user.
@@ -110,17 +143,19 @@ public sealed class SseHub
     /// otherwise the hub's monotonic sequence is used.
     /// </summary>
     public int PublishToUser(string stream, string userId, string eventName, string jsonData, ulong? eventId = null)
-        => PublishWhere(
-            stream,
-            sub => string.Equals(sub.UserId, userId, StringComparison.Ordinal),
-            eventName,
-            jsonData,
-            eventId,
-            new[] { userId });
+    {
+        // The replay pass needs the id enumerable, but only on the events
+        // stream — this method's hot caller (settings) skips the ring, so no
+        // per-call singleton array is built for it.
+        IReadOnlyCollection<string>? replayTargets = string.Equals(stream, EventsStream, StringComparison.Ordinal)
+            ? new[] { userId }
+            : null;
+        return PublishWhere(stream, subscriber => string.Equals(subscriber.UserId, userId, StringComparison.Ordinal), eventName, jsonData, eventId, replayTargets);
+    }
 
     /// <summary>Publish to a set of users.</summary>
-    public int PublishToUsers(string stream, IReadOnlySet<string> userIds, string eventName, string jsonData)
-        => PublishWhere(stream, sub => userIds.Contains(sub.UserId), eventName, jsonData, replayTargets: userIds);
+    public int PublishToUsers(string stream, IReadOnlyCollection<string> userIds, string eventName, string jsonData)
+        => Publish(stream, userIds, eventName, jsonData);
 
     private int PublishWhere(
         string stream,
@@ -137,10 +172,7 @@ public sealed class SseHub
         }
         else
         {
-            lock (_sequenceLock)
-            {
-                seq = ++_sequence;
-            }
+            seq = (ulong)Interlocked.Increment(ref _sequence);
         }
 
         var evt = new SseEvent(eventName, jsonData, seq);
@@ -254,4 +286,44 @@ public sealed class SseHub
     }
 
     public bool IsSubscribed(Guid subscriberId) => _subscribers.ContainsKey(subscriberId);
+
+    /// <summary>
+    /// Drain variant of <see cref="WaitForEventAsync(Guid, TimeSpan, System.Threading.CancellationToken)"/>
+    /// for the streaming writer: waits for at least one event, then reads
+    /// EVERY event buffered at that moment, so a publish burst leaves the hub
+    /// as one batch the writer can write and flush once. Returns null on the
+    /// keepalive window elapsing or the subscriber being gone (the same
+    /// contract as the single-event seam).
+    /// </summary>
+    public async Task<IReadOnlyList<SseEvent>?> WaitForEventsAsync(Guid subscriberId, TimeSpan timeout, System.Threading.CancellationToken cancellationToken)
+    {
+        if (!_subscribers.TryGetValue(subscriberId, out var subscriber))
+        {
+            return null;
+        }
+
+        using var linked = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        linked.CancelAfter(timeout);
+        try
+        {
+            if (!await subscriber.Channel.Reader.WaitToReadAsync(linked.Token).ConfigureAwait(false)
+                || !subscriber.Channel.Reader.TryRead(out var first))
+            {
+                return null;
+            }
+
+            var events = new List<SseEvent> { first };
+            while (subscriber.Channel.Reader.TryRead(out var more))
+            {
+                events.Add(more);
+            }
+
+            return events;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Keepalive window elapsed; the outer cancellation token is still live.
+            return null;
+        }
+    }
 }

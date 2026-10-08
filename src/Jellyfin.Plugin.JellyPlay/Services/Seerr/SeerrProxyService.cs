@@ -25,18 +25,21 @@ public sealed class SeerrProxyService
     private readonly SeerrSender _sender;
     private readonly SeerrSessionService _sessions;
     private readonly ILogger<SeerrProxyService> _logger;
-    private readonly ValidationCache _validationCache = new();
+    private readonly TimeProvider _clock;
+    private readonly ValidationCache _validationCache;
 
     private static readonly string[] ForwardedHeaders =
     [
         "Accept", "Content-Type", "Accept-Language"
     ];
 
-    public SeerrProxyService(SeerrSender sender, SeerrSessionService sessions, ILogger<SeerrProxyService> logger)
+    public SeerrProxyService(SeerrSender sender, SeerrSessionService sessions, ILogger<SeerrProxyService> logger, TimeProvider? clock = null)
     {
         _sender = sender;
         _sessions = sessions;
         _logger = logger;
+        _clock = clock ?? TimeProvider.System;
+        _validationCache = new ValidationCache(_clock);
     }
 
     /// <summary>
@@ -52,7 +55,7 @@ public sealed class SeerrProxyService
             return false;
         }
 
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var now = _clock.GetUtcNow().ToUnixTimeMilliseconds();
         if (_validationCache.TryGet(userId, now, out var cached))
         {
             return cached;
@@ -87,7 +90,9 @@ public sealed class SeerrProxyService
     {
         if (!_sessions.IsConfigured)
         {
-            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            // Error bodies go through the serialization gate, like the 401 below.
+            await JellyPlayResponses.WriteErrorAsync(
+                context.Response, StatusCodes.Status503ServiceUnavailable, "seerr-not-configured", cancellationToken);
             return;
         }
 
@@ -168,11 +173,17 @@ public sealed class SeerrProxyService
 /// </summary>
 internal sealed class ValidationCache
 {
-    /// <summary>Cache window in ms; a write past one window triggers the expired-entries sweep.</summary>
-    internal const long TtlMs = 60_000;
+    /// <summary>Cache window in ms (canonical duration lives on <see cref="SeerrSessionTtls"/>); a write past one window triggers the expired-entries sweep.</summary>
+    internal const long TtlMs = SeerrSessionTtls.ValidationTtlMs;
 
     private readonly ConcurrentDictionary<string, (long At, bool Valid)> _entries = new();
+    private readonly TimeProvider _clock;
     private long _lastSweepMs;
+
+    public ValidationCache(TimeProvider? clock = null)
+    {
+        _clock = clock ?? TimeProvider.System;
+    }
 
     public int Count => _entries.Count;
 
@@ -189,11 +200,19 @@ internal sealed class ValidationCache
         return false;
     }
 
+    /// <summary>Clocked read through the module's own clock — the deep interface; the explicit-ms overload above is the test seam.</summary>
+    public bool TryGet(string userId, out bool valid)
+        => TryGet(userId, _clock.GetUtcNow().ToUnixTimeMilliseconds(), out valid);
+
     public void Set(string userId, long nowMs, bool valid)
     {
         _entries[userId] = (nowMs, valid);
         MaybeSweep(nowMs);
     }
+
+    /// <summary>Clocked write through the module's own clock — the deep interface; the explicit-ms overload above is the test seam.</summary>
+    public void Set(string userId, bool valid)
+        => Set(userId, _clock.GetUtcNow().ToUnixTimeMilliseconds(), valid);
 
     /// <summary>Occasional O(n) sweep so abandoned users do not accumulate forever (the shared <see cref="SweepGate"/>).</summary>
     private void MaybeSweep(long nowMs)

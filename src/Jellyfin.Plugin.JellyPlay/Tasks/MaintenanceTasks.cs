@@ -87,11 +87,18 @@ public sealed class AnimeMarkersRefreshTask : IScheduledTask
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
         // Deterministic slice of the library series so runs are reproducible.
+        // Ordering contract: raw Guid order (structural comparison, no
+        // ToString allocation). The host query's OrderBy maps to library
+        // columns, not Guids, so Limit cannot be pushed down without changing
+        // the slice. Raw Guid order is a DIFFERENT total order than the
+        // canonical-string order this used to sort by (they disagree only for
+        // ids whose first component has its high bit set), but equally
+        // deterministic: the same 500 series are selected on every run.
         var series = _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery(null)
         {
             IncludeItemTypes = new[] { Jellyfin.Data.Enums.BaseItemKind.Series }
         })
-        .OrderBy(item => item.Id.ToString(), StringComparer.Ordinal)
+        .OrderBy(item => item.Id)
         .Take(MaxSeriesPerRun)
         .ToList();
 

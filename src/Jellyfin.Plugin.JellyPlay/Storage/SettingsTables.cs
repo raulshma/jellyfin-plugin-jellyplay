@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyPlay.Storage;
 
@@ -18,13 +19,36 @@ public sealed partial class JellyPlayDatabase
     {
         using (_lock.Read())
         using (var connection = CreateConnection())
-        using (var statement = connection.Prepare(
-                   $"select UserId, Profile, Ns, Key, SchemaVersion, UpdatedAt, DeviceId, Value from {SettingsTable} where UserId = @UserId and Profile = @Profile order by Ns, Key"))
         {
-            statement.Bind("@UserId", userId);
-            statement.Bind("@Profile", profile);
-            return statement.Select(ReadSettingRow).ToList();
+            return GetSettings(connection, userId, profile, offset: 0, limit: int.MaxValue);
         }
+    }
+
+    /// <summary>
+    /// The paged snapshot read: the ordered window [offset, offset + limit)
+    /// paged IN SQL over the same stable Ns, Key ordering the full read
+    /// produces — the snapshot path used to materialize the whole store and
+    /// slice in memory. Callers over-fetch by one to detect a following page
+    /// (the same paging contract as <see cref="GetChangedSettings"/>).
+    /// </summary>
+    public IReadOnlyList<SettingRow> GetSettings(string userId, string profile, int offset, int limit)
+    {
+        using (_lock.Read())
+        using (var connection = CreateConnection())
+        {
+            return GetSettings(connection, userId, profile, offset, limit);
+        }
+    }
+
+    private static IReadOnlyList<SettingRow> GetSettings(SqliteConnection connection, string userId, string profile, int offset, int limit)
+    {
+        using var statement = connection.Prepare(
+            $"select UserId, Profile, Ns, Key, SchemaVersion, UpdatedAt, DeviceId, Value from {SettingsTable} where UserId = @UserId and Profile = @Profile order by Ns, Key limit @Limit offset @Offset");
+        statement.Bind("@UserId", userId);
+        statement.Bind("@Profile", profile);
+        statement.Bind("@Limit", limit);
+        statement.Bind("@Offset", offset);
+        return statement.Select(ReadSettingRow).ToList();
     }
 
     public IReadOnlyList<string> GetDistinctSettingUserIds()
@@ -119,9 +143,10 @@ public sealed partial class JellyPlayDatabase
                         headBefore,
                         headAfter);
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
                     // Observability is best-effort by contract: never fail the batch.
+                    _logger?.LogWarning(ex, "JellyPlay sync-history recording failed (user {UserId}, op {Op}) — ignoring", userId, op);
                 }
 
                 transaction.Commit();
@@ -178,6 +203,47 @@ public sealed partial class JellyPlayDatabase
         var namespaceBytes = LoadNamespaceBytes(connection, userId);
         var deviceRevoked = revokedDeviceId is not null && IsDeviceRevoked(connection, revokedDeviceId);
 
+        // All five per-key statements are prepared ONCE per batch and re-bound
+        // per write (SqliteCommand parameters are mutable) — the loop used to
+        // prepare fresh commands per key, paying parse overhead up to five
+        // times per write. @UserId/@Profile are batch-constants; only the
+        // per-write parameters are reassigned below.
+        using var probe = connection.Prepare(
+            $"select UpdatedAt, Value from {SettingsTable} where UserId = @UserId and Profile = @Profile and Ns = @Ns and Key = @Key");
+        using var delete = connection.Prepare(
+            $"delete from {SettingsTable} where UserId = @UserId and Profile = @Profile and Ns = @Ns and Key = @Key");
+        using var latestChange = connection.Prepare(
+            $@"select Seq, UpdatedAt, Op from {ChangeLogTable}
+               where UserId = @UserId and Profile = @Profile and Ns = @Ns and Key = @Key
+               order by Seq desc limit 1");
+        using var logInsert = connection.Prepare(
+            $@"insert into {ChangeLogTable} (UserId, Profile, Ns, Key, UpdatedAt, Op)
+               values (@UserId, @Profile, @Ns, @Key, @UpdatedAt, @Op);
+               select last_insert_rowid();");
+        using var upsert = connection.Prepare(
+            $@"insert into {SettingsTable} (UserId, Profile, Ns, Key, SchemaVersion, UpdatedAt, DeviceId, Value)
+               values (@UserId, @Profile, @Ns, @Key, @SchemaVersion, @UpdatedAt, @DeviceId, @Value)
+               on conflict (UserId, Profile, Ns, Key) do update set
+                   SchemaVersion = @SchemaVersion,
+                   UpdatedAt = @UpdatedAt,
+                   DeviceId = @DeviceId,
+                   Value = @Value");
+
+        foreach (var command in new[] { probe, delete, latestChange, logInsert, upsert })
+        {
+            command.Bind("@UserId", userId);
+            command.Bind("@Profile", profile);
+            command.Bind("@Ns", string.Empty);
+            command.Bind("@Key", string.Empty);
+        }
+
+        logInsert.Bind("@UpdatedAt", 0L);
+        logInsert.Bind("@Op", "put");
+        upsert.Bind("@SchemaVersion", 0);
+        upsert.Bind("@UpdatedAt", 0L);
+        upsert.Bind("@DeviceId", string.Empty);
+        upsert.Bind("@Value", Array.Empty<byte>());
+
         foreach (var write in writes)
         {
             if (deviceRevoked)
@@ -198,27 +264,29 @@ public sealed partial class JellyPlayDatabase
                 continue;
             }
 
+            probe.Parameters["@Ns"].Value = write.Ns;
+            probe.Parameters["@Key"].Value = write.Key;
+
             byte[]? existingValue = null;
             long existingUpdatedAt = 0;
-            using (var select = connection.Prepare(
-                       $"select UpdatedAt, Value from {SettingsTable} where UserId = @UserId and Profile = @Profile and Ns = @Ns and Key = @Key"))
+            foreach (var row in probe.Select(row => (UpdatedAt: row.GetInt64(0), Value: (byte[]?)row.GetValue(1))))
             {
-                select.Bind("@UserId", userId);
-                select.Bind("@Profile", profile);
-                select.Bind("@Ns", write.Ns);
-                select.Bind("@Key", write.Key);
-                foreach (var row in select.Select(row => (UpdatedAt: row.GetInt64(0), Value: (byte[]?)row.GetValue(1))))
-                {
-                    existingUpdatedAt = row.UpdatedAt;
-                    existingValue = row.Value;
-                }
+                existingUpdatedAt = row.UpdatedAt;
+                existingValue = row.Value;
             }
 
             if (existingValue is null)
             {
                 // No live row: the key's latest change-log entry (put or
                 // del) is the watermark the write must beat.
-                var latest = GetLatestChangeFor(connection, userId, profile, write.Ns, write.Key);
+                latestChange.Parameters["@Ns"].Value = write.Ns;
+                latestChange.Parameters["@Key"].Value = write.Key;
+                (long Seq, long UpdatedAt, string Op)? latest = null;
+                foreach (var row in latestChange.Select(row => (row.GetInt64(0), row.GetInt64(1), row.GetString(2))))
+                {
+                    latest = row;
+                }
+
                 if (latest is not null && !SettingsLww.WouldApply(write.UpdatedAt, latest.Value.UpdatedAt))
                 {
                     rejected.Add(new RejectedSetting(write.Ns, write.Key, "stale-write"));
@@ -235,22 +303,20 @@ public sealed partial class JellyPlayDatabase
             {
                 if (existingValue is not null)
                 {
-                    using (var delete = connection.Prepare(
-                               $"delete from {SettingsTable} where UserId = @UserId and Profile = @Profile and Ns = @Ns and Key = @Key"))
-                    {
-                        delete.Bind("@UserId", userId);
-                        delete.Bind("@Profile", profile);
-                        delete.Bind("@Ns", write.Ns);
-                        delete.Bind("@Key", write.Key);
-                        delete.ExecuteNonQuery();
-                    }
+                    delete.Parameters["@Ns"].Value = write.Ns;
+                    delete.Parameters["@Key"].Value = write.Key;
+                    delete.ExecuteNonQuery();
 
                     keyCount--;
                     totalBytes -= existingValue.Length;
                     namespaceBytes[write.Ns] = NamespaceBytesOf(namespaceBytes, write.Ns) - existingValue.Length;
                 }
 
-                var seq = AppendChangeLog(connection, userId, profile, write.Ns, write.Key, write.UpdatedAt, "del");
+                logInsert.Parameters["@Ns"].Value = write.Ns;
+                logInsert.Parameters["@Key"].Value = write.Key;
+                logInsert.Parameters["@UpdatedAt"].Value = write.UpdatedAt;
+                logInsert.Parameters["@Op"].Value = "del";
+                var seq = (long)(logInsert.ExecuteScalar() ?? 0L);
                 applied.Add(new AppliedSetting(write.Ns, write.Key, write.UpdatedAt, seq, Deleted: true));
                 continue;
             }
@@ -306,27 +372,19 @@ public sealed partial class JellyPlayDatabase
                 namespaceBytes[write.Ns] = NamespaceBytesOf(namespaceBytes, write.Ns) + growth;
             }
 
-            using (var upsert = connection.Prepare(
-                       $@"insert into {SettingsTable} (UserId, Profile, Ns, Key, SchemaVersion, UpdatedAt, DeviceId, Value)
-                          values (@UserId, @Profile, @Ns, @Key, @SchemaVersion, @UpdatedAt, @DeviceId, @Value)
-                          on conflict (UserId, Profile, Ns, Key) do update set
-                              SchemaVersion = @SchemaVersion,
-                              UpdatedAt = @UpdatedAt,
-                              DeviceId = @DeviceId,
-                              Value = @Value"))
-            {
-                upsert.Bind("@UserId", userId);
-                upsert.Bind("@Profile", profile);
-                upsert.Bind("@Ns", write.Ns);
-                upsert.Bind("@Key", write.Key);
-                upsert.Bind("@SchemaVersion", write.SchemaVersion);
-                upsert.Bind("@UpdatedAt", write.UpdatedAt);
-                upsert.Bind("@DeviceId", write.DeviceId);
-                upsert.Bind("@Value", write.Value);
-                upsert.ExecuteNonQuery();
-            }
+            upsert.Parameters["@Ns"].Value = write.Ns;
+            upsert.Parameters["@Key"].Value = write.Key;
+            upsert.Parameters["@SchemaVersion"].Value = write.SchemaVersion;
+            upsert.Parameters["@UpdatedAt"].Value = write.UpdatedAt;
+            upsert.Parameters["@DeviceId"].Value = write.DeviceId;
+            upsert.Parameters["@Value"].Value = write.Value;
+            upsert.ExecuteNonQuery();
 
-            var putSeq = AppendChangeLog(connection, userId, profile, write.Ns, write.Key, write.UpdatedAt, "put");
+            logInsert.Parameters["@Ns"].Value = write.Ns;
+            logInsert.Parameters["@Key"].Value = write.Key;
+            logInsert.Parameters["@UpdatedAt"].Value = write.UpdatedAt;
+            logInsert.Parameters["@Op"].Value = "put";
+            var putSeq = (long)(logInsert.ExecuteScalar() ?? 0L);
             applied.Add(new AppliedSetting(write.Ns, write.Key, write.UpdatedAt, putSeq));
         }
 
@@ -349,41 +407,6 @@ public sealed partial class JellyPlayDatabase
         }
 
         return totals;
-    }
-
-    /// <summary>The key's latest change-log entry (any op), or null when the key was never touched.</summary>
-    private static (long Seq, long UpdatedAt, string Op)? GetLatestChangeFor(SqliteConnection connection, string userId, string profile, string ns, string key)
-    {
-        using var statement = connection.Prepare(
-            $@"select Seq, UpdatedAt, Op from {ChangeLogTable}
-               where UserId = @UserId and Profile = @Profile and Ns = @Ns and Key = @Key
-               order by Seq desc limit 1");
-        statement.Bind("@UserId", userId);
-        statement.Bind("@Profile", profile);
-        statement.Bind("@Ns", ns);
-        statement.Bind("@Key", key);
-        foreach (var row in statement.Select(row => (row.GetInt64(0), row.GetInt64(1), row.GetString(2))))
-        {
-            return row;
-        }
-
-        return null;
-    }
-
-    /// <summary>Appends one change-log row and returns its seq.</summary>
-    private static long AppendChangeLog(SqliteConnection connection, string userId, string profile, string ns, string key, long updatedAt, string op)
-    {
-        using var logInsert = connection.Prepare(
-            $@"insert into {ChangeLogTable} (UserId, Profile, Ns, Key, UpdatedAt, Op)
-               values (@UserId, @Profile, @Ns, @Key, @UpdatedAt, @Op);
-               select last_insert_rowid();");
-        logInsert.Bind("@UserId", userId);
-        logInsert.Bind("@Profile", profile);
-        logInsert.Bind("@Ns", ns);
-        logInsert.Bind("@Key", key);
-        logInsert.Bind("@UpdatedAt", updatedAt);
-        logInsert.Bind("@Op", op);
-        return (long)(logInsert.ExecuteScalar() ?? 0L);
     }
 
     /// <summary>
@@ -494,6 +517,89 @@ public sealed partial class JellyPlayDatabase
         }
     }
 
+    /// <summary>The reset/wipe composite outcome: the tombstone batch's change-log bracket plus the removed-key count.</summary>
+    public sealed record TombstoneOutcome(long HeadBefore, long HeadAfter, int Deleted);
+
+    /// <summary>
+    /// The namespace reset's composite: head read → tombstone → head read →
+    /// history record land in ONE connection/transaction (the service path
+    /// this replaces ran them on four connections, with interleaving windows
+    /// between the bracket reads and the mutation). The history write is
+    /// best-effort by contract, like every recorded operation.
+    /// </summary>
+    public TombstoneOutcome ResetNamespaceWithHistory(
+        string userId,
+        string profile,
+        string ns,
+        long tombstoneAt,
+        string deviceId,
+        string op,
+        long historyTs)
+    {
+        long headBefore;
+        long headAfter;
+        int deleted;
+        using (_lock.Write())
+        using (var connection = CreateConnection())
+        using (var transaction = connection.BeginTransaction())
+        {
+            headBefore = GetChangeLogHead(connection, userId);
+            deleted = TombstoneRows(connection, userId, tombstoneAt, profile: profile, ns: ns);
+            headAfter = GetChangeLogHead(connection, userId);
+
+            try
+            {
+                InsertSyncHistory(connection, userId, deviceId, op, deleted, 0, 0, null, historyTs, headBefore, headAfter);
+            }
+            catch (Exception ex)
+            {
+                // Observability is best-effort by contract: never fail the reset.
+                _logger?.LogWarning(ex, "JellyPlay sync-history recording failed (user {UserId}, op {Op}) — ignoring", userId, op);
+            }
+
+            transaction.Commit();
+        }
+
+        return new TombstoneOutcome(headBefore, headAfter, deleted);
+    }
+
+    /// <summary>
+    /// The device wipe's composite: the same one-connection bracket as the
+    /// reset. A device with no rows records nothing — the empty wipe wrote no
+    /// history row on the path this replaces either.
+    /// </summary>
+    public TombstoneOutcome WipeDeviceWithHistory(string userId, string deviceId, long tombstoneAt, string op, long historyTs)
+    {
+        long headBefore;
+        long headAfter;
+        int deleted;
+        using (_lock.Write())
+        using (var connection = CreateConnection())
+        using (var transaction = connection.BeginTransaction())
+        {
+            headBefore = GetChangeLogHead(connection, userId);
+            deleted = TombstoneRows(connection, userId, tombstoneAt, deviceId: deviceId);
+            headAfter = GetChangeLogHead(connection, userId);
+
+            if (deleted > 0)
+            {
+                try
+                {
+                    InsertSyncHistory(connection, userId, deviceId, op, deleted, 0, 0, null, historyTs, headBefore, headAfter);
+                }
+                catch (Exception ex)
+                {
+                    // Observability is best-effort by contract: never fail the wipe.
+                    _logger?.LogWarning(ex, "JellyPlay sync-history recording failed (user {UserId}, op {Op}) — ignoring", userId, op);
+                }
+            }
+
+            transaction.Commit();
+        }
+
+        return new TombstoneOutcome(headBefore, headAfter, deleted);
+    }
+
     /// <summary>
     /// Current values for keys touched after <paramref name="sinceSeq"/> in the
     /// change log, scoped to one profile and paged IN SQL (the delta pull used
@@ -505,23 +611,29 @@ public sealed partial class JellyPlayDatabase
     {
         using (_lock.Read())
         using (var connection = CreateConnection())
-        using (var statement = connection.Prepare(
-                   $@"select s.UserId, s.Profile, s.Ns, s.Key, s.SchemaVersion, s.UpdatedAt, s.DeviceId, s.Value
-                      from {ChangeLogTable} c
-                      join {SettingsTable} s
-                        on s.UserId = c.UserId and s.Profile = c.Profile and s.Ns = c.Ns and s.Key = c.Key
-                      where c.UserId = @UserId and c.Seq > @SinceSeq and c.Profile = @Profile
-                      group by s.UserId, s.Profile, s.Ns, s.Key
-                      order by max(c.Seq)
-                      limit @Limit offset @Offset"))
         {
-            statement.Bind("@UserId", userId);
-            statement.Bind("@SinceSeq", sinceSeq);
-            statement.Bind("@Profile", profile);
-            statement.Bind("@Limit", limit);
-            statement.Bind("@Offset", offset);
-            return statement.Select(ReadSettingRow).ToList();
+            return GetChangedSettings(connection, userId, sinceSeq, profile, offset, limit);
         }
+    }
+
+    /// <summary>Connection-scoped delta-rows page (the delta composite resolves both halves on its own connection).</summary>
+    private static IReadOnlyList<SettingRow> GetChangedSettings(SqliteConnection connection, string userId, long sinceSeq, string profile, int offset, int limit)
+    {
+        using var statement = connection.Prepare(
+            $@"select s.UserId, s.Profile, s.Ns, s.Key, s.SchemaVersion, s.UpdatedAt, s.DeviceId, s.Value
+               from {ChangeLogTable} c
+               join {SettingsTable} s
+                   on s.UserId = c.UserId and s.Profile = c.Profile and s.Ns = c.Ns and s.Key = c.Key
+               where c.UserId = @UserId and c.Seq > @SinceSeq and c.Profile = @Profile
+               group by s.UserId, s.Profile, s.Ns, s.Key
+               order by max(c.Seq)
+               limit @Limit offset @Offset");
+        statement.Bind("@UserId", userId);
+        statement.Bind("@SinceSeq", sinceSeq);
+        statement.Bind("@Profile", profile);
+        statement.Bind("@Limit", limit);
+        statement.Bind("@Offset", offset);
+        return statement.Select(ReadSettingRow).ToList();
     }
 
     /// <summary>
@@ -534,19 +646,46 @@ public sealed partial class JellyPlayDatabase
     {
         using (_lock.Read())
         using (var connection = CreateConnection())
-        using (var statement = connection.Prepare(
-                   $@"select distinct c.Profile, c.Ns, c.Key
-                      from {ChangeLogTable} c
-                      where c.UserId = @UserId and c.Seq > @SinceSeq and c.Profile = @Profile and c.Op = 'del'
-                        and not exists (
-                            select 1 from {SettingsTable} s
-                            where s.UserId = c.UserId and s.Profile = c.Profile and s.Ns = c.Ns and s.Key = c.Key)
-                      order by c.Profile, c.Ns, c.Key"))
         {
-            statement.Bind("@UserId", userId);
-            statement.Bind("@SinceSeq", sinceSeq);
-            statement.Bind("@Profile", profile);
-            return statement.Select(row => new DeletedSettingKey(row.GetString(0), row.GetString(1), row.GetString(2))).ToList();
+            return GetDeletedSettings(connection, userId, sinceSeq, profile);
+        }
+    }
+
+    /// <summary>Connection-scoped deleted-key half (the delta composite resolves both halves on its own connection).</summary>
+    private static IReadOnlyList<DeletedSettingKey> GetDeletedSettings(SqliteConnection connection, string userId, long sinceSeq, string profile)
+    {
+        using var statement = connection.Prepare(
+            $@"select distinct c.Profile, c.Ns, c.Key
+               from {ChangeLogTable} c
+               where c.UserId = @UserId and c.Seq > @SinceSeq and c.Profile = @Profile and c.Op = 'del'
+                 and not exists (
+                     select 1 from {SettingsTable} s
+                     where s.UserId = c.UserId and s.Profile = c.Profile and s.Ns = c.Ns and s.Key = c.Key)
+               order by c.Profile, c.Ns, c.Key");
+        statement.Bind("@UserId", userId);
+        statement.Bind("@SinceSeq", sinceSeq);
+        statement.Bind("@Profile", profile);
+        return statement.Select(row => new DeletedSettingKey(row.GetString(0), row.GetString(1), row.GetString(2))).ToList();
+    }
+
+    /// <summary>
+    /// The delta pull's composite: the changed-rows page, the deleted-key half
+    /// and the change-log head resolved in ONE connection/read-lock — the
+    /// three separate connections this pull used to open per request. Rows
+    /// page exactly like <see cref="GetChangedSettings"/> (the caller
+    /// over-fetches by one to detect a following page); the head is read
+    /// under the same lock, so the recorded (since, head] range brackets
+    /// precisely what the pull served.
+    /// </summary>
+    public ChangedSettingsBundle GetChangedSettingsBundle(string userId, long sinceSeq, string profile, int offset, int limit)
+    {
+        using (_lock.Read())
+        using (var connection = CreateConnection())
+        {
+            return new ChangedSettingsBundle(
+                GetChangedSettings(connection, userId, sinceSeq, profile, offset, limit),
+                GetDeletedSettings(connection, userId, sinceSeq, profile),
+                GetChangeLogHead(connection, userId));
         }
     }
 
@@ -774,17 +913,29 @@ public sealed partial class JellyPlayDatabase
     /// they are the anti-resurrection watermark for their key (the absent-row
     /// LWW check reads the latest entry — put OR del), so pruning one would
     /// let a stale offline put resurrect a long-deleted key. Tombstone rows
-    /// are tiny; they are kept forever, only 'put' rows age out.
+    /// are tiny; they are kept forever, only 'put' rows age out. The delete
+    /// runs in batches (the write lock is held throughout — the batching is
+    /// about per-statement transaction/log size, not lock scope).
     /// </summary>
     public int PruneChangeLog(int retentionDays)
     {
         var cutoff = DateTimeOffset.UtcNow.AddDays(-retentionDays).ToUnixTimeMilliseconds();
+        var total = 0;
         using (_lock.Write())
         using (var connection = CreateConnection())
-        using (var statement = connection.Prepare($"delete from {ChangeLogTable} where UpdatedAt < @Cutoff and Op != 'del'"))
+        using (var statement = connection.Prepare(
+                   $@"delete from {ChangeLogTable} where rowid in (
+                          select rowid from {ChangeLogTable} where UpdatedAt < @Cutoff and Op != 'del' limit 5000)"))
         {
             statement.Bind("@Cutoff", cutoff);
-            return statement.ExecuteNonQuery();
+            int removed;
+            do
+            {
+                removed = statement.ExecuteNonQuery();
+                total += removed;
+            }
+            while (removed > 0);
+            return total;
         }
     }
 
@@ -888,6 +1039,46 @@ public sealed partial class JellyPlayDatabase
         }
     }
 
+    /// <summary>
+    /// The per-key diff's composite: one recorded operation by id resolved
+    /// together with its change-log range on ONE connection — the endpoint
+    /// used to open one connection for the row and another for the range.
+    /// Null when the caller owns no row with that id; a row without a usable
+    /// range carries an empty key list, exactly like the audit export's fold.
+    /// </summary>
+    public SyncHistoryWithKeys? GetSyncHistoryEntryWithKeys(string userId, long id, int keysLimit)
+    {
+        using (_lock.Read())
+        using (var connection = CreateConnection())
+        {
+            SyncHistoryRow? row = null;
+            using (var statement = connection.Prepare(
+                       $@"select Id, UserId, DeviceId, Ts, Op, KeysApplied, KeysRejected, Bytes, RejectsJson, FromSeq, ToSeq
+                          from {SyncHistoryTable}
+                          where Id = @Id and UserId = @UserId"))
+            {
+                statement.Bind("@Id", id);
+                statement.Bind("@UserId", userId);
+                foreach (var found in statement.Select(ReadSyncHistoryRow))
+                {
+                    row = found;
+                }
+            }
+
+            if (row is null)
+            {
+                return null;
+            }
+
+            if (!row.HasRange)
+            {
+                return new SyncHistoryWithKeys(row, Array.Empty<ChangeLogEntry>());
+            }
+
+            return new SyncHistoryWithKeys(row, GetChangeLogRange(connection, userId, row.FromSeq!.Value, row.ToSeq!.Value, keysLimit));
+        }
+    }
+
     /// <summary>Latest recorded operation per device, folded from the history.</summary>
     public IReadOnlyList<DeviceSyncSummary> GetLatestSyncPerDevice(string userId)
     {
@@ -945,15 +1136,61 @@ public sealed partial class JellyPlayDatabase
         }
     }
 
+    /// <summary>
+    /// The admin overview's composite: every user's settings footprint LEFT
+    /// JOINed with its sync-history rollup in ONE connection — the overview
+    /// used to run both GROUP BYs on separate connections and re-group in
+    /// memory. Users without recorded history carry a null LastSyncAt and a
+    /// zero device count, exactly like the in-memory join produced.
+    /// </summary>
+    public IReadOnlyList<UserSyncOverviewRow> GetSyncAdminOverviewRows()
+    {
+        using (_lock.Read())
+        using (var connection = CreateConnection())
+        using (var statement = connection.Prepare(
+                   $@"select s.UserId, count(*), coalesce(sum(length(s.Value)), 0), h.LastSyncAt, coalesce(h.DeviceCount, 0)
+                      from {SettingsTable} s
+                      left join (
+                          select UserId, max(Ts) as LastSyncAt, count(distinct DeviceId) as DeviceCount
+                          from {SyncHistoryTable} group by UserId
+                      ) h on h.UserId = s.UserId
+                      group by s.UserId, h.LastSyncAt, h.DeviceCount
+                      order by s.UserId"))
+        {
+            return statement.Select(row => new UserSyncOverviewRow(
+                row.GetString(0),
+                (int)row.GetInt64(1),
+                row.GetInt64(2),
+                row.IsDBNull(3) ? null : row.GetInt64(3),
+                (int)row.GetInt64(4))).ToList();
+        }
+    }
+
+    /// <summary>
+    /// Retention prune for the recorded sync operations; batched like
+    /// <see cref="PruneChangeLog"/> (one bounded transaction per batch under
+    /// the one write-lock hold) so a large history ages out without one
+    /// unbounded delete.
+    /// </summary>
     public int PruneSyncHistory(int retentionDays)
     {
         var cutoff = DateTimeOffset.UtcNow.AddDays(-retentionDays).ToUnixTimeMilliseconds();
+        var total = 0;
         using (_lock.Write())
         using (var connection = CreateConnection())
-        using (var statement = connection.Prepare($"delete from {SyncHistoryTable} where Ts < @Cutoff"))
+        using (var statement = connection.Prepare(
+                   $@"delete from {SyncHistoryTable} where rowid in (
+                          select rowid from {SyncHistoryTable} where Ts < @Cutoff limit 5000)"))
         {
             statement.Bind("@Cutoff", cutoff);
-            return statement.ExecuteNonQuery();
+            int removed;
+            do
+            {
+                removed = statement.ExecuteNonQuery();
+                total += removed;
+            }
+            while (removed > 0);
+            return total;
         }
     }
 

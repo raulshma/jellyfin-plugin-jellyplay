@@ -52,6 +52,16 @@ public sealed record DeletedSettingKey(string Profile, string Ns, string Key);
 /// <summary>The delta answer: rows still present plus the keys deleted since the cursor.</summary>
 public sealed record ChangedSettings(IReadOnlyList<SettingRow> Rows, IReadOnlyList<DeletedSettingKey> Deleted);
 
+/// <summary>
+/// The delta pull's one-connection bundle: the changed-rows page, the deleted
+/// keys since the cursor and the change-log head, resolved together by
+/// <see cref="JellyPlayDatabase.GetChangedSettingsBundle"/>.
+/// </summary>
+public sealed record ChangedSettingsBundle(
+    IReadOnlyList<SettingRow> Rows,
+    IReadOnlyList<DeletedSettingKey> Deleted,
+    long Head);
+
 /// <summary>A change-log entry; <see cref="Seq"/> is the global cursor used by `changed?since=`.</summary>
 public sealed record ChangeLogEntry(long Seq, string UserId, string Profile, string Ns, string Key, long UpdatedAt);
 
@@ -201,6 +211,14 @@ public sealed record SyncHistoryWithKeys(SyncHistoryRow Row, IReadOnlyList<Chang
 
 /// <summary>Per-user rollup of sync_history: most recent operation and distinct device count.</summary>
 public sealed record UserSyncSummary(string UserId, long LastSyncAt, int DeviceCount);
+
+/// <summary>
+/// The admin overview's merged row: one user's settings footprint joined
+/// with its sync rollup (null/zero when the user never recorded an
+/// operation), resolved in ONE connection by
+/// <see cref="JellyPlayDatabase.GetSyncAdminOverviewRows"/>.
+/// </summary>
+public sealed record UserSyncOverviewRow(string UserId, int Keys, long Bytes, long? LastSyncAt, int DeviceCount);
 
 /// <summary>Key/byte footprint of one settings namespace (all profiles folded).</summary>
 public sealed record NamespaceFootprint(string Ns, int Keys, long Bytes);

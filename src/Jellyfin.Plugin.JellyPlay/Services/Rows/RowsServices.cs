@@ -30,20 +30,29 @@ public sealed partial class CustomRowsService
     private readonly ResilientFetcher _fetcher;
     private readonly FileCacheStore _cache;
     private readonly ILibraryManager _libraryManager;
-    private readonly Func<RowsFetchConfig> _config;
-    private readonly CircuitBreaker _breaker = new();
+    private readonly Func<RatingsConfig> _config;
+    // Deepening: per-source breaker locality — each upstream module gets its own
+    // breaker seam so one slow source cannot trip the interface for the others.
+    private readonly CircuitBreaker _letterboxdBreaker;
+    private readonly CircuitBreaker _imdbBreaker;
+    private readonly CircuitBreaker _mdbListBreaker;
+    private readonly CircuitBreaker _tmdbBreaker;
     private readonly ILogger<CustomRowsService> _logger;
 
-    public CustomRowsService(ResilientFetcher fetcher, FileCacheStore cache, ILibraryManager libraryManager, Func<RowsFetchConfig> config, ILogger<CustomRowsService> logger)
+    public CustomRowsService(ResilientFetcher fetcher, FileCacheStore cache, ILibraryManager libraryManager, Func<RatingsConfig> config, ILogger<CustomRowsService> logger, TimeProvider? clock = null)
     {
         _fetcher = fetcher;
         _cache = cache;
         _libraryManager = libraryManager;
         _config = config;
         _logger = logger;
+        _letterboxdBreaker = new(clock: clock);
+        _imdbBreaker = new(clock: clock);
+        _mdbListBreaker = new(clock: clock);
+        _tmdbBreaker = new(clock: clock);
     }
 
-    public async Task<RowResult?> ResolveAsync(CustomRowDefinition row)
+    public async Task<RowResult?> ResolveAsync(CustomRowDefinition row, CancellationToken cancellationToken = default)
     {
         var limit = row.Limit <= 0 ? 20 : row.Limit;
 
@@ -52,52 +61,73 @@ public sealed partial class CustomRowsService
         // is memoized under the same rows TTL. The external list keeps its own
         // fetcher cache beneath this; the short TTL bounds staleness across
         // library scans — the same tradeoff the external list already accepts.
-        var resolvedKey = $"rowres:{row.Source}:{row.ListId}:{limit}";
-        var resolved = _cache.Get<RowResult>(resolvedKey, CacheTtl);
-        if (resolved is not null)
-        {
-            // The title is admin-editable state, not fetched data — always the current one.
-            return resolved with { Title = row.Title };
-        }
+        // Deepening: the outer cache lives behind the fetcher's resolved seam
+        // (single probe + single-flight), not a hand-rolled Get/Set pair.
+        var resolvedKey = CacheKeys.RowResolved(row.Source, row.ListId, limit);
+        var resolved = await _fetcher.GetOrFetchResolvedAsync<RowResult>(
+            resolvedKey,
+            CacheTtl,
+            async cancellation =>
+            {
+                var items = row.Source switch
+                {
+                    "letterboxd" => await FetchLetterboxdAsync(row.ListId),
+                    "imdb" => await FetchImdbListAsync(row.ListId),
+                    "mdblist" => await FetchMdbListAsync(row.ListId),
+                    "tmdb" => await FetchTmdbListAsync(row.ListId),
+                    _ => null
+                };
 
-        var items = row.Source switch
-        {
-            "letterboxd" => await FetchLetterboxdAsync(row.ListId),
-            "imdb" => await FetchImdbListAsync(row.ListId),
-            "mdblist" => await FetchMdbListAsync(row.ListId),
-            "tmdb" => await FetchTmdbListAsync(row.ListId),
-            _ => null
-        };
+                if (items is null)
+                {
+                    return null;
+                }
 
-        if (items is null)
+                // Take-before-match + per-resolve title memo (same outputs, fewer
+                // host crossings): attaching LocalItemId never affects ordering,
+                // so matching only the taken slice issues at most `limit` host
+                // queries instead of one per external entry; repeated titles
+                // within the slice share one query via the request-scoped memo.
+                // A full single-query batch (prefetch + in-memory fold) is
+                // deliberately NOT built: the host's SearchTerm ranking is not
+                // reproducible in memory, so that fold would drift on
+                // fuzzy/substring matches.
+                var titleMemo = new Dictionary<string, string?>(StringComparer.Ordinal);
+                var matched = items
+                    .Take(limit)
+                    .Select(item => item with { LocalItemId = FindLocalItem(item, titleMemo) })
+                    .ToList();
+
+                return new RowResult(row.Title, row.Source, matched);
+            },
+            cancellationToken: cancellationToken);
+
+        if (resolved is null)
         {
             return null;
         }
 
-        var matched = items
-            .Select(item => item with { LocalItemId = FindLocalItem(item) })
-            .Take(limit)
-            .ToList();
-
-        var result = new RowResult(row.Title, row.Source, matched);
-        _cache.Set(resolvedKey, result);
-        return result;
+        // The title is admin-editable state, not fetched data — always the current one.
+        return resolved with { Title = row.Title };
     }
 
     /// <summary>Letterboxd list pages are scrapeable HTML; each entry has a poster with title/year in the film caption.</summary>
     private async Task<List<RowItem>?> FetchLetterboxdAsync(string listSlug)
     {
+        // Leverage the shared fetch seam with this source's own breaker; the
+        // miss cache keeps a failing list from being re-scraped every request.
         return await _fetcher.GetOrFetchAsync(
-            $"letterboxd:{listSlug}",
+            CacheKeys.Letterboxd(listSlug),
             CacheTtl,
             async Task<List<RowItem>?> (client, cancellationToken) =>
             {
-                using var request = ResilientFetcher.BrowserGetRequest($"https://letterboxd.com/{listSlug}/");
+                using var request = ResilientFetcher.BrowserGetRequest(ScrapedListUrls.LetterboxdList(listSlug));
                 using var response = await client.SendAsync(request, cancellationToken);
                 var html = await response.Content.ReadAsStringAsync(cancellationToken);
                 return ParseLetterboxd(html);
             },
-            _breaker);
+            _letterboxdBreaker,
+            missCache: true);
     }
 
     internal static List<RowItem> ParseLetterboxd(string html)
@@ -128,16 +158,17 @@ public sealed partial class CustomRowsService
     private async Task<List<RowItem>?> FetchImdbListAsync(string listId)
     {
         return await _fetcher.GetOrFetchAsync(
-            $"imdblist:{listId}",
+            CacheKeys.ImdbList(listId),
             CacheTtl,
             async Task<List<RowItem>?> (client, cancellationToken) =>
             {
-                using var request = ResilientFetcher.BrowserGetRequest($"https://www.imdb.com/list/{listId}/");
+                using var request = ResilientFetcher.BrowserGetRequest(ScrapedListUrls.ImdbList(listId));
                 using var response = await client.SendAsync(request, cancellationToken);
                 var html = await response.Content.ReadAsStringAsync(cancellationToken);
                 return ParseImdbList(html);
             },
-            _breaker);
+            _imdbBreaker,
+            missCache: true);
     }
 
     internal static List<RowItem> ParseImdbList(string html)
@@ -176,14 +207,15 @@ public sealed partial class CustomRowsService
         }
 
         return _fetcher.GetOrFetchAsync(
-            $"mdblist-list:{listSlug}",
+            CacheKeys.MdbList(listSlug),
             CacheTtl,
             async Task<List<RowItem>?> (client, cancellationToken) =>
             {
                 var json = await client.GetStringAsync(MdbListUrls.ListItems(listSlug, apiKey), cancellationToken);
                 return ParseMdbListItems(json);
             },
-            _breaker);
+            _mdbListBreaker,
+            missCache: true);
     }
 
     private static List<RowItem> ParseMdbListItems(string json)
@@ -213,11 +245,12 @@ public sealed partial class CustomRowsService
         }
 
         return _fetcher.GetOrFetchAsync(
-            $"tmdb-list:{listId}",
+            CacheKeys.TmdbList(listId),
             CacheTtl,
             async Task<List<RowItem>?> (client, cancellationToken) =>
                 ParseTmdbList(await client.GetStringAsync(TmdbUrls.List(listId, apiKey), cancellationToken)),
-            _breaker);
+            _tmdbBreaker,
+            missCache: true);
     }
 
     /// <summary>
@@ -258,8 +291,13 @@ public sealed partial class CustomRowsService
         return items;
     }
 
-    private string? FindLocalItem(RowItem item)
+    private string? FindLocalItem(RowItem item, Dictionary<string, string?> titleMemo)
     {
+        if (titleMemo.TryGetValue(item.Title, out var cached))
+        {
+            return cached;
+        }
+
         try
         {
             var local = _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery(null)
@@ -269,34 +307,37 @@ public sealed partial class CustomRowsService
                 Limit = 1
             }).FirstOrDefault();
 
-            return local?.Id.ToString();
+            var match = local?.Id.ToString();
+            titleMemo[item.Title] = match;
+            return match;
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Local match failed for {Title}", item.Title);
+            titleMemo[item.Title] = null;
             return null;
         }
     }
 
-    private TimeSpan CacheTtl => TimeSpan.FromHours(_config().CacheTtlHours);
+    private TimeSpan CacheTtl => TtlPolicy.Rows(_config().CacheTtlHours);
 }
 
 /// <summary>Seasonal holiday rows via TMDB keyword discovery, cached per keyword.</summary>
 public sealed class SeasonalService
 {
-    /// <summary>Fixed freshness for the seasonal discovery — deliberately not config-driven: holiday keyword results move on a season scale, not a ratings cycle.</summary>
-    private static readonly TimeSpan SeasonalTtl = TimeSpan.FromDays(2);
-
     private static readonly string[] DefaultKeywords = ["christmas", "halloween", "valentines-day", "summer", "thanksgiving"];
 
     private readonly ResilientFetcher _fetcher;
-    private readonly Func<RowsFetchConfig> _config;
-    private readonly CircuitBreaker _breaker = new();
+    private readonly Func<RatingsConfig> _config;
+    private readonly CircuitBreaker _breaker;
+    private readonly TimeProvider _clock;
 
-    public SeasonalService(ResilientFetcher fetcher, Func<RowsFetchConfig> config)
+    public SeasonalService(ResilientFetcher fetcher, Func<RatingsConfig> config, TimeProvider? clock = null)
     {
         _fetcher = fetcher;
         _config = config;
+        _clock = clock ?? TimeProvider.System;
+        _breaker = new(clock: _clock);
     }
 
     public async Task<RowResult?> GetSeasonalRow(string? keyword)
@@ -314,10 +355,11 @@ public sealed class SeasonalService
         }
 
         var items = await _fetcher.GetOrFetchAsync(
-            $"seasonal:{kw}",
-            SeasonalTtl,
+            CacheKeys.Seasonal(kw),
+            TtlPolicy.Seasonal,
             (client, cancellationToken) => FetchSeasonalItemsAsync(client, tmdbKey, kw, cancellationToken),
-            _breaker);
+            _breaker,
+            missCache: true);
         return items is null ? null : new RowResult(TitleFor(kw), "tmdb", items);
     }
 
@@ -345,9 +387,9 @@ public sealed class SeasonalService
         return items;
     }
 
-    private static string? PickSeasonalKeyword()
+    private string? PickSeasonalKeyword()
     {
-        var today = DateTime.UtcNow;
+        var today = _clock.GetUtcNow();
         return today.Month switch
         {
             10 => "halloween",

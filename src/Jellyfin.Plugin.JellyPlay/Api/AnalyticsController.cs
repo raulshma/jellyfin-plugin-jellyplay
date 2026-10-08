@@ -76,5 +76,5 @@ public class AnalyticsMeController : JellyPlayControllerBase
     [HttpGet("me")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetMine([FromQuery] int days = AnalyticsService.DefaultOverviewDays)
-        => JellyPlayResponses.Camel(_analytics.GetMyOverview(User.GetUserId().ToString(), days));
+        => JellyPlayResponses.Camel(_analytics.GetMyOverview(User.GetUserIdString(), days));
 }

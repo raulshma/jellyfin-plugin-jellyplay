@@ -161,15 +161,30 @@ public sealed partial class JellyPlayDatabase
         return days.Count;
     }
 
-    /// <summary>Raw session rows (and only those) ending before <paramref name="cutoffMs"/> (unix ms) are deleted; rollups are never touched.</summary>
+    /// <summary>
+    /// Raw session rows (and only those) ending before <paramref name="cutoffMs"/>
+    /// (unix ms) are deleted; rollups are never touched. Batched (the write
+    /// lock is held throughout — the batching bounds per-statement
+    /// transaction/log size, not lock scope).
+    /// </summary>
     public int PrunePlaybackSessions(long cutoffMs)
     {
+        var total = 0;
         using (_lock.Write())
         using (var connection = CreateConnection())
-        using (var statement = connection.Prepare($"delete from {PlaybackSessionsTable} where EndedAt < @Cutoff"))
+        using (var statement = connection.Prepare(
+                   $@"delete from {PlaybackSessionsTable} where rowid in (
+                          select rowid from {PlaybackSessionsTable} where EndedAt < @Cutoff limit 5000)"))
         {
             statement.Bind("@Cutoff", cutoffMs);
-            return statement.ExecuteNonQuery();
+            int removed;
+            do
+            {
+                removed = statement.ExecuteNonQuery();
+                total += removed;
+            }
+            while (removed > 0);
+            return total;
         }
     }
 

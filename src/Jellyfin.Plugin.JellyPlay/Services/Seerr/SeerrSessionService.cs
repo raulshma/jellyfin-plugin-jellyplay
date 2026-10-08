@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -8,6 +9,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyPlay.Configuration;
+using Jellyfin.Plugin.JellyPlay.Helpers;
 using Jellyfin.Plugin.JellyPlay.Storage;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
 using MediaBrowser.Controller.QuickConnect;
@@ -18,6 +20,26 @@ namespace Jellyfin.Plugin.JellyPlay.Services.Seerr;
 public sealed record SeerrLoginRequest(string AuthType, string? Username, string? Password, string? QuickConnectSecret);
 
 public sealed record SeerrLoginResult(bool Success, string? Error);
+
+/// <summary>
+/// The one module that owns the Seerr TTL durations (the session TTL derived
+/// from config and the two 60s cache windows): a single seam for the windows
+/// so a duration change lands in one place. Durations are unchanged — this is
+/// locality, not a policy edit.
+/// </summary>
+internal static class SeerrSessionTtls
+{
+    /// <summary>Validation-cache window in ms; a write past one window triggers the expired-entries sweep.</summary>
+    internal const long ValidationTtlMs = 60_000;
+
+    /// <summary>Session-cookie cache window in ms (same sweep-on-write shape as the validation cache).</summary>
+    internal const long CookieCacheTtlMs = 60_000;
+
+    internal static long SessionTtlMs(SeerrConfig config) => config.SessionTtlHours * 3_600_000L;
+
+    internal static bool IsExpired(SeerrSessionRow session, long nowMs, SeerrConfig config)
+        => nowMs - session.CreatedAt > SessionTtlMs(config);
+}
 
 /// <summary>
 /// Server-side Seerr SSO: password login or a Quick Connect bridge (the plugin
@@ -34,8 +56,17 @@ public sealed class SeerrSessionService
     private readonly Func<SeerrConfig> _config;
     private readonly SeerrSender _sender;
     private readonly ILogger<SeerrSessionService> _logger;
+    private readonly TimeProvider _clock;
 
-    public SeerrSessionService(SeerrSender sender, JellyPlayDatabase db, IQuickConnect quickConnect, SecretBox secretBox, Func<SeerrConfig> config, ILogger<SeerrSessionService> logger)
+    // Per-user cookie-header cache with sweep-on-write (the ValidationCache
+    // shape): a proxied request must not pay the row read + AES-GCM decrypt +
+    // JSON parse on every hit. Entries carry the built header only — never
+    // its plaintext sources — and expire at the earlier of the cache window
+    // and the session's own TTL.
+    private readonly ConcurrentDictionary<string, (long ExpiresAtMs, string Header)> _cookieCache = new();
+    private long _lastCookieSweepMs;
+
+    public SeerrSessionService(SeerrSender sender, JellyPlayDatabase db, IQuickConnect quickConnect, SecretBox secretBox, Func<SeerrConfig> config, ILogger<SeerrSessionService> logger, TimeProvider? clock = null)
     {
         _sender = sender;
         _db = db;
@@ -43,6 +74,7 @@ public sealed class SeerrSessionService
         _secretBox = secretBox;
         _config = config;
         _logger = logger;
+        _clock = clock ?? TimeProvider.System;
     }
 
     public bool IsConfigured
@@ -118,7 +150,7 @@ public sealed class SeerrSessionService
             .Select(cookie => (cookie.Name, cookie.Value))
             .ToList();
 
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var now = _clock.GetUtcNow().ToUnixTimeMilliseconds();
         var payload = _secretBox.Protect(JsonSerializer.Serialize(cookies));
         if (payload is null)
         {
@@ -128,10 +160,12 @@ public sealed class SeerrSessionService
         }
 
         _db.UpsertSeerrSession(new SeerrSessionRow(jellyfinUserId, payload, now, now));
+        // The row changed: any cached header for it is stale by construction.
+        _cookieCache.TryRemove(jellyfinUserId, out _);
 
         // Warm-validation: confirm the session actually resolves a user.
         using var check = new HttpRequestMessage(HttpMethod.Get, $"{ServerUrl}/api/v1/auth/me");
-        ApplyCookies(check, cookies);
+        ApplyCookieHeader(check, BuildCookieHeader(cookies));
         using var checkResponse = await _sender(check, null, CancellationToken.None);
         if (checkResponse.IsSuccessStatusCode)
         {
@@ -141,21 +175,36 @@ public sealed class SeerrSessionService
 
     public SeerrSessionRow? GetSession(string userId) => _db.GetSeerrSession(userId);
 
-    public bool DeleteSession(string userId) => _db.DeleteSeerrSession(userId);
+    public bool DeleteSession(string userId)
+    {
+        _cookieCache.TryRemove(userId, out _);
+        return _db.DeleteSeerrSession(userId);
+    }
 
-    /// <summary>Loads the user's session cookies into a request; returns false when absent/expired/undecryptable.</summary>
+    /// <summary>
+    /// Loads the user's session cookies into a request; returns false when
+    /// absent/expired/undecryptable. Cache first (the header for the TTL
+    /// window), the authoritative row + decrypt + parse on miss.
+    /// </summary>
     public bool TryApplySession(string userId, HttpRequestMessage request)
     {
+        var nowMs = _clock.GetUtcNow().ToUnixTimeMilliseconds();
+        if (_cookieCache.TryGetValue(userId, out var cached) && nowMs < cached.ExpiresAtMs)
+        {
+            ApplyCookieHeader(request, cached.Header);
+            return true;
+        }
+
         var session = _db.GetSeerrSession(userId);
         if (session is null)
         {
             return false;
         }
 
-        var ttlMs = _config().SessionTtlHours * 3_600_000L;
-        if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - session.CreatedAt > ttlMs)
+        if (SeerrSessionTtls.IsExpired(session, nowMs, _config()))
         {
             _db.DeleteSeerrSession(userId);
+            _cookieCache.TryRemove(userId, out _);
             return false;
         }
 
@@ -166,11 +215,46 @@ public sealed class SeerrSessionService
             // the session is unrecoverable — treat as absent, drop the row.
             _logger.LogWarning("Seerr session payload for {User} could not be decrypted; treating as unlinked", userId);
             _db.DeleteSeerrSession(userId);
+            _cookieCache.TryRemove(userId, out _);
             return false;
         }
 
-        ApplyCookies(request, DeserializeCookies(cookiesJson));
+        var header = BuildCookieHeader(DeserializeCookies(cookiesJson));
+        CacheCookieHeader(userId, nowMs, session.CreatedAt, header);
+        ApplyCookieHeader(request, header);
         return true;
+    }
+
+    private void CacheCookieHeader(string userId, long nowMs, long sessionCreatedAt, string header)
+    {
+        // The entry dies with its session: the earlier of the cache window's
+        // end and the session's own TTL boundary.
+        // Benign race, accepted: a concurrent TryApplySession that read a
+        // pre-rotation row can re-cache the old cookie header after the
+        // TryRemove in Login/DeleteSession "invalidated" it. The stale entry
+        // lives at most the cache window (60s), the old cookies remain valid
+        // server-side until they expire there, and the entry self-heals at
+        // the next miss past the window.
+        var sessionExpiresAt = sessionCreatedAt + SeerrSessionTtls.SessionTtlMs(_config());
+        _cookieCache[userId] = (Math.Min(nowMs + SeerrSessionTtls.CookieCacheTtlMs, sessionExpiresAt), header);
+        MaybeSweepCookies(nowMs);
+    }
+
+    /// <summary>Occasional O(n) sweep so abandoned users do not accumulate forever (the shared <see cref="SweepGate"/>).</summary>
+    private void MaybeSweepCookies(long nowMs)
+    {
+        if (!SweepGate.Enter(ref _lastCookieSweepMs, nowMs, SeerrSessionTtls.CookieCacheTtlMs))
+        {
+            return;
+        }
+
+        foreach (var (key, entry) in _cookieCache)
+        {
+            if (nowMs >= entry.ExpiresAtMs)
+            {
+                _cookieCache.TryRemove(key, out _);
+            }
+        }
     }
 
     /// <summary>
@@ -188,9 +272,11 @@ public sealed class SeerrSessionService
         return System.Text.Encoding.UTF8.GetString(payload);
     }
 
-    private static void ApplyCookies(HttpRequestMessage request, IEnumerable<(string Name, string Value)> cookies)
+    private static string BuildCookieHeader(IEnumerable<(string Name, string Value)> cookies)
+        => string.Join("; ", cookies.Select(cookie => $"{cookie.Name}={cookie.Value}"));
+
+    private static void ApplyCookieHeader(HttpRequestMessage request, string header)
     {
-        var header = string.Join("; ", cookies.Select(cookie => $"{cookie.Name}={cookie.Value}"));
         if (!string.IsNullOrEmpty(header))
         {
             request.Headers.Add("Cookie", header);

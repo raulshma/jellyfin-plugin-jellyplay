@@ -22,20 +22,20 @@ public class SeerrController : JellyPlayControllerBase
     private readonly SeerrSessionService _sessions;
     private readonly SeerrProxyService _proxy;
     private readonly SeerrWebhookProvisioner _provisioner;
-    private readonly Services.Events.EventService _events;
+    private readonly SeerrWebhookIntake _intake;
     private readonly Func<Configuration.SeerrConfig> _config;
 
     public SeerrController(
         SeerrSessionService sessions,
         SeerrProxyService proxy,
         SeerrWebhookProvisioner provisioner,
-        Services.Events.EventService events,
+        SeerrWebhookIntake intake,
         Func<Configuration.SeerrConfig> config)
     {
         _sessions = sessions;
         _proxy = proxy;
         _provisioner = provisioner;
-        _events = events;
+        _intake = intake;
         _config = config;
     }
 
@@ -44,7 +44,7 @@ public class SeerrController : JellyPlayControllerBase
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> Login([FromBody, Required] SeerrLoginRequest request)
     {
-        var userId = User.GetUserId().ToString();
+        var userId = User.GetUserIdString();
         var result = request.AuthType switch
         {
             "password" => await _sessions.LoginWithPassword(userId, request.Username ?? string.Empty, request.Password ?? string.Empty),
@@ -62,7 +62,7 @@ public class SeerrController : JellyPlayControllerBase
     [HttpGet("status")]
     public IActionResult Status()
     {
-        var session = _sessions.GetSession(User.GetUserId().ToString());
+        var session = _sessions.GetSession(User.GetUserIdString());
         return JellyPlayResponses.Camel(new
         {
             configured = _sessions.IsConfigured,
@@ -75,20 +75,20 @@ public class SeerrController : JellyPlayControllerBase
     /// <summary>Re-validates the stored session against Seerr (GET auth/me with the stored cookies); 60s cache.</summary>
     [HttpGet("validate")]
     public async Task<IActionResult> Validate(CancellationToken cancellationToken)
-        => JellyPlayResponses.Camel(new { valid = await _proxy.ValidateUserSessionAsync(User.GetUserId().ToString(), cancellationToken) });
+        => JellyPlayResponses.Camel(new { valid = await _proxy.ValidateUserSessionAsync(User.GetUserIdString(), cancellationToken) });
 
     [HttpDelete("logout")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public IActionResult Logout()
-        => _sessions.DeleteSession(User.GetUserId().ToString()) ? NoContent() : NotFound();
+        => _sessions.DeleteSession(User.GetUserIdString()) ? NoContent() : NotFound();
 
     [HttpGet("radarr/calendar")]
     public Task ProxyRadarrCalendar(CancellationToken cancellationToken)
-        => _proxy.ProxyAsync(HttpContext, "radarr/calendar?advancedFilters=false", User.GetUserId().ToString(), cancellationToken);
+        => _proxy.ProxyAsync(HttpContext, "radarr/calendar?advancedFilters=false", User.GetUserIdString(), cancellationToken);
 
     [HttpGet("sonarr/calendar")]
     public Task ProxySonarrCalendar(CancellationToken cancellationToken)
-        => _proxy.ProxyAsync(HttpContext, "sonarr/calendar?advancedFilters=false", User.GetUserId().ToString(), cancellationToken);
+        => _proxy.ProxyAsync(HttpContext, "sonarr/calendar?advancedFilters=false", User.GetUserIdString(), cancellationToken);
 
     /// <summary>Catch-all Seerr API proxy (per-user session enforced).</summary>
     [HttpGet("{**path}")]
@@ -100,48 +100,35 @@ public class SeerrController : JellyPlayControllerBase
     public Task Proxy(CancellationToken cancellationToken)
     {
         var path = (string?)HttpContext.Request.RouteValues["path"] ?? string.Empty;
-        return _proxy.ProxyAsync(HttpContext, path, User.GetUserId().ToString(), cancellationToken);
+        return _proxy.ProxyAsync(HttpContext, path, User.GetUserIdString(), cancellationToken);
     }
 
     /// <summary>
     /// Inbound Seerr webhook (AllowAnonymous). Abuse containment runs first —
     /// the rate-limit filter fires before the action (30/min per remote
-    /// client, 429 when exceeded) — then the secret check, compared in
-    /// constant time.
+    /// client, 429 when exceeded) — then the body is handed to the intake
+    /// module (secret-match + parse → broadcast) and the outcome mapped
+    /// through the serialization gate. The controller owns HTTP only.
     /// </summary>
     [HttpPost("webhook")]
     [AllowAnonymous]
     [RequestSizeLimit(256 * 1024)] // anonymous inbound — cap the unauthenticated read before parsing
-    [RateLimit(typeof(Services.Admin.WebhookRateLimiter), "webhook", RateLimitKeyStrategy.ClientIdentity)]
+    [RateLimit(Services.Admin.RateLimiterKind.Webhook, "webhook", RateLimitKeyStrategy.ClientIdentity)]
     [ApiExplorerSettings(IgnoreApi = true)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> Webhook()
     {
-        var config = _config();
         var secret = Request.Headers["X-JellyPlay-Webhook-Secret"].ToString();
-        if (string.IsNullOrEmpty(config.WebhookSecret)
-            || !Services.Admin.WebhookSecurity.SecretMatches(config.WebhookSecret, secret))
-        {
-            return Unauthorized();
-        }
-
         using var reader = new System.IO.StreamReader(Request.Body);
         var body = await reader.ReadToEndAsync();
-        try
+        return _intake.Handle(secret, body) switch
         {
-            using var doc = System.Text.Json.JsonDocument.Parse(body);
-            var root = doc.RootElement;
-            var subject = root.TryGetProperty("subject", out var subjectElement) ? subjectElement.GetString() : "Seerr request";
-            var message = root.TryGetProperty("message", out var messageElement) ? messageElement.GetString() : null;
-            _events.PublishBroadcast($"Seerr: {subject}", message ?? "Request activity in Seerr", null);
-            return JellyPlayResponses.Camel();
-        }
-        catch (System.Text.Json.JsonException)
-        {
-            return BadRequest();
-        }
+            SeerrWebhookIntakeOutcome.Accepted => JellyPlayResponses.Camel(),
+            SeerrWebhookIntakeOutcome.BadPayload => BadRequest(),
+            _ => Unauthorized(),
+        };
     }
 
     /// <summary>

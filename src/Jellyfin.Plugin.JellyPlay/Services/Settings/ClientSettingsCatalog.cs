@@ -156,6 +156,49 @@ public static class ClientSettingsCatalog
         return null;
     }
 
+    /// <summary>
+    /// Validates a whole admin-defaults envelope against the catalog: known
+    /// keys must type-match and honor min/max/options. Unknown keys pass —
+    /// the namespace is client-defined and forward-compatible; entries without
+    /// a usable ns/key shape or without an object value are skipped. The one
+    /// validation seam behind the Settings sync module and the admin push
+    /// dry-run, so the composite spelling (first-segment split) and the skip
+    /// rules live with Find + ValidateValue instead of on a stateful module.
+    /// </summary>
+    public static List<string> ValidateEnvelope(JsonElement payload)
+    {
+        var problems = new List<string>();
+        if (payload.ValueKind != JsonValueKind.Object)
+        {
+            return problems;
+        }
+
+        foreach (var property in payload.EnumerateObject())
+        {
+            var (ns, key) = Admin.DefaultsEnvelope.Split(property.Name);
+            if (ns.Length == 0 || key.Length == 0)
+            {
+                continue;
+            }
+
+            var descriptor = Find(ns, key);
+            if (descriptor is null
+                || property.Value.ValueKind != JsonValueKind.Object
+                || !property.Value.TryGetProperty("value", out var value))
+            {
+                continue;
+            }
+
+            var problem = ValidateValue(descriptor, value);
+            if (problem is not null)
+            {
+                problems.Add(problem);
+            }
+        }
+
+        return problems;
+    }
+
     private static IReadOnlyList<ClientSettingDescriptor> LoadEmbeddedCatalog()
     {
         var assembly = typeof(ClientSettingsCatalog).Assembly;

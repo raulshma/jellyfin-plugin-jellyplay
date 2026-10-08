@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Threading;
 using System.Threading.Tasks;
@@ -33,7 +31,7 @@ public class EventsController : JellyPlayControllerBase
     /// <summary>Admin broadcast to every connected client.</summary>
     [HttpPost("broadcast")]
     [Authorize(Policy = MediaBrowser.Common.Api.Policies.RequiresElevation)]
-    [RateLimit(typeof(Services.Admin.BroadcastRateLimiter), "broadcast")]
+    [RateLimit(Services.Admin.RateLimiterKind.Broadcast, "broadcast")]
     [ProducesResponseType(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public IActionResult Broadcast([FromBody, Required] BroadcastRequest request)
@@ -52,17 +50,8 @@ public class EventsController : JellyPlayControllerBase
     /// harmless, clients dedup by id — where the reverse order could drop it.
     /// </summary>
     [HttpGet("events/stream")]
-    public async Task StreamEvents(CancellationToken cancellationToken)
-    {
-        var subscriberId = _hub.Subscribe(User.GetUserId().ToString(), SseHub.EventsStream);
-
-        IReadOnlyList<SseEvent>? replay = null;
-        if (Request.Headers.TryGetValue("Last-Event-ID", out var lastEventId)
-            && ulong.TryParse(lastEventId.ToString(), out var after))
-        {
-            replay = _hub.ReplayEvents(User.GetUserId().ToString(), after);
-        }
-
-        await SseStreamWriter.WriteAsync(HttpContext, _hub, subscriberId, cancellationToken, replay: replay);
-    }
+    public Task StreamEvents(CancellationToken cancellationToken)
+        // Deep module seam: subscription + Last-Event-ID replay + streaming
+        // live behind SseStreamWriter so controllers leverage one interface.
+        => SseStreamWriter.WriteSubscribedAsync(HttpContext, _hub, User.GetUserIdString(), SseHub.EventsStream, cancellationToken);
 }

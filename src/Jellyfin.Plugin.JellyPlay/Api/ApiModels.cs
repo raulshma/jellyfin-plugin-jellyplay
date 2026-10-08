@@ -56,7 +56,13 @@ public sealed class SettingsEntryDto
 
     public string Profile { get; set; } = string.Empty;
 
-    public JsonElement Value { get; set; }
+    /// <summary>
+    /// The setting's JSON value as pre-encoded text: snapshot/delta/resolve
+    /// reads wrap the stored bytes without parsing, and the gate writes them
+    /// through verbatim (<see cref="RawJson"/>). Import binding accepts any
+    /// JSON token shape via the same type.
+    /// </summary>
+    public RawJson Value { get; set; }
 }
 
 /// <summary>A key deleted since a delta cursor (the delta's deleted[] half).</summary>

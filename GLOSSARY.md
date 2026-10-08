@@ -97,5 +97,6 @@ for every scraped source (API sources use the plugin's own client), and
 failure shaped as "no data" (null), never an exception leaking to a route.
 The pipeline is single-flight: concurrent cold fetches for the same source
 coalesce into one upstream hit, and a failed fetch clears its slot so the
-next caller retries. The Fribb anime id index is NOT on this pipeline — it
-is a separate single-flight, memoized fetch with its own staleness window.
+next caller retries. The Fribb anime id index rides the same `FetchAsync`
+seam (breaker + failure shaping in the fetcher) with its own staleness window
+and index memoization above the pipeline — one breaker locality per source.

@@ -70,7 +70,7 @@ public sealed class AdminPreviewTests : IDisposable
 
         var preview = _service.ResolveProfile("u1", "");
 
-        Assert.Equal("\"dark\"", preview.Settings.Single(entry => entry.Key == "theme").Value.GetRawText());
+        Assert.Equal("\"dark\"", preview.Settings.Single(entry => entry.Key == "theme").Value.Json);
         Assert.Equal(
             new Dictionary<string, string>
             {
@@ -164,8 +164,8 @@ public sealed class AdminPushDryRunTests : IDisposable
 
         // NOTHING was written: both users keep their stored values, no
         // restore points, no NEW history rows, the head untouched.
-        Assert.Equal("\"user\"", _service.GetAll("u1", "").Settings.Single().Value.GetRawText());
-        Assert.Equal("\"future\"", _service.GetAll("u2", "").Settings.Single().Value.GetRawText());
+        Assert.Equal("\"user\"", _service.GetAll("u1", "").Settings.Single().Value.Json);
+        Assert.Equal("\"future\"", _service.GetAll("u2", "").Settings.Single().Value.Json);
         Assert.Empty(_snapshots.List("u1"));
         Assert.Empty(_snapshots.List("u2"));
         Assert.Equal(historyBefore, _db.GetSyncHistory("u1", 0, 50).Count);
@@ -176,7 +176,7 @@ public sealed class AdminPushDryRunTests : IDisposable
         var pushed = _admin.PushDefaults(null);
         Assert.Equal(1, pushed.KeysPushed);
         Assert.Null(pushed.DryRun);
-        Assert.Equal("\"dark\"", _service.GetAll("u1", "").Settings.Single().Value.GetRawText());
+        Assert.Equal("\"dark\"", _service.GetAll("u1", "").Settings.Single().Value.Json);
         Assert.Single(_snapshots.List("u1"), row => row.Origin == "admin-push");
     }
 

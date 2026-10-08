@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
@@ -16,6 +15,39 @@ namespace Jellyfin.Plugin.JellyPlay.Realtime;
 public static class SseStreamWriter
 {
     public static readonly TimeSpan DefaultKeepAliveInterval = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// SSE subscription seam: subscribes <paramref name="userId"/> to
+    /// <paramref name="stream"/>, reads the replay window, then streams.
+    /// <paramref name="keepAliveInterval"/> default falls back to <see cref="DefaultKeepAliveInterval"/>.
+    /// </summary>
+    public static async Task WriteSubscribedAsync(
+        HttpContext context,
+        SseHub hub,
+        string userId,
+        string stream,
+        CancellationToken requestAborted,
+        TimeSpan keepAliveInterval = default)
+    {
+        // SSE subscription seam: this module owns subscribe → replay-read →
+        // stream so controllers leverage one entry point. The subscription is
+        // taken BEFORE the replay ring is read: an event published in between
+        // lands in both (ring + live channel) and is delivered twice —
+        // harmless, clients dedup by id — where the reverse order could drop
+        // it. Only the events stream carries a replay ring (Last-Event-ID);
+        // other streams skip the replay read entirely.
+        var subscriberId = hub.Subscribe(userId, stream);
+
+        IReadOnlyList<SseEvent>? replay = null;
+        if (string.Equals(stream, SseHub.EventsStream, StringComparison.Ordinal)
+            && context.Request.Headers.TryGetValue("Last-Event-ID", out var lastEventId)
+            && ulong.TryParse(lastEventId.ToString(), out var after))
+        {
+            replay = hub.ReplayEvents(userId, after);
+        }
+
+        await WriteAsync(context, hub, subscriberId, requestAborted, keepAliveInterval, replay).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// Streams the subscription, replaying <paramref name="replay"/> (reconnect catch-up) before the live feed.
@@ -49,7 +81,7 @@ public static class SseStreamWriter
             {
                 foreach (var missed in replay)
                 {
-                    await context.Response.WriteAsync(FormatFrame(missed), requestAborted).ConfigureAwait(false);
+                    await context.Response.WriteAsync(missed.Frame, requestAborted).ConfigureAwait(false);
                 }
 
                 await context.Response.Body.FlushAsync(requestAborted).ConfigureAwait(false);
@@ -57,10 +89,17 @@ public static class SseStreamWriter
 
             while (!requestAborted.IsCancellationRequested)
             {
-                var evt = await hub.WaitForEventAsync(subscriberId, keepAlive, requestAborted).ConfigureAwait(false);
-                if (evt is not null)
+                var events = await hub.WaitForEventsAsync(subscriberId, keepAlive, requestAborted).ConfigureAwait(false);
+                if (events is { Count: > 0 })
                 {
-                    await context.Response.WriteAsync(FormatFrame(evt), requestAborted).ConfigureAwait(false);
+                    // One drain = one write pass + ONE flush: a burst of N
+                    // buffered events leaves as a single batch, not N flushes
+                    // (each event's frame was already built once at publish).
+                    foreach (var evt in events)
+                    {
+                        await context.Response.WriteAsync(evt.Frame, requestAborted).ConfigureAwait(false);
+                    }
+
                     await context.Response.Body.FlushAsync(requestAborted).ConfigureAwait(false);
                 }
                 else if (!hub.IsSubscribed(subscriberId))
@@ -84,23 +123,5 @@ public static class SseStreamWriter
         {
             hub.Unsubscribe(subscriberId);
         }
-    }
-
-    private static string FormatFrame(SseEvent evt)
-    {
-        var builder = new StringBuilder(256);
-        builder.Append("id: ").Append(evt.Id).Append('\n');
-        builder.Append("event: ").Append(evt.EventName).Append('\n');
-        builder.Append("retry: ").Append(evt.RetrySeconds).Append('\n');
-        // SSE carries one data: line per payload line — a raw
-        // newline inside the payload would terminate the frame
-        // early and corrupt the stream.
-        foreach (var line in evt.Data.Replace("\r\n", "\n").Split('\n'))
-        {
-            builder.Append("data: ").Append(line).Append('\n');
-        }
-
-        builder.Append('\n');
-        return builder.ToString();
     }
 }

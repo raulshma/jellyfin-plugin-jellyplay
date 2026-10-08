@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using Jellyfin.Plugin.JellyPlay.Api;
 
@@ -16,9 +17,41 @@ namespace Jellyfin.Plugin.JellyPlay.Services.Shared;
 /// the stored bytes are exactly what <c>MessageService</c> historically
 /// wrote inline (preserved byte-for-byte by this extraction), and nothing on
 /// the wire depends on this class's serializer options.
+///
+/// Depth: the <see cref="BroadcastTargets"/> value is the one fan-out
+/// interface every SSE + push pairing leverages — one Null|Set seam (null =
+/// broadcast-all, empty = nobody) instead of each caller re-implementing the
+/// null-vs-empty locality. <see cref="ResolveAudience"/> is the unified
+/// resolution behind the two historical helpers; those helpers stay as thin
+/// adapters so existing callers keep compiling.
 /// </summary>
 public static class Audience
 {
+    /// <summary>
+    /// The one broadcast-target value behind every fan-out: null broadcasts to
+    /// all users, an empty set delivers to nobody, otherwise the member ids.
+    /// The same Null|Set semantics the hub and the push store already enforce —
+    /// now named, so the SSE + push pairing shares one interface instead of
+    /// passing raw nullable collections.
+    /// </summary>
+    public sealed record BroadcastTargets(IReadOnlyCollection<string>? UserIds)
+    {
+        /// <summary>Broadcast to every user (the null leg).</summary>
+        public static BroadcastTargets All { get; } = new((IReadOnlyCollection<string>?)null);
+
+        /// <summary>Deliver to nobody (the empty-set leg).</summary>
+        public static BroadcastTargets Nobody { get; } = new(Array.Empty<string>());
+
+        /// <summary>Whether this is the broadcast-all leg (null).</summary>
+        public bool IsBroadcast => UserIds is null;
+
+        /// <summary>Whether this delivers to nobody (non-null but empty).</summary>
+        public bool IsNobody => UserIds is { Count: 0 };
+
+        /// <summary>Wraps a raw nullable set (null stays broadcast-all).</summary>
+        public static BroadcastTargets From(IReadOnlyCollection<string>? userIds)
+            => userIds is null ? All : new BroadcastTargets(userIds);
+    }
     /// <summary>Serializes the stored audience payload (identical bytes to serializing the payload class directly).</summary>
     public static string Serialize(AudiencePayload audience)
         => JsonSerializer.Serialize(audience);
@@ -37,28 +70,103 @@ public static class Audience
     }
 
     /// <summary>
+    /// The unified audience resolution both historical helpers leverage: one
+    /// case-insensitive switch ("admins" → admin set, "users" → explicit ids,
+    /// anything else → broadcast-all). Pure so it is unit-testable without the
+    /// host; the <see cref="BroadcastTargets"/> wrapper makes the Null|Set
+    /// contract explicit at the type level.
+    /// </summary>
+    public static BroadcastTargets ResolveAudience(
+        string? audienceType,
+        IReadOnlyList<string> explicitUserIds,
+        IReadOnlyList<string> adminUserIds)
+        => BroadcastTargets.From(audienceType switch
+        {
+            { } type when string.Equals(type, "admins", StringComparison.OrdinalIgnoreCase)
+                => (IReadOnlyCollection<string>?)new HashSet<string>(adminUserIds, StringComparer.Ordinal),
+            { } type when string.Equals(type, "users", StringComparison.OrdinalIgnoreCase)
+                => new HashSet<string>(explicitUserIds, StringComparer.Ordinal),
+            _ => null
+        });
+
+    /// <summary>
+    /// Event-pipeline overload of the unified seam: the event tag has no
+    /// explicit user list ("admins" → admin set, anything else → broadcast).
+    /// Event semantics: only "admins" is gated; "users"/"all"/null/corrupt all
+    /// broadcast (the message path's explicit-ids leg has no meaning here).
+    /// </summary>
+    public static BroadcastTargets ResolveAudience(
+        string? audience,
+        IReadOnlyList<string> adminUserIds)
+        => string.Equals(audience, "admins", StringComparison.OrdinalIgnoreCase)
+            ? BroadcastTargets.From(new HashSet<string>(adminUserIds, StringComparer.Ordinal))
+            : BroadcastTargets.All;
+
+    /// <summary>
+    /// Payload overload: resolves a stored <see cref="AudiencePayload"/> (the
+    /// message registry's shape) through the same unified seam.
+    /// </summary>
+    public static BroadcastTargets ResolveAudience(
+        AudiencePayload audience,
+        IReadOnlyList<string> adminUserIds)
+        => ResolveAudience(audience.Type, audience.UserIds, adminUserIds);
+
+    /// <summary>
     /// Push/SSE targets for a message audience: "admins" → the admin id set,
     /// "users" → the explicit ids (empty list delivers to nobody), anything
-    /// else → null = every user. Pure so it is unit-testable without the host.
+    /// else → null = every user. The type match is case-insensitive — the same
+    /// rule the event path applies — so one spelling works on every
+    /// audience-bearing surface. Pure so it is unit-testable without the host.
+    /// Thin adapter over <see cref="ResolveAudience"/>; kept so existing
+    /// callers keep compiling with identical semantics.
     /// </summary>
     public static IReadOnlyCollection<string>? ResolveTargets(
         string? audienceType,
         IReadOnlyList<string> explicitUserIds,
         IReadOnlyList<string> adminUserIds)
+        => ResolveAudience(audienceType, explicitUserIds, adminUserIds).UserIds;
+
+    /// <summary>
+    /// Whether one user sees content addressed to an audience: admins-gated
+    /// content needs an admin, users-gated content needs membership in the
+    /// explicit set, anything else ("all", corrupt, absent) is visible. The
+    /// one visibility seam behind the inbox projection and any future
+    /// audience-gated read, so the push fan-out and the read path share the
+    /// same decision instead of re-implementing the switch.
+    /// </summary>
+    public static bool IsVisible(
+        string? audienceType,
+        string userId,
+        IReadOnlyList<string> explicitUserIds,
+        bool isAdmin)
         => audienceType switch
         {
-            "admins" => new HashSet<string>(adminUserIds, StringComparer.Ordinal),
-            "users" => new HashSet<string>(explicitUserIds, StringComparer.Ordinal),
-            _ => null
+            { } type when string.Equals(type, "admins", StringComparison.OrdinalIgnoreCase) => isAdmin,
+            { } type when string.Equals(type, "users", StringComparison.OrdinalIgnoreCase)
+                => explicitUserIds.Contains(userId, StringComparer.Ordinal),
+            _ => true
         };
 
     /// <summary>
     /// Targets for the event pipeline's simpler audience tag: "admins" → the
     /// admin id set, anything else ("all") → null = broadcast to every
-    /// subscriber. Pure so it is unit-testable without the host.
+    /// subscriber. Pure so it is unit-testable without the host. Resolves via
+    /// the <see cref="BroadcastTargets"/> seam (IsBroadcast/IsNobody checks —
+    /// never a fragile interface cast), then materializes a set.
     /// </summary>
     public static IReadOnlySet<string>? ResolveEventTargets(string? audience, IReadOnlyList<string> adminUserIds)
-        => string.Equals(audience, "admins", StringComparison.OrdinalIgnoreCase)
-            ? new HashSet<string>(adminUserIds, StringComparer.Ordinal)
-            : null;
+    {
+        var resolved = ResolveAudience(audience, adminUserIds);
+        if (resolved.IsBroadcast)
+        {
+            return null;
+        }
+
+        if (resolved.IsNobody)
+        {
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        return new HashSet<string>(resolved.UserIds!, StringComparer.Ordinal);
+    }
 }

@@ -30,12 +30,22 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
 {
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
+        // Resilient-fetch transport (every TMDB/MDBList/IMDb/Letterboxd/anime
+        // fetch + the Seerr proxy): the same connection policy the push client
+        // below uses — pooled connections recycle on a 10-minute lifetime and
+        // connects fail fast at 5s — with the 15s overall request budget and
+        // the plugin UA on the client itself.
         serviceCollection.AddHttpClient(
             "JellyPlayHttpClient",
             client =>
             {
                 client.Timeout = TimeSpan.FromSeconds(15);
                 client.DefaultRequestHeaders.UserAgent.ParseAdd("jellyfin-plugin-jellyplay/1.0");
+            })
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+                ConnectTimeout = TimeSpan.FromSeconds(5)
             });
 
         // Push transports (dispatcher + FCM token exchange): one named pooled
@@ -43,7 +53,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         // each request is bounded by its own 10s CTS, so the client timeout
         // itself stays infinite.
         serviceCollection.AddHttpClient(
-            Services.Push.PushDispatcher.HttpClientName,
+            Services.Push.PushPayloads.HttpClientName,
             client =>
             {
                 client.Timeout = System.Threading.Timeout.InfiniteTimeSpan;
@@ -72,20 +82,15 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton(_ => new Func<Configuration.AnimeConfig>(() => JellyPlayPlugin.Instance!.Configuration.Anime));
         serviceCollection.AddSingleton(_ => new Func<Configuration.CacheConfig>(() => JellyPlayPlugin.Instance!.Configuration.Cache));
         serviceCollection.AddSingleton(_ => new Func<Configuration.RowsConfig>(() => JellyPlayPlugin.Instance!.Configuration.Rows));
-        // Rows fetchers honestly declare the values they consume (TMDB/MDBList
-        // keys + cache TTL), composed from the sections that own them — they
-        // never depend on the whole ratings section.
-        serviceCollection.AddSingleton(_ => new Func<Services.Rows.RowsFetchConfig>(() =>
-        {
-            var ratings = JellyPlayPlugin.Instance!.Configuration.Ratings;
-            return new Services.Rows.RowsFetchConfig(ratings.TmdbApiKey, ratings.MdbListApiKey, ratings.CacheTtlHours);
-        }));
 
         // Push notifications (plugin is the push server; fire-and-forget).
         // FcmTokenProvider mints OAuth2 tokens for the fcm transport from the
         // admin-pasted service-account key (never logged, never surfaced).
         serviceCollection.AddSingleton<Services.Push.FcmTokenProvider>();
         serviceCollection.AddSingleton<Services.Push.PushDispatcher>();
+        // The one SSE+push pairing every broadcast leverages (see
+        // Services/Shared/NotificationFanout): needs only the hub + dispatcher.
+        serviceCollection.AddSingleton<Services.Shared.NotificationFanout>();
 
         // Device registry: registration contract (push attach/preserve/detach,
         // FCM gate), the caps-gated revoke+wipe orchestration and owner-scoped
@@ -125,9 +130,18 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton(sp => new Func<IReadOnlyList<string>>(() => sp.GetRequiredService<Services.Admin.AdminUsers>().AdminUserIds));
 
         // Events & messages — constructor-injected (hub, config Func, admin-ids
-        // Func, logger, dispatcher) straight from this container.
-        serviceCollection.AddSingleton<EventService>();
+        // Func, logger, dispatcher) straight from this container. The
+        // grouping buffer comes first (the pipeline wraps it), then the
+        // pipeline (TimeProvider + virtual-folder Func seams, 10s tick
+        // preserved), then the services that leverage both seams.
         serviceCollection.AddSingleton<EpisodeGroupBuffer>();
+        serviceCollection.AddSingleton(sp => new NewMediaPipeline(
+            sp.GetRequiredService<EpisodeGroupBuffer>(),
+            sp.GetRequiredService<Func<Configuration.EventsConfig>>(),
+            TimeProvider.System,
+            () => sp.GetRequiredService<ILibraryManager>().GetVirtualFolders(),
+            sp.GetRequiredService<ILogger<NewMediaPipeline>>()));
+        serviceCollection.AddSingleton<EventService>();
         serviceCollection.AddSingleton<MessageService>();
         serviceCollection.AddHostedService<ItemAddedWatcher>();
         serviceCollection.AddScoped<IEventConsumer<global::MediaBrowser.Controller.Events.Session.SessionStartedEventArgs>, SessionStartedEvent>();
@@ -148,6 +162,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         });
         serviceCollection.AddSingleton<SeerrSessionService>();
         serviceCollection.AddSingleton<SeerrProxyService>();
+        serviceCollection.AddSingleton<SeerrWebhookIntake>();
         serviceCollection.AddSingleton<SeerrWebhookProvisioner>();
         serviceCollection.AddSingleton(sp => Services.Seerr.SecretBox.LoadOrCreate(JellyPlayPlugin.Instance!.DataDirectory));
         serviceCollection.AddHostedService<SeerrProvisioningHostedService>();
@@ -182,11 +197,9 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<AdminDefaultsService>();
         serviceCollection.AddSingleton<ConfigBackupService>();
         // Mutating-route abuse containment (settings POST 30/min per user, broadcast 10/min per admin,
-        // anonymous seerr webhook intake 30/min per remote client, admin pushDefaults 5/min per admin)
-        serviceCollection.AddSingleton<Services.Admin.SettingsRateLimiter>();
-        serviceCollection.AddSingleton<Services.Admin.BroadcastRateLimiter>();
-        serviceCollection.AddSingleton<Services.Admin.WebhookRateLimiter>();
-        serviceCollection.AddSingleton<Api.PushDefaultsRateLimiter>();
+        // anonymous seerr webhook intake 30/min per remote client, admin pushDefaults 5/min per admin):
+        // one registry module behind a RateLimiterKind seam, not four one-line subclasses.
+        serviceCollection.AddSingleton<Services.Admin.RateLimiterRegistry>();
 
         // Jellyfin-12 similar-items pipeline registration (reflection-guarded; no-op on 10.11).
         // One singleton shared by both faces: the controller injects the concrete

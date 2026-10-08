@@ -9,10 +9,14 @@ public static class ConfigurationExtensions
     public static bool Enabled(this RatingsConfig config)
         => !string.IsNullOrEmpty(config.MdbListApiKey) || !string.IsNullOrEmpty(config.TmdbApiKey);
 
-    /// <summary>FCM transport is ready when both the project id and a service-account key are set.</summary>
+    /// <summary>
+    /// FCM transport is ready when both the project id and a service-account
+    /// key are set. Thin adapter over the one usability seam
+    /// (<see cref="Services.Push.PushEligibility.IsFcmUsable"/>) so the triple
+    /// check collapses to a single home.
+    /// </summary>
     public static bool FcmConfigured(this PushConfig config)
-        => !string.IsNullOrWhiteSpace(config.FcmProjectId)
-           && !string.IsNullOrWhiteSpace(config.FcmServiceAccountJson);
+        => Services.Push.PushEligibility.IsFcmUsable(config);
 }
 
 /// <summary>

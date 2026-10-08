@@ -136,6 +136,14 @@ public sealed class NewsletterService
             {
                 (Jellyfin.Data.Enums.ItemSortBy.DateCreated, Jellyfin.Database.Implementations.Enums.SortOrder.Descending)
             },
+            // The host query supports a DateCreated lower bound (verified on
+            // Jellyfin.Controller 10.11: InternalItemsQuery.MinDateCreated), so
+            // the window is pushed to the host as a prefilter. The in-memory
+            // fold below stays as the behavior seam — identical outputs (the
+            // window's items sort newest-first, so prefilter + Take(20) selects
+            // the same slice), with the fold guarding any host-side boundary
+            // rounding.
+            MinDateCreated = since,
             Limit = 30
         };
 

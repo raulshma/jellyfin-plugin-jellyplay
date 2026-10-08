@@ -65,7 +65,7 @@ public sealed class ResilientFetcher
     /// nothing is cached.
     /// Concurrent cold callers for the same key coalesce into one fetch.
     /// </summary>
-    public Task<T?> GetOrFetchAsync<T>(
+    public async Task<T?> GetOrFetchAsync<T>(
         string cacheKey,
         TimeSpan ttl,
         Func<HttpClient, CancellationToken, Task<T?>> fetch,
@@ -75,16 +75,17 @@ public sealed class ResilientFetcher
         LogLevel failureLogLevel = LogLevel.Warning,
         CancellationToken cancellationToken = default)
     {
-        if (TryReadCached<T>(cacheKey, ttl, missCache, missTtl, out var shortCircuit))
+        var probe = await ProbeCacheAsync<T>(cacheKey, ttl, missCache, missTtl).ConfigureAwait(false);
+        if (probe.Kind != CacheProbeKind.NotFound)
         {
-            return shortCircuit!;
+            return probe.Value; // Hit carries the value; MissMarker shapes as null
         }
 
         var missKey = $"{cacheKey}:miss";
-        return RunSingleFlightAsync<T>(
+        return await RunSingleFlightAsync<T>(
             cacheKey,
             cancellationToken,
-            cancellation => FetchAndCacheAsync(cacheKey, fetch, breaker, missCache, missKey, failureLogLevel, cancellation));
+            cancellation => FetchAndCacheAsync(cacheKey, fetch, breaker, missCache, missKey, failureLogLevel, cancellation)).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -101,7 +102,7 @@ public sealed class ResilientFetcher
     /// <typeparam name="TSource">One upstream's raw result.</typeparam>
     /// <typeparam name="TValue">The merged, cached aggregate.</typeparam>
     /// <param name="merge">Pure result shaping: per-source values (null = that source failed or was skipped) → the aggregate, or null for "no data".</param>
-    public Task<TValue?> GetOrFetchMultiAsync<TSource, TValue>(
+    public async Task<TValue?> GetOrFetchMultiAsync<TSource, TValue>(
         string cacheKey,
         TimeSpan ttl,
         IReadOnlyList<MultiSource<TSource>> sources,
@@ -110,49 +111,83 @@ public sealed class ResilientFetcher
         TimeSpan? missTtl = null,
         CancellationToken cancellationToken = default)
     {
-        if (TryReadCached<TValue>(cacheKey, ttl, missCache, missTtl, out var shortCircuit))
+        var probe = await ProbeCacheAsync<TValue>(cacheKey, ttl, missCache, missTtl).ConfigureAwait(false);
+        if (probe.Kind != CacheProbeKind.NotFound)
         {
-            return shortCircuit!;
+            return probe.Value;
         }
 
         var missKey = $"{cacheKey}:miss";
-        return RunSingleFlightAsync<TValue>(
+        return await RunSingleFlightAsync<TValue>(
             cacheKey,
             cancellationToken,
-            cancellation => FetchMultiAndCacheAsync(cacheKey, sources, merge, missCache, missKey, cancellation));
+            cancellation => FetchMultiAndCacheAsync(cacheKey, sources, merge, missCache, missKey, cancellation)).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Single-flight outer helper for already-resolved aggregates (custom-row
+    /// matches, anime marker sets): the outer cache lives here, behind the same
+    /// probe + single-flight seam as the HTTP fetches, so services no longer
+    /// hand-roll Get-then-compute-then-Set (and its double-probe for a shared
+    /// key). The flight slot is namespaced ("resolved:") apart from the inner
+    /// fetch flights for the same cache key — the resolve closure may itself
+    /// call <see cref="GetOrFetchMultiAsync{TSource,TValue}"/> for that key
+    /// (the anime shape) without reentering its own slot. A null resolve is
+    /// "no data": nothing cached, and — unlike the HTTP fetches — no miss
+    /// marker is written here (the inner multi owns the Attempted rule, so an
+    /// all-breakers-open outer never poisons the miss window); a non-null
+    /// resolve caches and clears any miss marker the inner left behind.
+    /// Failure shaping matches the pipeline: caller cancellation propagates,
+    /// any other fault is "no data" (null).
+    /// </summary>
+    public async Task<T?> GetOrFetchResolvedAsync<T>(
+        string cacheKey,
+        TimeSpan ttl,
+        Func<CancellationToken, Task<T?>> resolve,
+        bool missCache = false,
+        TimeSpan? missTtl = null,
+        CancellationToken cancellationToken = default)
+    {
+        var probe = await ProbeCacheAsync<T>(cacheKey, ttl, missCache, missTtl).ConfigureAwait(false);
+        if (probe.Kind != CacheProbeKind.NotFound)
+        {
+            return probe.Value;
+        }
+
+        var flightKey = $"resolved:{cacheKey}";
+        var missKey = $"{cacheKey}:miss";
+        return await RunSingleFlightAsync<T>(
+            flightKey,
+            cancellationToken,
+            async cancellation =>
+            {
+                var value = await resolve(cancellation);
+                if (value is not null)
+                {
+                    await _cache.SetAsync(cacheKey, value).ConfigureAwait(false);
+                    if (missCache)
+                    {
+                        _cache.Invalidate(missKey);
+                    }
+                }
+
+                return value;
+            }).ConfigureAwait(false);
     }
 
     /// <summary>
     /// The shared cache-probe prologue of <see cref="GetOrFetchAsync{T}"/> and
-    /// <see cref="GetOrFetchMultiAsync{TSource,TValue}"/>: a fresh cached value
-    /// short-circuits the fetch, as does a live miss marker when
-    /// <paramref name="missCache"/> is enabled (both synchronously, as already
-    /// completed tasks). Returns true when <paramref name="result"/> carries
-    /// the short-circuit; false means the caller runs the single-flight fetch.
+    /// <see cref="GetOrFetchMultiAsync{TSource,TValue}"/>: one collapsed
+    /// value+miss probe per request (the store resolves each key once), where
+    /// a fresh cached value or a live miss marker short-circuits the fetch.
+    /// NotFound means the caller runs the single-flight fetch.
     /// </summary>
-    private bool TryReadCached<TValue>(
+    private Task<CacheProbe<TValue>> ProbeCacheAsync<TValue>(
         string cacheKey,
         TimeSpan ttl,
         bool missCache,
-        TimeSpan? missTtl,
-        out Task<TValue?>? result)
-    {
-        var cached = _cache.Get<TValue>(cacheKey, ttl);
-        if (cached is not null)
-        {
-            result = Task.FromResult<TValue?>(cached);
-            return true;
-        }
-
-        if (missCache && _cache.Get<bool>($"{cacheKey}:miss", missTtl ?? DefaultMissTtl))
-        {
-            result = Task.FromResult<TValue?>(default);
-            return true;
-        }
-
-        result = null;
-        return false;
-    }
+        TimeSpan? missTtl)
+        => _cache.TryGetAsync<TValue>(cacheKey, missCache ? $"{cacheKey}:miss" : null, ttl, missTtl ?? DefaultMissTtl);
 
     /// <summary>One upstream in a <see cref="GetOrFetchMultiAsync{TSource,TValue}"/> call: its own logging/breaker identity, factory and failure level.</summary>
     public sealed record MultiSource<TSource>(
@@ -266,7 +301,7 @@ public sealed class ResilientFetcher
         {
             if (attempt.Value is null)
             {
-                _cache.Set(missKey, true);
+                await _cache.SetAsync(missKey, true).ConfigureAwait(false);
             }
             else
             {
@@ -276,7 +311,7 @@ public sealed class ResilientFetcher
 
         if (attempt.Value is not null)
         {
-            _cache.Set(cacheKey, attempt.Value);
+            await _cache.SetAsync(cacheKey, attempt.Value).ConfigureAwait(false);
         }
 
         return attempt.Value;
@@ -315,7 +350,7 @@ public sealed class ResilientFetcher
                 // an open breaker must not poison the cache.
                 if (attempted)
                 {
-                    _cache.Set(missKey, true);
+                    await _cache.SetAsync(missKey, true).ConfigureAwait(false);
                 }
             }
             else
@@ -326,7 +361,7 @@ public sealed class ResilientFetcher
 
         if (merged is not null)
         {
-            _cache.Set(cacheKey, merged);
+            await _cache.SetAsync(cacheKey, merged).ConfigureAwait(false);
         }
 
         return merged;
@@ -339,8 +374,7 @@ public sealed class ResilientFetcher
         LogLevel failureLogLevel,
         CancellationToken cancellationToken)
     {
-        var now = NowMs;
-        if (breaker is not null && breaker.IsOpen(now))
+        if (breaker is not null && breaker.IsOpen())
         {
             _logger.LogDebug("{Source} circuit open; skipping fetch", source);
             return new FetchAttempt<T>(Attempted: false, Value: default);
@@ -350,9 +384,9 @@ public sealed class ResilientFetcher
         {
             var client = _httpFactory.CreateClient(HttpClientName);
             var value = await fetch(client, cancellationToken);
-            // Re-read the clock after the round trip: the breaker open window
-            // starts at the failure/success time, not before the request.
-            breaker?.RecordSuccess(NowMs);
+            // The breaker timestamps the success itself (its own clock), so
+            // the open window starts at completion time, not before the request.
+            breaker?.RecordSuccess();
             return new FetchAttempt<T>(Attempted: true, Value: value);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -363,7 +397,7 @@ public sealed class ResilientFetcher
         }
         catch (Exception ex)
         {
-            breaker?.RecordFailure(NowMs);
+            breaker?.RecordFailure();
             _logger.Log(failureLogLevel, ex, "{Source} fetch failed", source);
             return new FetchAttempt<T>(Attempted: true, Value: default);
         }

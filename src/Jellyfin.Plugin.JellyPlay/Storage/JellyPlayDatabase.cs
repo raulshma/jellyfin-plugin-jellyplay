@@ -26,7 +26,7 @@ public sealed partial class JellyPlayDatabase : IDisposable
     public const string BaseProfile = "";
 
     /// <summary>The schema version produced by this build's DDL + migrations.</summary>
-    public const int CurrentSchemaVersion = 8;
+    public const int CurrentSchemaVersion = 9;
 
     private const string SettingsTable = "settings";
     private const string ChangeLogTable = "change_log";
@@ -71,12 +71,24 @@ public sealed partial class JellyPlayDatabase : IDisposable
                 $"create index if not exists idx_{SyncHistoryTable}_user on {SyncHistoryTable}(UserId, Id)"
             ])),
         (4, "device_push_registration",
-            connection => connection.RunQueries(
-            [
-                $"alter table {DevicesTable} add column PushKind TEXT NULL",
-                $"alter table {DevicesTable} add column PushEndpoint TEXT NULL",
-                $"alter table {DevicesTable} add column CreatedAt INTEGER NULL"
-            ])),
+            connection =>
+            {
+                // Column adds are guarded: SQLite has no ADD COLUMN IF NOT
+                // EXISTS, and a hand-rolled (or partially rolled-back) older
+                // file may already carry some of the v4 columns.
+                foreach (var (column, ddl) in new[]
+                {
+                    ("PushKind", $"alter table {DevicesTable} add column PushKind TEXT NULL"),
+                    ("PushEndpoint", $"alter table {DevicesTable} add column PushEndpoint TEXT NULL"),
+                    ("CreatedAt", $"alter table {DevicesTable} add column CreatedAt INTEGER NULL")
+                })
+                {
+                    if (!HasColumn(connection, DevicesTable, column))
+                    {
+                        connection.RunQueries([ddl]);
+                    }
+                }
+            }),
         (5, "playback_analytics",
             connection => connection.RunQueries(
             [
@@ -114,13 +126,24 @@ public sealed partial class JellyPlayDatabase : IDisposable
                 $"create index if not exists idx_{PlaybackRollupsTable}_day on {PlaybackRollupsTable}(Day)"
             ])),
         (6, "sync_history_diff_range",
-            connection => connection.RunQueries(
-            [
+            connection =>
+            {
                 // Per-key diff support: each recorded operation brackets the
-                // change-log range it covered (null on pre-v6 rows).
-                $"alter table {SyncHistoryTable} add column FromSeq INTEGER NULL",
-                $"alter table {SyncHistoryTable} add column ToSeq INTEGER NULL"
-            ])),
+                // change-log range it covered (null on pre-v6 rows). Guarded
+                // like the v4/v7 column adds: SQLite has no ADD COLUMN IF NOT
+                // EXISTS, and a hand-rolled file may already carry them.
+                foreach (var (column, ddl) in new[]
+                {
+                    ("FromSeq", $"alter table {SyncHistoryTable} add column FromSeq INTEGER NULL"),
+                    ("ToSeq", $"alter table {SyncHistoryTable} add column ToSeq INTEGER NULL")
+                })
+                {
+                    if (!HasColumn(connection, SyncHistoryTable, column))
+                    {
+                        connection.RunQueries([ddl]);
+                    }
+                }
+            }),
         (7, "tombstones_registry_snapshots",
             connection =>
             {
@@ -174,10 +197,20 @@ public sealed partial class JellyPlayDatabase : IDisposable
                 // this index the correlation scanned the whole history per
                 // device on every sync/status poll.
                 $"create index if not exists idx_{SyncHistoryTable}_user_device on {SyncHistoryTable}(UserId, DeviceId, Id)"
+            ])),
+        (9, "read_path_indexes",
+            connection => connection.RunQueries(
+            [
+                // GetPlaybackSessions/GetTopPlaybackItems/CountDistinctPlaybackItems
+                // all filter on EndedAt.
+                $"create index if not exists idx_{PlaybackSessionsTable}_ended on {PlaybackSessionsTable}(EndedAt, UserId)",
+                // The profile-scoped delta join (GetChangedSettings) filters
+                // change_log by (UserId, Profile) with a Seq ordering.
+                $"create index if not exists idx_{ChangeLogTable}_user_profile_seq on {ChangeLogTable}(UserId, Profile, Seq)"
             ]))
     ];
 
-    /// <summary>Whether the table has the column (pragma table_info scan) — the guard behind migration 7's column adds.</summary>
+    /// <summary>Whether the table has the column (pragma table_info scan) — the guard behind the column-add migrations (4, 6 and 7).</summary>
     private static bool HasColumn(SqliteConnection connection, string table, string column)
     {
         using var statement = connection.Prepare($"pragma table_info({table})");
@@ -195,6 +228,12 @@ public sealed partial class JellyPlayDatabase : IDisposable
     private readonly ReaderWriterLockSlim _lock = new(LockRecursionPolicy.NoRecursion);
     private readonly string _dbFilePath;
     private readonly ILogger<JellyPlayDatabase>? _logger;
+
+    /// <summary>Idle-connection pool cap; a return past it falls through to real disposal.</summary>
+    private const int ConnectionPoolCapacity = 4;
+
+    private readonly object _poolLock = new();
+    private readonly Stack<PooledSqliteConnection> _idleConnections = new();
     private bool _disposed;
 
     public JellyPlayDatabase(string dataPath, ILogger<JellyPlayDatabase>? logger = null)
@@ -357,6 +396,12 @@ public sealed partial class JellyPlayDatabase : IDisposable
     {
         using (_lock.Write())
         {
+            // Under the WRITE lock no store method can hold a lease (every
+            // one holds at least the read lock across its connection's
+            // lifetime), so everything pooled is idle and safely closeable —
+            // the drain below releases the file handles the probe and any
+            // quarantine rename need.
+            DrainIdleConnections();
             var details = string.Empty;
             long frames;
             using (var connection = CreateConnection())
@@ -414,6 +459,10 @@ public sealed partial class JellyPlayDatabase : IDisposable
     /// <summary>Renames the corrupt database (and WAL/SHM siblings) aside, then rebuilds the schema fresh.</summary>
     private void QuarantineAndRecreate()
     {
+        // The probe connection CheckIntegrity used has been returned to the
+        // idle pool by now (still open, still holding the file); closing the
+        // idles releases the handles the renames below need.
+        DrainIdleConnections();
         var stamp = DateTimeOffset.UtcNow.ToString("yyyyMMddTHHmmss", System.Globalization.CultureInfo.InvariantCulture);
         var quarantineSuffix = $".corrupt-{stamp}";
         RenameAside(_dbFilePath, quarantineSuffix);
@@ -455,6 +504,7 @@ public sealed partial class JellyPlayDatabase : IDisposable
         }
 
         _disposed = true;
+        DrainIdleConnections();
         _lock.Dispose();
     }
 
@@ -547,14 +597,121 @@ public sealed partial class JellyPlayDatabase : IDisposable
 
     private SqliteConnection CreateConnection()
     {
-        // Pooling off: pooled connections hold the file handle open after
-        // Dispose, which would block integrity-quarantine file renames.
-        var connection = new SqliteConnection($"Filename={_dbFilePath};Pooling=False");
+        // Lease from the idle pool first: a warm connection skips the open +
+        // pragma round trip entirely (both pragmas ride the connection string
+        // or were set when the connection was first opened).
+        lock (_poolLock)
+        {
+            if (!_disposed && _idleConnections.TryPop(out var pooled))
+            {
+                pooled.InPool = false;
+                return pooled;
+            }
+        }
+
+        // Pooling stays off for Microsoft.Data.Sqlite's own pool: it would
+        // hold file handles past Dispose, out of this class's reach — the
+        // internal pool above keeps them releasable (see DrainIdleConnections).
+        var connection = new PooledSqliteConnection($"Filename={_dbFilePath};Pooling=False;Foreign Keys=True", this);
         connection.Open();
         using var command = connection.CreateCommand();
-        command.CommandText = "pragma synchronous=NORMAL; pragma foreign_keys=ON;";
+        command.CommandText = "pragma synchronous=NORMAL";
         command.ExecuteNonQuery();
         return connection;
+    }
+
+    /// <summary>
+    /// Takes a leased-out connection back into the idle pool; false means the
+    /// caller must dispose for real. The flag and stack are only ever touched
+    /// under <see cref="_poolLock"/>.
+    /// </summary>
+    private bool TryReturnToPool(PooledSqliteConnection connection)
+    {
+        lock (_poolLock)
+        {
+            if (_disposed || connection.InPool || _idleConnections.Count >= ConnectionPoolCapacity)
+            {
+                return false;
+            }
+
+            connection.InPool = true;
+            _idleConnections.Push(connection);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Closes every idle pooled connection so nothing holds the database
+    /// file. Safe by construction: the two callers run under the WRITE lock
+    /// (quarantine/integrity) or past disposal, and every store method holds
+    /// at least the read lock across its connection's lifetime — no lease
+    /// can be outstanding while an idle connection is being closed here.
+    /// </summary>
+    private void DrainIdleConnections()
+    {
+        lock (_poolLock)
+        {
+            while (_idleConnections.TryPop(out var pooled))
+            {
+                // InPool is still true, so a late Close/Dispose on this
+                // connection also falls through to real disposal.
+                pooled.CloseForReal();
+            }
+        }
+    }
+
+    /// <summary>
+    /// A pooled lease: Close/Dispose hand the still-open connection back to
+    /// the owning database's idle stack instead of tearing it down. Falls
+    /// through to real disposal when the pool is at capacity, the connection
+    /// is mid-transaction or not open, or the database was disposed.
+    /// </summary>
+    private sealed class PooledSqliteConnection : SqliteConnection
+    {
+        private readonly JellyPlayDatabase _owner;
+
+        /// <summary>Guarded by the owner's pool lock: true while the connection sits in the idle stack (drain pops without clearing it, so a late Close disposes for real).</summary>
+        public bool InPool;
+
+        public PooledSqliteConnection(string connectionString, JellyPlayDatabase owner)
+            : base(connectionString)
+        {
+            _owner = owner;
+        }
+
+        public override void Close()
+        {
+            if (EligibleForPool() && _owner.TryReturnToPool(this))
+            {
+                return;
+            }
+
+            base.Close();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            // Already returned via Close(): the instance still sits on the
+            // idle stack, so its cleanup belongs to the owner (a later lease
+            // or the drain) — disposing here would hand out a dead connection.
+            if (disposing && InPool)
+            {
+                return;
+            }
+
+            if (disposing && EligibleForPool() && _owner.TryReturnToPool(this))
+            {
+                return;
+            }
+
+            base.Dispose(disposing);
+        }
+
+        /// <summary>Unconditional close for the drain path — bypasses the pool return.</summary>
+        public void CloseForReal() => base.Close();
+
+        private bool EligibleForPool()
+            => State == System.Data.ConnectionState.Open && Transaction is null;
     }
 
     /// <summary>Binds a nullable scalar (long or string) as NULL when absent — the one binder both former overloads shared byte-for-byte.</summary>

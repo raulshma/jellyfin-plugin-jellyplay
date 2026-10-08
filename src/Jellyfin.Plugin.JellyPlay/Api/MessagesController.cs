@@ -26,13 +26,13 @@ public class MessagesController : JellyPlayControllerBase
     [HttpGet("messages")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetInbox()
-        => JellyPlayResponses.Camel(new { messages = _messages.GetInbox(User.GetUserId().ToString(), User.IsAdmin()) });
+        => JellyPlayResponses.Camel(new { messages = _messages.GetInbox(User.GetUserIdString(), User.IsAdmin()) });
 
     [HttpPost("messages/{messageId}/read")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public IActionResult MarkRead([FromRoute, Required] string messageId)
     {
-        _messages.MarkRead(User.GetUserId().ToString(), messageId);
+        _messages.MarkRead(User.GetUserIdString(), messageId);
         return NoContent();
     }
 

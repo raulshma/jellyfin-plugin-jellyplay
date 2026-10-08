@@ -286,9 +286,19 @@ public sealed class FileCacheSweepTests : IDisposable
         var expired = Entry("stale.json", 50, DateTimeOffset.UtcNow.AddDays(-40));
         var fresh = Entry("fresh.json", 50, DateTimeOffset.UtcNow.AddMinutes(-1));
 
-        var result = _store.Sweep(maxTotalBytes: 1024 * 1024, maxEntryAge: TimeSpan.FromDays(30));
+        // The store's constructor sweeps in the background (same 30-day age,
+        // 256 MB cap) and may delete the expired file before — or during —
+        // the explicit sweep below. Settle that race first (bounded wait for
+        // the delete), then assert the eventual filesystem outcome instead
+        // of the explicit sweep's return count.
+        var settleDeadline = DateTime.UtcNow.AddSeconds(5);
+        while (File.Exists(expired) && DateTime.UtcNow < settleDeadline)
+        {
+            Thread.Sleep(25);
+        }
 
-        Assert.Equal(1, result.DeletedFiles);
+        _store.Sweep(maxTotalBytes: 1024 * 1024, maxEntryAge: TimeSpan.FromDays(30));
+
         Assert.False(File.Exists(expired));
         Assert.True(File.Exists(fresh));
     }
@@ -307,13 +317,13 @@ public sealed class FileCacheSweepTests : IDisposable
     }
 
     [Fact]
-    public void Set_ReadsBack_AndRespectsValue()
+    public async Task Set_ReadsBack_AndRespectsValue()
     {
-        _store.Set("tmdb:123", new[] { "one", "two" });
-        var read = _store.Get<string[]>("tmdb:123", TimeSpan.FromMinutes(5));
+        await _store.SetAsync("tmdb:123", new[] { "one", "two" });
+        var read = await _store.GetAsync<string[]>("tmdb:123", TimeSpan.FromMinutes(5));
         Assert.Equal(new[] { "one", "two" }, read);
-        Assert.NotNull(_store.Get<string[]>("tmdb:123", TimeSpan.FromHours(24)));
-        Assert.Null(_store.Get<string[]>("tmdb:123", TimeSpan.Zero)); // expired = miss
+        Assert.NotNull(await _store.GetAsync<string[]>("tmdb:123", TimeSpan.FromHours(24)));
+        Assert.Null(await _store.GetAsync<string[]>("tmdb:123", TimeSpan.Zero)); // expired = miss
     }
 }
 
@@ -382,7 +392,7 @@ public sealed class WebhookSecurityTests
     [Fact]
     public void WebhookRateLimiter_AllowsThirtyPerMinutePerClient()
     {
-        var limiter = new WebhookRateLimiter();
+        var limiter = RateLimiter.Webhook();
         for (var hit = 0; hit < 30; hit++)
         {
             Assert.True(limiter.Allow("ip:203.0.113.7", 1_000 + hit));

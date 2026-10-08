@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,21 +11,40 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyPlay.Services.Cache;
 
+/// <summary>Outcome of the collapsed value+miss probe.</summary>
+public enum CacheProbeKind
+{
+    /// <summary>A fresh cached value (carries it).</summary>
+    Hit,
+
+    /// <summary>A live miss marker: the caller short-circuits as "no data".</summary>
+    MissMarker,
+
+    /// <summary>Nothing cached — the caller runs its fetch.</summary>
+    NotFound,
+}
+
+/// <summary>The collapsed probe's result: the kind plus the value on a hit.</summary>
+public readonly record struct CacheProbe<T>(CacheProbeKind Kind, T? Value = default);
+
 /// <summary>
 /// TTL file cache under DataDirectory/cache. Values are JSON blobs keyed by
 /// cache key; reads are atomic via temp-file rename on write.
 ///
 /// A small in-memory layer sits ahead of the files: hot keys skip the
-/// read+deserialize for a few seconds, while the file's own write time stays
-/// the one expiry truth — every memory hit re-validates it (a metadata stat,
-/// not a data read), so backdating, invalidation and sweep evictions are
-/// never served stale. The file store remains the durable truth.
+/// read+deserialize for a few seconds. Within that memory window the memoized
+/// entry is authoritative for its own age (the write time captured when the
+/// entry was memoized) — no metadata stat per hit — so a hot value is at most
+/// one memory window stale; the file's own write time returns to being the
+/// one expiry truth on the cold path, so backdating, invalidation and sweep
+/// evictions apply as soon as the memo lapses. The file store remains the
+/// durable truth.
 ///
-/// The directory is size-capped: a sweep runs at init and — off the request
-/// path, fire-and-forget — on every Nth write, purging expired entries and
-/// then deleting oldest-last-written files until the total is back under the
-/// configured cap (Cache:MaxSizeMegabytes, 256 MB default). The same sweep
-/// backs the daily "cache maintenance" scheduled task.
+/// The directory is size-capped: a sweep runs in the background at init and —
+/// off the request path, fire-and-forget — on every Nth write, purging expired
+/// entries and then deleting oldest-last-written files until the total is back
+/// under the configured cap (Cache:MaxSizeMegabytes, 256 MB default). The same
+/// sweep backs the daily "cache maintenance" scheduled task.
 /// </summary>
 public sealed class FileCacheStore
 {
@@ -39,27 +59,41 @@ public sealed class FileCacheStore
     /// <summary>Minimum spacing between background sweeps, so a write burst collapses into one pass.</summary>
     private const long BackgroundSweepWindowMs = 60_000;
 
-    /// <summary>Soft memory TTL for the memoized deserialized values (the file timestamp still gates every hit).</summary>
+    /// <summary>Soft memory TTL for the memoized deserialized values (the entry's captured write time still gates every hit).</summary>
     private static readonly TimeSpan MemoryTtl = TimeSpan.FromSeconds(30);
 
-    /// <summary>Memory-table cap: a full table is dropped wholesale and self-reloads from the files on the next read.</summary>
+    /// <summary>Memory-table cap: at the cap the oldest-inserted quarter is evicted (a wholesale clear would stampede every hot key back to the files).</summary>
     private const int MemoryCap = 512;
+
+    /// <summary>Path-memo ceiling: it caches a pure hash, so a full table simply drops new entries.</summary>
+    private const int PathMemoCap = 2048;
 
     private readonly string _cacheDir;
     private readonly Func<int> _maxSizeMegabytes;
     private readonly ILogger<FileCacheStore> _logger;
     private readonly ConcurrentDictionary<string, MemoryEntry> _memory = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _pathMemo = new(StringComparer.Ordinal);
     private int _writeCount;
     private long _lastBackgroundSweepMs;
 
-    /// <summary>DI/test constructor: explicit cache directory and size-cap source (ADR-0002 — no plugin-singleton fallbacks; the composition root passes both).</summary>
+    /// <summary>DI/test constructor: explicit cache directory and size-cap source (ADR-0002 — no plugin-singleton fallbacks; the composition root passes both). Construction only creates the directory; the init sweep runs in the background.</summary>
     public FileCacheStore(ILogger<FileCacheStore> logger, string cacheDirectory, Func<int> maxSizeMegabytes)
     {
         _logger = logger;
         _cacheDir = cacheDirectory;
         _maxSizeMegabytes = maxSizeMegabytes;
         Directory.CreateDirectory(_cacheDir);
-        Sweep(MaxTotalBytes(), DefaultMaxEntryAge);
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                Sweep(MaxTotalBytes(), DefaultMaxEntryAge);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Startup cache sweep failed");
+            }
+        });
     }
 
     public string CacheDirectory => _cacheDir;
@@ -71,7 +105,7 @@ public sealed class FileCacheStore
         return megabytes <= 0 ? DefaultMaxTotalBytes : (long)megabytes << 20;
     }
 
-    public T? Get<T>(string key, TimeSpan maxAge)
+    public async Task<T?> GetAsync<T>(string key, TimeSpan maxAge)
     {
         var path = PathFor(key);
         try
@@ -79,41 +113,37 @@ public sealed class FileCacheStore
             var now = DateTimeOffset.UtcNow;
             if (_memory.TryGetValue(key, out var hit) && now - hit.LoadedUtc <= MemoryTtl)
             {
-                var memoInfo = new FileInfo(path);
-                if (memoInfo.Exists && now - memoInfo.LastWriteTimeUtc <= maxAge)
+                // Hot path: the entry is authoritative for its own window —
+                // no file stat per read; the captured write time decides age.
+                if (now - hit.WrittenUtc <= maxAge)
                 {
                     return (T)hit.Value!;
                 }
 
                 _memory.TryRemove(key, out _);
-                if (!memoInfo.Exists)
-                {
-                    return default;
-                }
-
-                File.Delete(path);
+                TryDelete(path);
                 return default;
             }
 
-            _memory.TryRemove(key, out _);
-
-            if (!File.Exists(path))
-            {
-                return default;
-            }
+            _memory.TryRemove(key, out _); // a memo past its window lapses; the file is the truth again
 
             var fileInfo = new FileInfo(path);
-            if (DateTimeOffset.UtcNow - fileInfo.LastWriteTimeUtc > maxAge)
+            if (!fileInfo.Exists)
             {
-                File.Delete(path);
                 return default;
             }
 
-            var entry = JsonSerializer.Deserialize<CachedEntry<T>>(File.ReadAllText(path));
+            if (now - fileInfo.LastWriteTimeUtc > maxAge)
+            {
+                TryDelete(path);
+                return default;
+            }
+
+            var entry = JsonSerializer.Deserialize<CachedEntry<T>>(await File.ReadAllTextAsync(path).ConfigureAwait(false));
             var value = entry is null ? default : entry.Value;
             if (value is not null)
             {
-                RememberHit(key, value);
+                RememberHit(key, value, fileInfo.LastWriteTimeUtc);
             }
 
             return value;
@@ -126,18 +156,40 @@ public sealed class FileCacheStore
         }
     }
 
-    public void Set<T>(string key, T value)
+    /// <summary>
+    /// The fetcher's one-probe seam: probes the value key and — when a miss
+    /// key is given — the miss marker in a single call, so an uncached request
+    /// resolves each path once instead of the fetcher probing the two keys
+    /// separately. TTL semantics are exactly the two reads it replaces.
+    /// </summary>
+    public async Task<CacheProbe<T>> TryGetAsync<T>(string key, string? missKey, TimeSpan maxAge, TimeSpan missMaxAge)
+    {
+        var value = await GetAsync<T>(key, maxAge).ConfigureAwait(false);
+        if (value is not null)
+        {
+            return new CacheProbe<T>(CacheProbeKind.Hit, value);
+        }
+
+        if (missKey is not null && await GetAsync<bool>(missKey, missMaxAge).ConfigureAwait(false))
+        {
+            return new CacheProbe<T>(CacheProbeKind.MissMarker);
+        }
+
+        return new CacheProbe<T>(CacheProbeKind.NotFound);
+    }
+
+    public async Task SetAsync<T>(string key, T value)
     {
         var path = PathFor(key);
         try
         {
             var payload = JsonSerializer.Serialize(new CachedEntry<T> { Value = value });
             var temp = path + ".tmp" + Guid.NewGuid().ToString("N");
-            File.WriteAllText(temp, payload);
+            await File.WriteAllTextAsync(temp, payload).ConfigureAwait(false);
             File.Move(temp, path, overwrite: true);
             if (value is not null)
             {
-                RememberHit(key, value);
+                RememberHit(key, value, DateTimeOffset.UtcNow);
             }
         }
         catch (Exception ex)
@@ -267,21 +319,36 @@ public sealed class FileCacheStore
         });
     }
 
-    /// <summary>Memoizes one deserialized value for the soft memory TTL (bounded by the wholesale cap).</summary>
-    private void RememberHit<T>(string key, T value)
+    /// <summary>Memoizes one deserialized value for the soft memory TTL (bounded by the partial-eviction cap).</summary>
+    private void RememberHit<T>(string key, T value, DateTimeOffset writtenUtc)
     {
         if (_memory.Count >= MemoryCap)
         {
-            _memory.Clear();
+            var toEvict = Math.Max(MemoryCap / 4, 1);
+            foreach (var oldest in _memory.ToArray().OrderBy(entry => entry.Value.LoadedUtc).Take(toEvict))
+            {
+                _memory.TryRemove(oldest.Key, out _);
+            }
         }
 
-        _memory[key] = new MemoryEntry { LoadedUtc = DateTimeOffset.UtcNow, Value = value };
+        _memory[key] = new MemoryEntry { LoadedUtc = DateTimeOffset.UtcNow, WrittenUtc = writtenUtc, Value = value };
     }
 
     private string PathFor(string key)
     {
+        if (_pathMemo.TryGetValue(key, out var cached))
+        {
+            return cached;
+        }
+
         var safe = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)));
-        return Path.Combine(_cacheDir, safe + ".json");
+        var path = Path.Combine(_cacheDir, safe + ".json");
+        if (_pathMemo.Count < PathMemoCap)
+        {
+            _pathMemo.TryAdd(key, path);
+        }
+
+        return path;
     }
 
     private void TryDelete(string path)
@@ -299,10 +366,12 @@ public sealed class FileCacheStore
         }
     }
 
-    /// <summary>One memoized deserialized cache value; the file's write time stays the expiry truth, this only bounds re-load frequency.</summary>
+    /// <summary>One memoized deserialized cache value; <see cref="WrittenUtc"/> is the file's write time captured at memoization and stays the age truth for the memory window.</summary>
     private sealed class MemoryEntry
     {
         public DateTimeOffset LoadedUtc { get; init; }
+
+        public DateTimeOffset WrittenUtc { get; init; }
 
         public object? Value { get; init; }
     }

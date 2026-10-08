@@ -14,30 +14,28 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.JellyPlay.Services.Events;
 
 /// <summary>
-/// Watches ILibraryManager.ItemAdded: movies publish immediately, episodes
-/// buffer per season and publish as one grouped event after the configured
-/// window. Flush loop ticks every 10 seconds; each tick snapshots the host
-/// enumeration inputs (administrator ids, virtual folders) once, so a
-/// 2000-item import resolves each once per tick instead of once per item.
+/// Thin adapter over <see cref="NewMediaPipeline"/>: watches
+/// ILibraryManager.ItemAdded (movies publish immediately, episodes buffer per
+/// season and publish as one grouped event after the configured window) and
+/// drains due groups on the flush tick. All grouping, library resolution,
+/// allow-listing and dedup locality lives in the pipeline — this module keeps
+/// no buffer, clock or folder logic of its own beyond the timer.
+/// Flush loop ticks every 10s (<see cref="NewMediaPipeline.DefaultTick"/>);
+/// each tick snapshots the host enumeration inputs (administrator ids,
+/// virtual folders) once, so a 2000-item import resolves each once per tick
+/// instead of once per item.
 /// </summary>
 public sealed class ItemAddedWatcher : IHostedService, IDisposable
 {
     private readonly ILibraryManager _libraryManager;
-    private readonly EpisodeGroupBuffer _buffer;
     private readonly EventService _events;
     private readonly Func<EventsConfig> _config;
     private readonly Services.Admin.AdminUsers _adminUsers;
     private readonly ILogger<ItemAddedWatcher> _logger;
+    private readonly TimeProvider _clock;
+    private readonly NewMediaPipeline _pipeline;
     private Timer? _flushTimer;
-    private static readonly TimeSpan _tick = TimeSpan.FromSeconds(10);
-
-    /// <summary>
-    /// The virtual-folder snapshot the per-item path match reads. Refreshed
-    /// once per flush tick (and at startup) — GetVirtualFolders walks the
-    /// whole library tree, so it must not run per item.
-    /// </summary>
-    private volatile IReadOnlyList<MediaBrowser.Model.Entities.VirtualFolderInfo> _virtualFolders
-        = Array.Empty<MediaBrowser.Model.Entities.VirtualFolderInfo>();
+    private static readonly TimeSpan _tick = NewMediaPipeline.DefaultTick;
 
     public ItemAddedWatcher(
         ILibraryManager libraryManager,
@@ -45,20 +43,28 @@ public sealed class ItemAddedWatcher : IHostedService, IDisposable
         EventService events,
         Func<EventsConfig> config,
         Services.Admin.AdminUsers adminUsers,
-        ILogger<ItemAddedWatcher> logger)
+        ILogger<ItemAddedWatcher> logger,
+        TimeProvider? clock = null,
+        NewMediaPipeline? pipeline = null)
     {
         _libraryManager = libraryManager;
-        _buffer = buffer;
         _events = events;
         _config = config;
         _adminUsers = adminUsers;
         _logger = logger;
+        _clock = clock ?? TimeProvider.System;
+        _pipeline = pipeline ?? new NewMediaPipeline(
+            buffer,
+            config,
+            _clock,
+            () => libraryManager.GetVirtualFolders(),
+            null);
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _libraryManager.ItemAdded += OnItemAdded;
-        RefreshVirtualFolders();
+        _pipeline.RefreshVirtualFolders();
         _flushTimer = new Timer(FlushDue, null, _tick, _tick);
         _logger.LogInformation("JellyPlay ItemAddedWatcher started");
         return Task.CompletedTask;
@@ -69,7 +75,7 @@ public sealed class ItemAddedWatcher : IHostedService, IDisposable
         _libraryManager.ItemAdded -= OnItemAdded;
         _flushTimer?.Change(Timeout.Infinite, Timeout.Infinite);
         var adminUserIds = _adminUsers.AdminUserIds;
-        foreach (var group in _buffer.FlushAll())
+        foreach (var group in _pipeline.FlushAll())
         {
             _events.PublishNewMedia(group, adminUserIds);
         }
@@ -96,13 +102,13 @@ public sealed class ItemAddedWatcher : IHostedService, IDisposable
             return;
         }
 
-        var libraryId = ResolveLibraryId(item);
         switch (item)
         {
             case Movie movie:
                 try
                 {
-                    _events.PublishNewMovie(movie.Id, movie.Name ?? "New movie", libraryId);
+                    var movieLibraryId = _pipeline.ResolveLibraryId(movie.Path);
+                    _events.PublishNewMovie(movie.Id, movie.Name ?? "New movie", movieLibraryId);
                 }
                 catch (Exception ex)
                 {
@@ -119,15 +125,14 @@ public sealed class ItemAddedWatcher : IHostedService, IDisposable
                     return;
                 }
 
-                _buffer.Add(
+                _pipeline.TryAddEpisode(
                     seasonId,
                     episode.SeriesId,
                     episode.SeriesName ?? string.Empty,
                     episode.ParentIndexNumber,
                     episode.Id,
                     episode.Name ?? string.Empty,
-                    libraryId,
-                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    episode.Path);
                 break;
             }
         }
@@ -137,13 +142,22 @@ public sealed class ItemAddedWatcher : IHostedService, IDisposable
     {
         try
         {
-            // One snapshot per tick: the admin audience for the whole batch and
-            // the virtual folders the per-item library match reads.
-            RefreshVirtualFolders();
+            // Self-gating tick: with new-media disabled or nothing buffered
+            // there is no work — skip the admin query, the host virtual-folder
+            // walk and the buffer drain entirely (the folders refresh lazily
+            // on the first tick that has pending work).
+            if (!_config().NewMediaEnabled || _pipeline.PendingGroupCount == 0)
+            {
+                return;
+            }
+
+            // One snapshot per working tick: the admin audience for the whole
+            // batch and the virtual folders the per-item library match reads
+            // (both live in the pipeline; the adapter only triggers the
+            // refresh).
+            _pipeline.RefreshVirtualFolders();
             var adminUserIds = _adminUsers.AdminUserIds;
-            var window = _config().NewMediaGroupingSeconds;
-            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            foreach (var group in _buffer.PopDue(now, window))
+            foreach (var group in _pipeline.PopDue())
             {
                 _events.PublishNewMedia(group, adminUserIds);
             }
@@ -151,39 +165,6 @@ public sealed class ItemAddedWatcher : IHostedService, IDisposable
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "New-media flush failed");
-        }
-    }
-
-    private void RefreshVirtualFolders()
-    {
-        try
-        {
-            _virtualFolders = _libraryManager.GetVirtualFolders();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Could not snapshot virtual folders");
-        }
-    }
-
-    /// <summary>
-    /// Resolves the virtual-folder (library) id the item lives in, mirroring
-    /// streamyfin's path match — against the per-tick snapshot, never a fresh
-    /// GetVirtualFolders walk.
-    /// </summary>
-    private string? ResolveLibraryId(BaseItem item)
-    {
-        try
-        {
-            var folder = _virtualFolders
-                .FirstOrDefault(vf => !string.IsNullOrEmpty(item.Path)
-                    && vf.Locations.Any(location => item.Path.Contains(location, StringComparison.OrdinalIgnoreCase)));
-            return folder?.ItemId.ToString();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Could not resolve library for {Path}", item.Path);
-            return null;
         }
     }
 }

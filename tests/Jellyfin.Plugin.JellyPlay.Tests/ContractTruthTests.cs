@@ -10,6 +10,7 @@ using Jellyfin.Plugin.JellyPlay.Services.Events;
 using Jellyfin.Plugin.JellyPlay.Services.Newsletter;
 using Jellyfin.Plugin.JellyPlay.Services.Recommendations;
 using Jellyfin.Plugin.JellyPlay.Services.Rows;
+using Jellyfin.Plugin.JellyPlay.Services.Shared;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -19,11 +20,16 @@ namespace Jellyfin.Plugin.JellyPlay.Tests;
 public sealed class NewMediaAudienceTests
 {
     private static EventService Service(SseHub hub, string audience)
-        => new(
+    {
+        Func<Configuration.EventsConfig> config
+            = () => new EventsConfig { NewMediaEnabled = true, NewMediaAudience = audience };
+        return new EventService(
             hub,
-            () => new EventsConfig { NewMediaEnabled = true, NewMediaAudience = audience },
+            config,
             () => new List<string> { "admin-1" },
+            new NewMediaPipeline(new EpisodeGroupBuffer(), config),
             NullLogger<EventService>.Instance);
+    }
 
     private static EpisodeGroup Group(Guid itemId)
         => new(Guid.NewGuid(), Guid.NewGuid(), "Show", 1, new[] { new EpisodeRef(itemId, "E1") }, null);
@@ -83,10 +89,13 @@ public sealed class NewMediaAudienceTests
     public void DisabledEvents_PublishNothing()
     {
         var hub = new SseHub(NullLogger<SseHub>.Instance);
+        Func<Configuration.EventsConfig> config
+            = () => new EventsConfig { NewMediaEnabled = false, NewMediaAudience = "admins" };
         var service = new EventService(
             hub,
-            () => new EventsConfig { NewMediaEnabled = false, NewMediaAudience = "admins" },
+            config,
             () => new List<string> { "admin-1" },
+            new NewMediaPipeline(new EpisodeGroupBuffer(), config),
             NullLogger<EventService>.Instance);
 
         Assert.Equal(0, service.PublishNewMedia(Group(Guid.NewGuid())));
@@ -114,10 +123,10 @@ public sealed class NewMediaAudienceTests
     [Fact]
     public void ResolveAudienceTargets_NullForBroadcast_AdminSetForAdmins()
     {
-        Assert.Null(EventService.ResolveAudienceTargets("all", new[] { "admin-1" }));
-        Assert.Null(EventService.ResolveAudienceTargets(null, Array.Empty<string>()));
+        Assert.Null(Audience.ResolveEventTargets("all", new[] { "admin-1" }));
+        Assert.Null(Audience.ResolveEventTargets(null, Array.Empty<string>()));
 
-        var targets = EventService.ResolveAudienceTargets("admins", new[] { "admin-1", "admin-2" });
+        var targets = Audience.ResolveEventTargets("admins", new[] { "admin-1", "admin-2" });
         Assert.NotNull(targets);
         Assert.Equal(2, targets!.Count);
         Assert.True(targets.Contains("admin-1"));
@@ -218,25 +227,25 @@ public sealed class AnimeIdResolutionTests
     [Fact]
     public void FindMapping_MatchesAnyKnownId()
     {
-        var entries = new[] { EntryA, EntryB };
+        var index = new FribbAliasIndex(new[] { EntryA, EntryB });
 
-        Assert.Same(EntryA, AnimeIdResolver.FindMapping(entries, AnimeIdResolver.FromProviderIds(
+        Assert.Same(EntryA, AnimeIdResolver.FindMapping(index, AnimeIdResolver.FromProviderIds(
             new Dictionary<string, string> { ["anilist"] = "21" }, null)));
-        Assert.Same(EntryB, AnimeIdResolver.FindMapping(entries, AnimeIdResolver.FromProviderIds(
+        Assert.Same(EntryB, AnimeIdResolver.FindMapping(index, AnimeIdResolver.FromProviderIds(
             new Dictionary<string, string> { ["mal"] = "5" }, null)));
-        Assert.Same(EntryA, AnimeIdResolver.FindMapping(entries, AnimeIdResolver.FromProviderIds(
+        Assert.Same(EntryA, AnimeIdResolver.FindMapping(index, AnimeIdResolver.FromProviderIds(
             new Dictionary<string, string> { ["tvdb"] = "76599" }, null)));
-        Assert.Same(EntryB, AnimeIdResolver.FindMapping(entries, AnimeIdResolver.FromProviderIds(
+        Assert.Same(EntryB, AnimeIdResolver.FindMapping(index, AnimeIdResolver.FromProviderIds(
             new Dictionary<string, string> { ["tmdb"] = "110492" }, null)));
     }
 
     [Fact]
     public void FindMapping_NoMatch_ReturnsNull()
     {
-        var entries = new[] { EntryA, EntryB };
-        Assert.Null(AnimeIdResolver.FindMapping(entries, AnimeIdResolver.FromProviderIds(
+        var index = new FribbAliasIndex(new[] { EntryA, EntryB });
+        Assert.Null(AnimeIdResolver.FindMapping(index, AnimeIdResolver.FromProviderIds(
             new Dictionary<string, string> { ["tmdb"] = "999999" }, null)));
-        Assert.Null(AnimeIdResolver.FindMapping(Array.Empty<FribbEntry>(), AnimeIdResolver.FromProviderIds(
+        Assert.Null(AnimeIdResolver.FindMapping(new FribbAliasIndex(Array.Empty<FribbEntry>()), AnimeIdResolver.FromProviderIds(
             new Dictionary<string, string> { ["mal"] = "5" }, null)));
     }
 

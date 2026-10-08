@@ -494,7 +494,7 @@ cache if present, otherwise 404.
 
 ```
 GET jellyplay/animemarkers/series?seriesId=&providerSeriesId= → { seriesId, aniListId?, malId?, markers: [{type: filler|mixed|canon|recap, episodeNumber, note?}] }
-GET jellyplay/animemarkers/items?seriesId=&from=&to=          → { markers }
+GET jellyplay/animemarkers/items?seriesId=&from=&to=[&providerSeriesId=] → { markers }
 ```
 
 Provider-id resolution: `providerSeriesId` (when given) is preferred; otherwise

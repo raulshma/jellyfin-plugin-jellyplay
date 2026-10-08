@@ -179,16 +179,16 @@ public sealed class SyncRecordingTests : IDisposable
         var rejections = Enumerable.Range(0, 15)
             .Select(index => new RejectedSetting("ui", $"k{index}", "stale-write"))
             .ToList();
-        var json = SettingsService.BuildRejectsJson(rejections);
+        var json = SyncRejectsCodec.Encode(rejections);
         Assert.NotNull(json);
         var parsed = JsonSerializer.Deserialize<JsonElement>(json!).EnumerateArray().ToList();
-        Assert.Equal(SettingsService.MaxRecordedRejects, parsed.Count);
+        Assert.Equal(SyncRejectsCodec.MaxRecordedRejects, parsed.Count);
         Assert.Equal("ui", parsed[0].GetProperty("ns").GetString());
         Assert.Equal("k0", parsed[0].GetProperty("key").GetString());
         Assert.Equal("stale-write", parsed[0].GetProperty("reason").GetString());
 
         // No rejections → no payload at all.
-        Assert.Null(SettingsService.BuildRejectsJson(new List<RejectedSetting>()));
+        Assert.Null(SyncRejectsCodec.Encode(new List<RejectedSetting>()));
 
         // End to end: a fully-rejected push records counts and the capped array.
         _service.ApplyBatch("u1", "", "d1", Enumerable.Range(0, 12).Select(index => Dto("ui", $"k{index}", 1)).ToList());
@@ -202,17 +202,18 @@ public sealed class SyncRecordingTests : IDisposable
         Assert.Equal(0, entry.KeysApplied);
         Assert.Equal(12, entry.KeysRejected);
         var rejects = JsonSerializer.Deserialize<JsonElement>(entry.RejectsJson!).EnumerateArray().ToList();
-        Assert.Equal(SettingsService.MaxRecordedRejects, rejects.Count);
+        Assert.Equal(SyncRejectsCodec.MaxRecordedRejects, rejects.Count);
     }
 
     [Fact]
-    public void GetChanged_RecordsPull_DeviceFromQueryParam_FullGetDoesNot()
+    public async Task GetChanged_RecordsPull_DeviceFromQueryParam_FullGetDoesNot()
     {
         var applied = _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "theme", 1), Dto("ui", "font", 2) });
         var head = applied.Head;
 
         _service.GetChanged("u1", "", 0, "device-pull");
         _service.GetChanged("u1", "", 0, null); // no deviceId param → empty string
+        await _service.FlushPullHistoryAsync(); // pull rows land on the flusher, not inline
 
         var pulls = _db.GetSyncHistory("u1", 0, 50).Where(row => row.Op == "pull").ToList();
         Assert.Equal(2, pulls.Count);
@@ -443,20 +444,24 @@ public sealed class SyncDiffCaptureTests : IDisposable
     }
 
     [Fact]
-    public void Pull_RecordsSinceThroughServedHead_EvenWhenEmpty()
+    public async Task Pull_RecordsSinceThroughServedHead_EvenWhenEmpty()
     {
         var applied = _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1), Dto("ui", "b", 2) });
         var head = applied.Head;
 
         // A delta pull from the first key: range = (since, head], 1 key served.
+        // Flush between the two pulls: same (user, device) pulls inside one
+        // flush window coalesce to the LATEST, so the first must land first.
         _service.GetChanged("u1", "", applied.Applied[0].Seq, "d2");
+        await _service.FlushPullHistoryAsync();
         var pull = SingleOp("u1", "pull");
         Assert.Equal(applied.Applied[0].Seq, pull.FromSeq);
         Assert.Equal(head, pull.ToSeq);
 
         // A zero-key pull (already up to date) still records its range.
         _service.GetChanged("u1", "", head, "d2");
-        var emptyPull = _db.GetSyncHistory("u1", 0, 50).First(row => row.Op == "pull");
+        await _service.FlushPullHistoryAsync();
+        var emptyPull = _db.GetSyncHistory("u1", 0, 50).First(row => row.Op == "pull" && row.Id != pull.Id);
         Assert.Equal(head, emptyPull.FromSeq);
         Assert.Equal(head, emptyPull.ToSeq);
     }

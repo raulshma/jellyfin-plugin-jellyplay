@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -10,12 +9,10 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyPlay.Api;
 using Jellyfin.Plugin.JellyPlay.Configuration;
 using Jellyfin.Plugin.JellyPlay.Services.Admin;
-using Jellyfin.Plugin.JellyPlay.Services.Devices;
+using Jellyfin.Plugin.JellyPlay.Services.Shared;
 using Jellyfin.Plugin.JellyPlay.Storage;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 
 namespace Jellyfin.Plugin.JellyPlay.Services.Push;
 
@@ -36,11 +33,16 @@ public static class PushKinds
     public const string SyncNudge = "sync-nudge";
 }
 
-/// <summary>Device capability strings (registry v7, self-reported at registration) the dispatcher gates on.</summary>
+/// <summary>
+/// Device capability strings (registry v7, self-reported at registration) the
+/// dispatcher gates on. Thin compat adapter over <see cref="PushEligibility"/> —
+/// the eligibility locality lives there; this stays so existing callers keep
+/// compiling with identical values.
+/// </summary>
 public static class DeviceCaps
 {
     /// <summary>The cap that opts a device into sync-nudge delivery.</summary>
-    public const string SilentPush = "silent-push";
+    public const string SilentPush = PushEligibility.SilentPushCap;
 }
 
 /// <summary>One push notification fanned out to every push-registered device of the target users.</summary>
@@ -62,14 +64,9 @@ public sealed class PushDispatcher
     /// <summary>Per-endpoint budget; a slow distributor must not hold the background worker.</summary>
     public const int TimeoutSeconds = 10;
 
-    /// <summary>Named IHttpClientFactory client behind both push transports (dispatcher + FCM token exchange).</summary>
-    public const string HttpClientName = "jellyplay-push";
-
     /// <summary>Bounded fan-out: at most this many device sends in flight per dispatch (a large broadcast must not open 100 sockets at once).</summary>
     private const int MaxConcurrentSends = 8;
 
-    private const string NtfyKindHeader = "X-JellyPlay-Kind";
-    private const string NtfyItemIdHeader = "X-JellyPlay-ItemId";
     private const string FcmSendUrlPrefix = "https://fcm.googleapis.com/v1/projects/";
 
     private readonly JellyPlayDatabase _db;
@@ -121,6 +118,19 @@ public sealed class PushDispatcher
         });
     }
 
+    /// <summary>
+    /// Broadcast-target overload (additive): the same fan-out behind a
+    /// <see cref="Audience.BroadcastTargets"/> value — null broadcasts,
+    /// empty delivers to nobody. Delegates to the nullable-set core so the
+    /// public interface only grows.
+    /// </summary>
+    public void DispatchToUsers(PushMessage message, Audience.BroadcastTargets targets)
+        => DispatchToUsers(message, targets.UserIds);
+
+    /// <summary>Synchronous-for-the-caller variant (queries targets, awaits all sends). Never throws.</summary>
+    internal Task DispatchAsync(PushMessage message, Audience.BroadcastTargets targets)
+        => DispatchAsync(message, targets.UserIds);
+
     /// <summary>Synchronous-for-the-caller variant (queries targets, awaits all sends). Never throws.</summary>
     internal async Task DispatchAsync(PushMessage message, IReadOnlyCollection<string>? userIds)
     {
@@ -169,6 +179,27 @@ public sealed class PushDispatcher
         });
     }
 
+    /// <summary>
+    /// The shared sync-nudge target query: the user's silent-push-capable
+    /// devices. Both <see cref="DispatchSyncNudgeAsync"/> and the
+    /// settings-sync <c>PublishChanged</c> fallback leverage this seam, so the
+    /// nudge audience cannot drift between callers. Never throws — a query
+    /// failure degrades to empty (no nudge), mirroring the dispatch's
+    /// exception isolation.
+    /// </summary>
+    public IReadOnlyList<DeviceRow> GetSyncNudgeDevices(string userId)
+    {
+        try
+        {
+            return PushEligibility.GetSyncNudgeDevices(_db, userId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Sync-nudge query: could not resolve nudge-eligible devices");
+            return Array.Empty<DeviceRow>();
+        }
+    }
+
     /// <summary>Synchronous-for-the-caller sync-nudge fan-out. Never throws.</summary>
     internal async Task DispatchSyncNudgeAsync(string userId)
     {
@@ -177,22 +208,10 @@ public sealed class PushDispatcher
             return;
         }
 
-        List<DeviceRow> devices;
-        try
-        {
-            devices = new List<DeviceRow>(_db.GetPushDevices(new[] { userId }));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Sync-nudge dispatch: could not query push-registered devices");
-            return;
-        }
-
-        // The query already excludes revoked devices (ADR-0005, enforced in the
-        // registry SQL); the nudge additionally requires the silent-push cap.
-        var capable = devices
-            .Where(device => CapsInclude(device.CapsJson, DeviceCaps.SilentPush))
-            .ToList();
+        // The eligibility locality lives in PushEligibility: the query already
+        // excludes revoked devices (ADR-0005, enforced in the registry SQL);
+        // the nudge additionally requires the silent-push cap.
+        var capable = GetSyncNudgeDevices(userId);
         if (capable.Count == 0)
         {
             return;
@@ -215,11 +234,47 @@ public sealed class PushDispatcher
     {
         string? fcmToken = null;
         var fcmResolved = false;
+
+        // Generic bodies depend only on the message and ntfy bodies on
+        // (message, topic): build each DISTINCT payload string once per
+        // fan-out, grouped ahead of the loop — the per-device pass only wires
+        // the prebuilt body into a request. Fcm bodies stay per-device (the
+        // registration token is embedded in the payload).
+        var payloads = new string?[devices.Count];
+        string? genericBody = null;
+        var ntfyBodiesByTopic = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (var index = 0; index < devices.Count; index++)
+        {
+            var device = devices[index];
+            if (PushPolicy.IsFcmKind(device.PushKind))
+            {
+                continue;
+            }
+
+            if (PushPolicy.IsNtfyKind(device.PushKind))
+            {
+                var topic = PushPayloads.ExtractNtfyTopic(device.PushEndpoint) ?? string.Empty;
+                if (!ntfyBodiesByTopic.TryGetValue(topic, out var body))
+                {
+                    body = PushPayloads.BuildNtfyPayload(message, topic);
+                    ntfyBodiesByTopic.Add(topic, body);
+                }
+
+                payloads[index] = body;
+            }
+            else
+            {
+                payloads[index] = genericBody ??= PushPayloads.BuildGenericPayload(message);
+            }
+        }
+
         using var gate = new SemaphoreSlim(MaxConcurrentSends, MaxConcurrentSends);
         var sends = new List<Task>(devices.Count);
+        var payloadIndex = 0;
         foreach (var device in devices)
         {
-            if (PushRegistrations.IsFcmKind(device.PushKind))
+            var payload = payloads[payloadIndex++];
+            if (PushPolicy.IsFcmKind(device.PushKind))
             {
                 if (!fcmResolved)
                 {
@@ -241,18 +296,18 @@ public sealed class PushDispatcher
             }
 
             await gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-            sends.Add(SendOneAsync(gate, device, message, fcmToken));
+            sends.Add(SendOneAsync(gate, device, message, fcmToken, payload));
         }
 
         await Task.WhenAll(sends).ConfigureAwait(false);
     }
 
     /// <summary>One send under the fan-out's concurrency gate (the slot is always released, even when the send throws).</summary>
-    private async Task SendOneAsync(SemaphoreSlim gate, DeviceRow device, PushMessage message, string? fcmToken)
+    private async Task SendOneAsync(SemaphoreSlim gate, DeviceRow device, PushMessage message, string? fcmToken, string? payload)
     {
         try
         {
-            await DispatchOneAsync(device, message, fcmToken).ConfigureAwait(false);
+            await DispatchOneAsync(device, message, fcmToken, payload).ConfigureAwait(false);
         }
         finally
         {
@@ -260,15 +315,11 @@ public sealed class PushDispatcher
         }
     }
 
-    /// <summary>Whether the device's registered caps JSON includes the capability.</summary>
-    internal static bool CapsInclude(string? capsJson, string cap)
-        => DeviceRegistryService.ParseCaps(capsJson).Contains(cap, StringComparer.Ordinal);
-
-    private async Task DispatchOneAsync(DeviceRow device, PushMessage message, string? fcmToken)
+    private async Task DispatchOneAsync(DeviceRow device, PushMessage message, string? fcmToken, string? payload)
     {
         try
         {
-            using var request = BuildRequest(device, message, fcmToken);
+            using var request = BuildRequest(device, message, fcmToken, payload);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken.None);
             timeout.CancelAfter(TimeSpan.FromSeconds(TimeoutSeconds));
             using var response = await _sender(request, timeout.Token).ConfigureAwait(false);
@@ -276,137 +327,44 @@ public sealed class PushDispatcher
             {
                 _logger.LogDebug(
                     "Push to device {DeviceId} ({EndpointHost}) returned {StatusCode}",
-                    device.DeviceId, EndpointHost(device.PushEndpoint), (int)response.StatusCode);
+                    device.DeviceId, PushPayloads.EndpointHost(device.PushEndpoint), (int)response.StatusCode);
             }
         }
         catch (OperationCanceledException)
         {
             _logger.LogDebug(
                 "Push to device {DeviceId} ({EndpointHost}) timed out after {Seconds}s",
-                device.DeviceId, EndpointHost(device.PushEndpoint), TimeoutSeconds);
+                device.DeviceId, PushPayloads.EndpointHost(device.PushEndpoint), TimeoutSeconds);
         }
         catch (Exception ex)
         {
             _logger.LogDebug(
                 ex,
                 "Push to device {DeviceId} ({EndpointHost}) failed",
-                device.DeviceId, EndpointHost(device.PushEndpoint));
+                device.DeviceId, PushPayloads.EndpointHost(device.PushEndpoint));
         }
     }
 
-    /// <summary>Builds the kind-specific POST (never throws for a registered device; ntfy topics unresolvable from the URL yield a null-content-free request the transport will fail).</summary>
-    internal HttpRequestMessage BuildRequest(DeviceRow device, PushMessage message, string? fcmBearerToken)
+    /// <summary>
+    /// Builds the kind-specific POST (never throws for a registered device; ntfy topics unresolvable from the URL yield a null-content-free request the transport will fail).
+    /// <paramref name="sharedPayload"/> is the fan-out's prebuilt body for non-fcm devices; fcm builds its own (the registration token is embedded).
+    /// </summary>
+    internal HttpRequestMessage BuildRequest(DeviceRow device, PushMessage message, string? fcmBearerToken, string? sharedPayload)
     {
-        if (PushRegistrations.IsFcmKind(device.PushKind))
+        if (PushPolicy.IsFcmKind(device.PushKind))
         {
             var request = new HttpRequestMessage(
                 HttpMethod.Post,
                 FcmSendUrlPrefix + Uri.EscapeDataString(_config().FcmProjectId) + "/messages:send");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", fcmBearerToken);
-            request.Content = new StringContent(BuildFcmPayload(message, device.PushEndpoint ?? string.Empty), Encoding.UTF8, "application/json");
+            request.Content = new StringContent(PushPayloads.BuildFcmPayload(message, device.PushEndpoint ?? string.Empty), Encoding.UTF8, "application/json");
             return request;
         }
 
         var request2 = new HttpRequestMessage(HttpMethod.Post, device.PushEndpoint);
-        var content = PushRegistrations.IsNtfyKind(device.PushKind)
-            ? BuildNtfyPayload(message, ExtractNtfyTopic(device.PushEndpoint) ?? string.Empty)
-            : BuildGenericPayload(message);
-        request2.Content = new StringContent(content, Encoding.UTF8, "application/json");
+        request2.Content = new StringContent(sharedPayload!, Encoding.UTF8, "application/json");
         return request2;
     }
-
-    /// <summary>Generic UnifiedPush body: {title, body, kind, itemId?}.</summary>
-    internal static string BuildGenericPayload(PushMessage message)
-    {
-        var payload = new JObject
-        {
-            ["title"] = message.Title,
-            ["body"] = message.Body,
-            ["kind"] = message.Kind
-        };
-
-        if (!string.IsNullOrEmpty(message.ItemId))
-        {
-            payload["itemId"] = message.ItemId;
-        }
-
-        return payload.ToString(Formatting.None);
-    }
-
-    /// <summary>
-    /// ntfy JSON publish format (ntfy >= 2.x): machine fields (kind, itemId)
-    /// ride the supported per-message "headers" map rather than the topic body.
-    /// </summary>
-    internal static string BuildNtfyPayload(PushMessage message, string topic)
-    {
-        var headers = new JObject { [NtfyKindHeader] = message.Kind };
-        if (!string.IsNullOrEmpty(message.ItemId))
-        {
-            headers[NtfyItemIdHeader] = message.ItemId;
-        }
-
-        var payload = new JObject
-        {
-            ["topic"] = topic,
-            ["title"] = message.Title,
-            ["message"] = message.Body,
-            ["tags"] = new JArray("jellyplay"),
-            ["priority"] = "default",
-            ["headers"] = headers
-        };
-
-        return payload.ToString(Formatting.None);
-    }
-
-    /// <summary>
-    /// FCM HTTP v1 send body: the device's endpoint IS the FCM registration
-    /// token; machine fields ride the string-typed "data" map (FCM forbids
-    /// non-string data values); itemId present only when set. The silent
-    /// sync-nudge kind ships DATA-ONLY (no notification block) — a visible
-    /// payload would defeat its purpose.
-    /// </summary>
-    internal static string BuildFcmPayload(PushMessage message, string fcmRegistrationToken)
-    {
-        var data = new JObject { ["kind"] = message.Kind };
-        if (!string.IsNullOrEmpty(message.ItemId))
-        {
-            data["itemId"] = message.ItemId;
-        }
-
-        var inner = new JObject { ["token"] = fcmRegistrationToken };
-        if (!string.Equals(message.Kind, PushKinds.SyncNudge, StringComparison.Ordinal))
-        {
-            inner["notification"] = new JObject
-            {
-                ["title"] = message.Title,
-                ["body"] = message.Body
-            };
-        }
-
-        inner["data"] = data;
-        inner["android"] = new JObject { ["priority"] = "NORMAL" };
-
-        var payload = new JObject { ["message"] = inner };
-        return payload.ToString(Formatting.None);
-    }
-
-    /// <summary>The ntfy topic is the last path segment of the publish URL; null when the endpoint does not parse.</summary>
-    internal static string? ExtractNtfyTopic(string? endpoint)
-    {
-        if (string.IsNullOrWhiteSpace(endpoint) || !Uri.TryCreate(endpoint, UriKind.Absolute, out var uri))
-        {
-            return null;
-        }
-
-        var segment = uri.AbsolutePath
-            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .LastOrDefault();
-        return segment is null ? null : Uri.UnescapeDataString(segment);
-    }
-
-    /// <summary>Admin overview host projection: host only, never path or scheme.</summary>
-    internal static string EndpointHost(string? endpoint)
-        => Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ? uri.Host : string.Empty;
 
     /// <summary>
     /// Cross-user push fleet view for admins. Names resolve through
@@ -422,15 +380,15 @@ public sealed class PushDispatcher
                 AdminUsers.DisplayName(row.UserId, userName),
                 row.Name,
                 row.PushKind ?? string.Empty,
-                EndpointHost(row.PushEndpoint),
+                PushPayloads.EndpointHost(row.PushEndpoint),
                 row.CreatedAt ?? row.LastSeen))
             .ToList();
 
-        return new AdminPushOverviewResponse(_config().Enabled, _config().FcmConfigured(), devices);
+        return new AdminPushOverviewResponse(_config().Enabled, PushEligibility.IsFcmUsable(_config()), devices);
     }
 
     /// <summary>Sends through the pooled named client (created per request; the factory owns the handler lifetime).</summary>
     private static PushSender NamedClientSender(IHttpClientFactory httpFactory)
-        => (request, cancellationToken) => httpFactory.CreateClient(HttpClientName).SendAsync(request, cancellationToken);
+        => (request, cancellationToken) => httpFactory.CreateClient(PushPayloads.HttpClientName).SendAsync(request, cancellationToken);
 }
 

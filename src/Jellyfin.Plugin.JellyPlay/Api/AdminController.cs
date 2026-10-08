@@ -46,7 +46,7 @@ public class AdminController : JellyPlayControllerBase
     /// non-dry-run form rewrites every user's base settings.
     /// </summary>
     [HttpPost("pushDefaults/{userId?}")]
-    [RateLimit(typeof(PushDefaultsRateLimiter), "pushDefaults")]
+    [RateLimit(Services.Admin.RateLimiterKind.PushDefaults, "pushDefaults")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public IActionResult PushDefaults([FromRoute] string? userId, [FromQuery] bool dryRun = false)
@@ -81,11 +81,9 @@ public class AdminController : JellyPlayControllerBase
     /// history endpoints are the durable record).
     /// </summary>
     [HttpGet("stream")]
-    public async Task Stream(CancellationToken cancellationToken)
-    {
-        var subscriberId = _hub.Subscribe(User.GetUserId().ToString(), SseHub.AdminStream);
-        await SseStreamWriter.WriteAsync(HttpContext, _hub, subscriberId, cancellationToken);
-    }
+    public Task Stream(CancellationToken cancellationToken)
+        // Leverage the SSE subscription seam: no replay on the admin monitor stream.
+        => SseStreamWriter.WriteSubscribedAsync(HttpContext, _hub, User.GetUserIdString(), SseHub.AdminStream, cancellationToken);
 
     [HttpGet("configBackup")]
     public IActionResult DownloadBackup()

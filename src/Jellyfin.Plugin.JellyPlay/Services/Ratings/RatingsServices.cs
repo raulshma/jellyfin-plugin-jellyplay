@@ -35,14 +35,15 @@ public sealed class MdbListService
 {
     private readonly ResilientFetcher _fetcher;
     private readonly FileCacheStore _cache;
-    private readonly CircuitBreaker _breaker = new();
+    private readonly CircuitBreaker _breaker;
     private readonly Func<RatingsConfig> _config;
 
-    public MdbListService(ResilientFetcher fetcher, FileCacheStore cache, Func<RatingsConfig> config)
+    public MdbListService(ResilientFetcher fetcher, FileCacheStore cache, Func<RatingsConfig> config, TimeProvider? clock = null)
     {
         _fetcher = fetcher;
         _cache = cache;
         _config = config;
+        _breaker = new(clock: clock);
     }
 
     public bool IsConfigured => !string.IsNullOrEmpty(ApiKey);
@@ -57,8 +58,8 @@ public sealed class MdbListService
         }
 
         return await _fetcher.GetOrFetchAsync(
-            $"mdblist:{imdbId}",
-            TimeSpan.FromHours(TtlHours),
+            CacheKeys.MdbFind(imdbId),
+            TtlPolicy.Ratings(TtlHours),
             (client, cancellationToken) => FetchRatingsAsync(client, imdbId, ApiKey, cancellationToken),
             _breaker);
     }
@@ -105,7 +106,7 @@ public sealed class MdbListService
             return;
         }
 
-        _cache.Invalidate($"mdblist:{imdbId}");
+        _cache.Invalidate(CacheKeys.MdbFind(imdbId));
     }
 
     private int TtlHours => _config().CacheTtlHours;
@@ -114,21 +115,15 @@ public sealed class MdbListService
 /// <summary>TMDB episode/season ratings + next-episode air date.</summary>
 public sealed class TmdbRatingsService
 {
-    /// <summary>
-    /// Fixed freshness for the next-episode lookup — deliberately NOT the
-    /// configurable CacheTtlHours: air dates go stale hourly, and a stale
-    /// "next episode" is worse than none.
-    /// </summary>
-    private static readonly TimeSpan NextEpisodeTtl = TimeSpan.FromHours(6);
-
     private readonly ResilientFetcher _fetcher;
-    private readonly CircuitBreaker _breaker = new();
+    private readonly CircuitBreaker _breaker;
     private readonly Func<RatingsConfig> _config;
 
-    public TmdbRatingsService(ResilientFetcher fetcher, Func<RatingsConfig> config)
+    public TmdbRatingsService(ResilientFetcher fetcher, Func<RatingsConfig> config, TimeProvider? clock = null)
     {
         _fetcher = fetcher;
         _config = config;
+        _breaker = new(clock: clock);
     }
 
     private string? ApiKey => _config().TmdbApiKey;
@@ -144,8 +139,8 @@ public sealed class TmdbRatingsService
         }
 
         return await _fetcher.GetOrFetchAsync(
-            $"tmdb:season:{tmdbId}:{seasonNumber}",
-            TimeSpan.FromHours(Ttl),
+            CacheKeys.TmdbSeason(tmdbId, seasonNumber),
+            TtlPolicy.Ratings(Ttl),
             (client, cancellationToken) => FetchSeasonRatingsAsync(client, tmdbId, seasonNumber, ApiKey, cancellationToken),
             _breaker);
     }
@@ -183,8 +178,8 @@ public sealed class TmdbRatingsService
         }
 
         return await _fetcher.GetOrFetchAsync(
-            $"tmdb:next:{tmdbId}",
-            NextEpisodeTtl,
+            CacheKeys.TmdbNext(tmdbId),
+            TtlPolicy.NextEpisode,
             (client, cancellationToken) => FetchNextEpisodeAsync(client, tmdbId, ApiKey, cancellationToken),
             _breaker,
             failureLogLevel: LogLevel.Debug); // per-episode background lookup — a dead upstream is Debug-worthy
@@ -214,18 +209,15 @@ public sealed class TmdbRatingsService
 /// </summary>
 public sealed partial class ImdbChartsService
 {
-    /// <summary>Fixed freshness for the scraped chart — deliberately not config-driven: the chart is one nightly-relevant snapshot, and the refresh task warms it on that cadence.</summary>
-    private static readonly TimeSpan ChartTtl = TimeSpan.FromHours(24);
-
-    private const string ChartUrl = "https://www.imdb.com/chart/top/?ref_=nv_tp_250";
     private readonly ResilientFetcher _fetcher;
-    private readonly CircuitBreaker _breaker = new(failureThreshold: 2, openWindow: TimeSpan.FromHours(6));
+    private readonly CircuitBreaker _breaker;
     private readonly Func<RatingsConfig> _config;
 
-    public ImdbChartsService(ResilientFetcher fetcher, Func<RatingsConfig> config)
+    public ImdbChartsService(ResilientFetcher fetcher, Func<RatingsConfig> config, TimeProvider? clock = null)
     {
         _fetcher = fetcher;
         _config = config;
+        _breaker = new(failureThreshold: 2, openWindow: TimeSpan.FromHours(6), clock: clock);
     }
 
     public bool IsEnabled => _config().EnableImdbCharts;
@@ -238,15 +230,15 @@ public sealed partial class ImdbChartsService
         }
 
         return await _fetcher.GetOrFetchAsync(
-            "imdb:top250",
-            ChartTtl,
+            CacheKeys.ImdbChart(),
+            TtlPolicy.Chart,
             FetchTop250Async,
             _breaker);
     }
 
     private async Task<ImdbChart?> FetchTop250Async(HttpClient client, CancellationToken cancellationToken)
     {
-        using var request = ResilientFetcher.BrowserGetRequest(ChartUrl);
+        using var request = ResilientFetcher.BrowserGetRequest(ImdbChartsUrls.Top250());
         using var response = await client.SendAsync(request, cancellationToken);
         var html = await response.Content.ReadAsStringAsync(cancellationToken);
         var entries = ParseTop250(html);

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using Jellyfin.Plugin.JellyPlay.Api;
 using Jellyfin.Plugin.JellyPlay.Configuration;
 using Jellyfin.Plugin.JellyPlay.Storage;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
@@ -111,6 +112,124 @@ public sealed class SnapshotService
         }
     }
 
-    /// <summary>Decodes one entry's value back to its stored bytes.</summary>
-    public static byte[] DecodeValue(SnapshotEntry entry) => Convert.FromBase64String(entry.ValueBase64);
+    // ------------------------------------------------------------------
+    // Restore / export / import orchestration (the SnapshotService seam
+    // over the SnapshotOrchestrator kernel)
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Restores one of the caller's snapshots: a diff-first tombstone pass
+    /// (only keys present now but absent from the snapshot are tombstoned)
+    /// followed by the snapshot re-applied per profile, server-stamped past
+    /// the newest overlapping live row so the restore provably wins LWW.
+    /// The re-apply rides the ordinary batch pipeline through
+    /// <paramref name="apply"/> (service-level routing — the store's batch
+    /// signatures do not move), so the change log, the anchored SSE event
+    /// and history recording happen per batch exactly as before: single
+    /// history entry + single SSE event semantics per batch are preserved and
+    /// the wire contract does not move. The returned response folds every
+    /// profile's re-apply batch (head = the final change-log head).
+    /// The create-before-destructive-write guard lives here: the snapshot is
+    /// looked up (ownership and corruption checked) BEFORE any destructive
+    /// write is issued, so a foreign, unknown or corrupt id writes nothing.
+    /// Returns null when the id is not the caller's own intact snapshot.
+    /// </summary>
+    public SettingsBatchResponse? Restore(
+        string userId,
+        long snapshotId,
+        ApplySettingsBatch apply,
+        Func<IReadOnlyList<SettingRow>> getCurrentRows,
+        long serverNow)
+    {
+        var stored = Get(userId, snapshotId);
+        if (stored is null)
+        {
+            return null;
+        }
+
+        var snapshotKeys = SnapshotOrchestrator.SnapshotKeySet(stored.Value.Entries);
+        var current = getCurrentRows();
+        var restoreStamp = SnapshotOrchestrator.RestoreStamp(current, snapshotKeys, serverNow);
+
+        // Tombstone only the drift the snapshot cannot overwrite: keys that
+        // exist now but are absent from the snapshot. One batch per profile
+        // that has such keys, so each 'del' change-log row carries the profile
+        // its key belongs to.
+        foreach (var profileGroup in SnapshotOrchestrator.DriftGroups(current, snapshotKeys))
+        {
+            apply(
+                userId,
+                SnapshotOrchestrator.ApplyProfile(profileGroup.Key),
+                SnapshotOrchestrator.RestoreDeviceId,
+                SnapshotOrchestrator.TombstoneWrites(profileGroup, serverNow),
+                null);
+        }
+
+        var response = new SettingsBatchResponse();
+        foreach (var profileGroup in SnapshotOrchestrator.RestoreGroups(stored.Value.Entries))
+        {
+            SnapshotOrchestrator.FoldBatch(
+                response,
+                apply(
+                    userId,
+                    SnapshotOrchestrator.ApplyProfile(profileGroup.Key),
+                    SnapshotOrchestrator.RestoreDeviceId,
+                    SnapshotOrchestrator.RestoreWrites(profileGroup, restoreStamp),
+                    // The restore is server-initiated and bounded by its own
+                    // server stamp, not the client-skew clamp.
+                    restoreStamp));
+        }
+
+        return response;
+    }
+
+    /// <summary>
+    /// The portable export bundle: every stored profile's rows plus the
+    /// resolved modes maps and the settings-catalog stamp. The row and mode
+    /// projections arrive as delegates (service-level routing): the snapshot
+    /// fold and the resolve merge keep their locality, this seam only
+    /// assembles. Pure read: nothing is written, no history entry.
+    /// </summary>
+    public SettingsExportBundle Export(
+        string userId,
+        long serverNow,
+        Func<string, IReadOnlyList<SettingsEntryDto>> settingsForProfile,
+        Func<string, IReadOnlyDictionary<string, string>> modesForProfile)
+        => SnapshotOrchestrator.BuildExportBundle(
+            serverNow,
+            _db.GetDistinctSettingProfiles(userId),
+            settingsForProfile,
+            modesForProfile);
+
+    /// <summary>
+    /// Imports a bundle: every row is re-applied through the ordinary batch
+    /// pipeline (via <paramref name="apply"/>) with a server-now timestamp —
+    /// it beats anything older than now (per LWW) but never clobbers a
+    /// legitimately newer change — and per-profile batching preserved, so
+    /// history recording and SSE fan-out happen per batch exactly as before.
+    /// </summary>
+    public SettingsBatchResponse Import(
+        string userId,
+        string? deviceId,
+        SettingsExportBundle bundle,
+        long serverNow,
+        ApplySettingsBatch apply)
+    {
+        var resolvedDeviceId = deviceId ?? SnapshotOrchestrator.ImportDeviceIdFallback;
+        var response = new SettingsBatchResponse();
+        foreach (var profile in bundle.Profiles)
+        {
+            var writes = SnapshotOrchestrator.ImportWrites(profile.Settings, serverNow, resolvedDeviceId);
+            if (writes.Count == 0)
+            {
+                continue;
+            }
+
+            SnapshotOrchestrator.FoldBatch(
+                response,
+                apply(userId, profile.Profile, resolvedDeviceId, writes, null));
+        }
+
+        return response;
+    }
 }

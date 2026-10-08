@@ -85,7 +85,7 @@ public sealed class FcmTokenProvider
     /// </summary>
     public async Task<string?> GetTokenAsync(CancellationToken cancellationToken = default)
     {
-        if (!_config().FcmConfigured())
+        if (!PushEligibility.IsFcmUsable(_config()))
         {
             return null;
         }
@@ -100,7 +100,7 @@ public sealed class FcmTokenProvider
         try
         {
             var config = _config();
-            if (!config.FcmConfigured() || !EnsureKeyLoaded(config.FcmServiceAccountJson))
+            if (!PushEligibility.IsFcmUsable(config) || !EnsureKeyLoaded(config.FcmServiceAccountJson))
             {
                 return null;
             }
@@ -307,5 +307,5 @@ public sealed class FcmTokenProvider
 
     /// <summary>Sends through the pooled named client (created per request; the factory owns the handler lifetime).</summary>
     private static PushSender NamedClientSender(IHttpClientFactory httpFactory)
-        => (request, cancellationToken) => httpFactory.CreateClient(PushDispatcher.HttpClientName).SendAsync(request, cancellationToken);
+        => (request, cancellationToken) => httpFactory.CreateClient(PushPayloads.HttpClientName).SendAsync(request, cancellationToken);
 }

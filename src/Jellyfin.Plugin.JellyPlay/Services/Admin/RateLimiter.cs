@@ -66,28 +66,56 @@ public class RateLimiter
             }
         }
     }
+
+    /// <summary>Settings batch POST: 30/min per user (a debounce-cycle burst must survive).</summary>
+    public static RateLimiter Settings() => new(limit: 30, windowMs: 60_000);
+
+    /// <summary>Admin broadcast: 10/min per admin.</summary>
+    public static RateLimiter Broadcast() => new(limit: 10, windowMs: 60_000);
+
+    /// <summary>Anonymous Seerr webhook intake: 30/min per remote client.</summary>
+    public static RateLimiter Webhook() => new(limit: 30, windowMs: 60_000);
+
+    /// <summary>
+    /// POST admin/pushDefaults: 5/min per admin — the route rewrites every user's
+    /// base settings in one call, so the abuse budget is the tightest of the
+    /// mutating routes.
+    /// </summary>
+    public static RateLimiter PushDefaults() => new(limit: 5, windowMs: 60_000);
 }
 
-/// <summary>Settings batch POST: 30/min per user (a debounce-cycle burst must survive).</summary>
-public sealed class SettingsRateLimiter : RateLimiter
+/// <summary>
+/// Which abuse-containment sliding-window a mutating route draws from. One enum
+/// behind the single <see cref="RateLimiterRegistry"/> module — replacing the
+/// four one-line subclasses with one seam (one adapter = hypothetical seam,
+/// two = real; four single-use subclasses were four hypothetical seams).
+/// </summary>
+public enum RateLimiterKind
 {
-    public SettingsRateLimiter() : base(limit: 30, windowMs: 60_000)
-    {
-    }
+    Settings,
+    Broadcast,
+    Webhook,
+    PushDefaults,
 }
 
-/// <summary>Admin broadcast: 10/min per admin.</summary>
-public sealed class BroadcastRateLimiter : RateLimiter
+/// <summary>
+/// The one abuse-containment module: owns the four mutating-route
+/// sliding-windows behind a small interface, so controllers name a kind
+/// instead of a type.
+/// </summary>
+public sealed class RateLimiterRegistry
 {
-    public BroadcastRateLimiter() : base(limit: 10, windowMs: 60_000)
-    {
-    }
-}
+    private readonly RateLimiter _settings = RateLimiter.Settings();
+    private readonly RateLimiter _broadcast = RateLimiter.Broadcast();
+    private readonly RateLimiter _webhook = RateLimiter.Webhook();
+    private readonly RateLimiter _pushDefaults = RateLimiter.PushDefaults();
 
-/// <summary>Anonymous Seerr webhook intake: 30/min per remote client.</summary>
-public sealed class WebhookRateLimiter : RateLimiter
-{
-    public WebhookRateLimiter() : base(limit: 30, windowMs: 60_000)
+    public RateLimiter Get(RateLimiterKind kind) => kind switch
     {
-    }
+        RateLimiterKind.Settings => _settings,
+        RateLimiterKind.Broadcast => _broadcast,
+        RateLimiterKind.Webhook => _webhook,
+        RateLimiterKind.PushDefaults => _pushDefaults,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown rate-limiter kind."),
+    };
 }

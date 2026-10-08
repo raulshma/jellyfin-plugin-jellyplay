@@ -44,3 +44,48 @@ public static class TmdbUrls
     public static string DiscoverMoviesByKeyword(string keyword, string apiKey)
         => $"{BaseUrl}/discover/movie?api_key={apiKey}&with_keywords={Uri.EscapeDataString(keyword)}&sort_by=popularity.desc&vote_count.gte=50";
 }
+
+/// <summary>
+/// URL builders for the IMDb chart page — the one scraped source with a fixed
+/// address. Builders only, no I/O; the ratings module keeps its own breaker.
+/// </summary>
+public static class ImdbChartsUrls
+{
+    private const string BaseUrl = "https://www.imdb.com";
+
+    /// <summary>Top-250 chart page.</summary>
+    public static string Top250() => $"{BaseUrl}/chart/top/?ref_=nv_tp_250";
+}
+
+/// <summary>
+/// URL builders for Letterboxd / IMDb list pages — the scraped rows sources.
+/// Builders only, no I/O; the rows module keeps per-source breakers.
+/// </summary>
+public static class ScrapedListUrls
+{
+    private const string LetterboxdBase = "https://letterboxd.com";
+    private const string ImdbBase = "https://www.imdb.com";
+
+    /// <summary>One Letterboxd list page.</summary>
+    public static string LetterboxdList(string listSlug) => $"{LetterboxdBase}/{listSlug}/";
+
+    /// <summary>One IMDb list page (watchlist / ls-id lists).</summary>
+    public static string ImdbList(string listId) => $"{ImdbBase}/list/{listId}/";
+}
+
+/// <summary>
+/// URL builders for the anime marker sources — AnimeFillerList pages, Tenrai
+/// recap lookups. Builders only, no I/O; the anime markers module keeps
+/// per-source breakers.
+/// </summary>
+public static class AnimeSourceUrls
+{
+    private const string FillerListBase = "https://www.animefillerlist.com/shows/";
+    private const string TenraiBase = "https://api.tenrai.org/v1/recaps";
+
+    /// <summary>One AnimeFillerList show page, addressed by name slug.</summary>
+    public static string FillerShow(string slug) => $"{FillerListBase}{Uri.EscapeDataString(slug)}";
+
+    /// <summary>Tenrai recap lookup for one AniList id.</summary>
+    public static string TenraiRecaps(string anilistId) => $"{TenraiBase}?anilist_id={Uri.EscapeDataString(anilistId)}";
+}

@@ -92,6 +92,19 @@ public abstract class FetcherTestBase : IDisposable
     protected ResilientFetcher NewFetcher(HttpMessageHandler handler, ILogger<ResilientFetcher>? logger = null)
         => new(new FakeHttpClientFactory(handler), Cache, logger ?? NullLogger<ResilientFetcher>.Instance, Clock);
 
+    /// <summary>
+    /// A fetcher over a FRESH memory table on the same cache files: within its
+    /// ~30s memory window a hot value is served on the entry's own timestamp,
+    /// so tests that backdate files to prove TTL expiry must start from a cold
+    /// table (the restart-equivalent) for the file time to become the truth.
+    /// </summary>
+    protected ResilientFetcher ColdFetcher(HttpMessageHandler handler)
+        => new(
+            new FakeHttpClientFactory(handler),
+            new FileCacheStore(NullLogger<FileCacheStore>.Instance, TempDir, () => 256),
+            NullLogger<ResilientFetcher>.Instance,
+            Clock);
+
     /// <summary>Backdates every cache file beyond ttl — FileCacheStore expiry keys off file write time, so tests age files directly.</summary>
     protected void ExpireCacheEntries(TimeSpan ttl)
     {
@@ -121,23 +134,26 @@ public class CircuitBreakerTests
     [Fact]
     public void Opens_AfterThreshold_AndCloses_AfterWindow()
     {
-        var breaker = new CircuitBreaker(failureThreshold: 2, openWindow: TimeSpan.FromSeconds(1));
+        var clock = new FakeTimeProvider();
+        var breaker = new CircuitBreaker(failureThreshold: 2, openWindow: TimeSpan.FromSeconds(1), clock: clock);
 
-        breaker.RecordFailure(0);
-        Assert.False(breaker.IsOpen(1));
+        breaker.RecordFailure();
+        Assert.False(breaker.IsOpen());
 
-        breaker.RecordFailure(2);
-        Assert.True(breaker.IsOpen(3));
+        breaker.RecordFailure();
+        Assert.True(breaker.IsOpen());
 
         // Still open inside the window.
-        Assert.True(breaker.IsOpen(900));
+        clock.Advance(TimeSpan.FromMilliseconds(900));
+        Assert.True(breaker.IsOpen());
 
         // After the window, a trial is allowed.
-        Assert.False(breaker.IsOpen(1500));
+        clock.Advance(TimeSpan.FromMilliseconds(600));
+        Assert.False(breaker.IsOpen());
 
         // Success resets the counter.
-        breaker.RecordSuccess(1600);
-        Assert.False(breaker.IsOpen(1700));
+        breaker.RecordSuccess();
+        Assert.False(breaker.IsOpen());
     }
 }
 
@@ -152,7 +168,7 @@ public class ResilientFetcherTests : FetcherTestBase
     [Fact]
     public async Task CacheHit_SkipsFetch()
     {
-        Cache.Set("k", new SamplePayload("cached"));
+        await Cache.SetAsync("k", new SamplePayload("cached"));
         var handler = new FakeHttpMessageHandler(_ => Text("fresh"));
         var fetcher = NewFetcher(handler);
 
@@ -170,7 +186,7 @@ public class ResilientFetcherTests : FetcherTestBase
 
         var first = await fetcher.GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync);
         ExpireCacheEntries(TimeSpan.FromHours(1));
-        var second = await fetcher.GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync);
+        var second = await ColdFetcher(handler).GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync);
 
         Assert.Equal("first", first?.Value);
         Assert.Equal("first", second?.Value);
@@ -181,14 +197,14 @@ public class ResilientFetcherTests : FetcherTestBase
     public async Task FetchFailure_RecordsBreaker_ReturnsDefault_LogsWarning()
     {
         var handler = new FakeHttpMessageHandler(_ => throw new HttpRequestException("boom"));
-        var breaker = new CircuitBreaker(failureThreshold: 1);
+        var breaker = new CircuitBreaker(failureThreshold: 1, clock: Clock);
         var logger = new CaptureLogger();
         var fetcher = NewFetcher(handler, logger);
 
         var result = await fetcher.GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync, breaker);
 
         Assert.Null(result);
-        Assert.True(breaker.IsOpen(Now));
+        Assert.True(breaker.IsOpen());
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Exception is HttpRequestException);
     }
 
@@ -201,7 +217,7 @@ public class ResilientFetcherTests : FetcherTestBase
             cts.Cancel();
             throw new OperationCanceledException(cts.Token);
         });
-        var breaker = new CircuitBreaker(failureThreshold: 1);
+        var breaker = new CircuitBreaker(failureThreshold: 1, clock: Clock);
         var logger = new CaptureLogger();
         var fetcher = NewFetcher(handler, logger);
 
@@ -210,7 +226,7 @@ public class ResilientFetcherTests : FetcherTestBase
 
         // The caller's own cancellation is not an upstream failure: no breaker
         // record, nothing logged (and nothing cached, since the fetch never returns).
-        Assert.False(breaker.IsOpen(Now));
+        Assert.False(breaker.IsOpen());
         Assert.Empty(logger.Entries);
     }
 
@@ -218,7 +234,7 @@ public class ResilientFetcherTests : FetcherTestBase
     public async Task TimeoutStyleCancellation_WithoutCallerCancellation_CountsAsFailure()
     {
         var handler = new FakeHttpMessageHandler(_ => throw new OperationCanceledException("simulated HttpClient timeout fault"));
-        var breaker = new CircuitBreaker(failureThreshold: 1);
+        var breaker = new CircuitBreaker(failureThreshold: 1, clock: Clock);
         var logger = new CaptureLogger();
         var fetcher = NewFetcher(handler, logger);
 
@@ -227,7 +243,7 @@ public class ResilientFetcherTests : FetcherTestBase
         // A cancellation the caller did not request (e.g. an HttpClient timeout
         // fault) stays an ordinary failure: breaker record + log + null.
         Assert.Null(result);
-        Assert.True(breaker.IsOpen(Now));
+        Assert.True(breaker.IsOpen());
         Assert.Equal(1, handler.RequestedUrls.Count);
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Exception is OperationCanceledException);
     }
@@ -236,7 +252,7 @@ public class ResilientFetcherTests : FetcherTestBase
     public async Task BreakerOpen_ShortCircuits_WithoutHttpCall()
     {
         var handler = new FakeHttpMessageHandler(_ => throw new HttpRequestException("boom"));
-        var breaker = new CircuitBreaker(failureThreshold: 1);
+        var breaker = new CircuitBreaker(failureThreshold: 1, clock: Clock);
         var fetcher = NewFetcher(handler);
 
         Assert.Null(await fetcher.GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync, breaker));
@@ -265,16 +281,17 @@ public class ResilientFetcherTests : FetcherTestBase
         // Expire the positive entry, then fail: the miss marker absorbs the retries.
         ExpireCacheEntries(TimeSpan.FromHours(1));
         handler.Responder = _ => throw new HttpRequestException("down");
-        Assert.Null(await fetcher.GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync, missCache: true, missTtl: TimeSpan.FromHours(2)));
+        var cold = ColdFetcher(handler);
+        Assert.Null(await cold.GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync, missCache: true, missTtl: TimeSpan.FromHours(2)));
         Assert.Equal(2, handler.RequestedUrls.Count);
 
         handler.Responder = _ => Text("recovered");
-        Assert.Null(await fetcher.GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync, missCache: true, missTtl: TimeSpan.FromHours(2)));
+        Assert.Null(await cold.GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync, missCache: true, missTtl: TimeSpan.FromHours(2)));
         Assert.Equal(2, handler.RequestedUrls.Count); // miss marker — no HTTP call
 
         // After the miss TTL passes, the source is tried again and recovers.
         ExpireCacheEntries(TimeSpan.FromHours(2));
-        var recovered = await fetcher.GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync, missCache: true, missTtl: TimeSpan.FromHours(2));
+        var recovered = await ColdFetcher(handler).GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync, missCache: true, missTtl: TimeSpan.FromHours(2));
         Assert.Equal("recovered", recovered?.Value);
         Assert.Equal(3, handler.RequestedUrls.Count);
     }
@@ -409,7 +426,7 @@ public class CustomRowsServiceTests : FetcherTestBase
             NewFetcher(handler),
             Cache,
             libraryManager: null!, // FindLocalItem catches the null-deref and degrades to LocalItemId = null
-            () => new RowsFetchConfig("tmdb-key", "mdblist-key", 24),
+            () => new RatingsConfig { TmdbApiKey = "tmdb-key", MdbListApiKey = "mdblist-key", CacheTtlHours = 24 },
             NullLogger<CustomRowsService>.Instance);
 
     [Fact]
@@ -441,7 +458,7 @@ public class CustomRowsServiceTests : FetcherTestBase
     }
 
     [Fact]
-    public async Task ResolveAsync_RepeatedFailures_OpenBreaker_AndStopHttpCalls()
+    public async Task ResolveAsync_RepeatedFailures_MemoizeMiss_AndStopHttpCalls()
     {
         var handler = new FakeHttpMessageHandler(_ => throw new HttpRequestException("refused"));
         var service = NewService(handler);
@@ -452,10 +469,12 @@ public class CustomRowsServiceTests : FetcherTestBase
             Assert.Null(await service.ResolveAsync(row));
         }
 
-        Assert.Equal(3, handler.RequestedUrls.Count);
+        // Miss-cached: the first failure memoizes a miss marker, so the
+        // retries never leave the machine — one upstream hit total.
+        Assert.Equal(1, handler.RequestedUrls.Count);
 
         Assert.Null(await service.ResolveAsync(row));
-        Assert.Equal(3, handler.RequestedUrls.Count); // breaker open — the fourth resolve never leaves the machine
+        Assert.Equal(1, handler.RequestedUrls.Count); // miss marker holds — the fourth resolve never leaves the machine
     }
 }
 
@@ -466,7 +485,6 @@ public class AnimeMarkersServiceTests : FetcherTestBase
 
     private AnimeMarkersService NewService(FakeHttpMessageHandler handler, AnimeConfig config)
         => new(
-            new FakeHttpClientFactory(handler), // Fribb index refresh
             NewFetcher(handler),
             Cache,
             libraryManager: null!, // series id "not-a-guid" fails Guid.Parse first; the library is never touched
