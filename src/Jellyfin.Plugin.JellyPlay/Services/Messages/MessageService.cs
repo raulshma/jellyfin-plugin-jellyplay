@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using Jellyfin.Plugin.JellyPlay.Api;
 using Jellyfin.Plugin.JellyPlay.Services.Push;
+using Jellyfin.Plugin.JellyPlay.Services.Shared;
 using Jellyfin.Plugin.JellyPlay.Storage;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
 using Microsoft.Extensions.Logging;
@@ -49,11 +49,7 @@ public sealed class MessageService
             request.Color,
             request.LinkUrl ?? string.Empty,
             request.LinkLabel ?? string.Empty,
-            JsonSerializer.Serialize(new AudiencePayload
-            {
-                Type = request.Audience.Type,
-                UserIds = request.Audience.UserIds
-            }),
+            Audience.Serialize(request.Audience),
             request.StartsAt,
             request.EndsAt,
             request.OrderIndex,
@@ -73,22 +69,34 @@ public sealed class MessageService
     /// <summary>
     /// Push audience for a message: "admins" → the admin id set, "users" → the
     /// explicit ids (empty list delivers to nobody), anything else → null =
-    /// every user. Pure so it is unit-testable without the host.
+    /// every user. Delegates to the shared <see cref="Audience"/> module —
+    /// kept as a member so the pure decision stays pinned by tests here.
     /// </summary>
     internal static IReadOnlyCollection<string>? ResolveAudienceTargets(
         string? audienceType,
         IReadOnlyList<string> explicitUserIds,
         IReadOnlyList<string> adminUserIds)
-        => audienceType switch
-        {
-            "admins" => new HashSet<string>(adminUserIds, StringComparer.Ordinal),
-            "users" => new HashSet<string>(explicitUserIds, StringComparer.Ordinal),
-            _ => null
-        };
+        => Audience.ResolveTargets(audienceType, explicitUserIds, adminUserIds);
 
     public bool Delete(string messageId) => _db.DeleteMessage(messageId);
 
-    public IReadOnlyList<MessageRow> GetAll() => _db.GetMessages();
+    /// <summary>Every stored message for the admin registry, projected row→DTO (one projection home for the admin wire shape).</summary>
+    public IReadOnlyList<AdminMessageDto> GetAll() => _db.GetMessages().Select(ToAdminDto).ToList();
+
+    /// <summary>The admin wire projection: the storage record's fields verbatim (audienceJson unparsed, byte-identical to the raw row shape).</summary>
+    private static AdminMessageDto ToAdminDto(MessageRow row)
+        => new(
+            row.Id,
+            row.Title,
+            row.Body,
+            row.Color,
+            row.LinkUrl,
+            row.LinkLabel,
+            row.AudienceJson,
+            row.StartsAt,
+            row.EndsAt,
+            row.OrderIndex,
+            row.CreatedAt);
 
     /// <summary>Messages visible to one user right now, with read flags.</summary>
     public IReadOnlyList<MessageDto> GetInbox(string userId, bool isAdmin)
@@ -109,18 +117,14 @@ public sealed class MessageService
                 continue;
             }
 
-            AudiencePayload? audience;
-            try
-            {
-                audience = JsonSerializer.Deserialize<AudiencePayload>(row.AudienceJson);
-            }
-            catch (JsonException)
+            var audience = Audience.TryParse(row.AudienceJson);
+            if (audience is null)
             {
                 _logger.LogWarning("Message {Id} has corrupt audience payload; defaulting to all", row.Id);
                 audience = new AudiencePayload();
             }
 
-            var visible = audience?.Type switch
+            var visible = audience.Type switch
             {
                 "admins" => isAdmin,
                 "users" => audience.UserIds.Contains(userId, StringComparer.Ordinal),

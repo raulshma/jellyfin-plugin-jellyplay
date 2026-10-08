@@ -1,5 +1,4 @@
 using System;
-using System.Text;
 using System.Collections.Generic;
 using System.Linq;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
@@ -45,18 +44,18 @@ public sealed partial class JellyPlayDatabase
             statement.Bind("@ItemId", session.ItemId);
             statement.Bind("@ItemName", session.ItemName);
             statement.Bind("@ItemType", session.ItemType);
-            BindNullableText(statement, "@SeriesName", session.SeriesName);
+            BindNullable(statement, "@SeriesName", session.SeriesName);
             statement.Bind("@PlayMethod", session.PlayMethod);
-            BindNullableText(statement, "@VideoCodec", session.VideoCodec);
-            BindNullableText(statement, "@AudioCodec", session.AudioCodec);
+            BindNullable(statement, "@VideoCodec", session.VideoCodec);
+            BindNullable(statement, "@AudioCodec", session.AudioCodec);
             BindNullable(statement, "@Bitrate", session.Bitrate);
-            BindNullableText(statement, "@TranscodeReasonsJson", session.TranscodeReasonsJson);
+            BindNullable(statement, "@TranscodeReasonsJson", session.TranscodeReasonsJson);
             statement.Bind("@PositionTicks", session.PositionTicks);
             BindNullable(statement, "@DurationTicks", session.DurationTicks);
             statement.Bind("@StartedAt", startedAt);
             statement.Bind("@EndedAt", session.EndedAt);
-            BindNullableText(statement, "@ClientName", session.ClientName);
-            BindNullableText(statement, "@DeviceName", session.DeviceName);
+            BindNullable(statement, "@ClientName", session.ClientName);
+            BindNullable(statement, "@DeviceName", session.DeviceName);
             return (long)(statement.ExecuteScalar() ?? 0L);
         }
     }
@@ -105,44 +104,36 @@ public sealed partial class JellyPlayDatabase
     /// and re-derived from ALL raw rows of that day (the cutoff selects the
     /// days; the aggregation always covers the whole day, so rows just outside
     /// the cutoff are never dropped from their own day's totals). Returns the
-    /// number of days recomputed. Runs in one transaction.
+    /// number of days recomputed.
+    ///
+    /// The write lock is taken per DAY, not for the whole rebuild: each day's
+    /// delete+re-derive is one atomic transaction, but a long rebuild no longer
+    /// starves settings sync for the whole window. A session landing for a day
+    /// after its chunk ran is picked up by the next rebuild (the cutoff keeps
+    /// the day eligible), so the fold stays eventually exact.
     /// </summary>
     public int RecomputePlaybackRollups(long cutoffMs)
     {
         var dayExpr = $"date({PlaybackSessionsTable}.EndedAt / 1000, 'unixepoch')";
-        using (_lock.Write())
+        List<string> days;
+        using (_lock.Read())
         using (var connection = CreateConnection())
-        using (var transaction = connection.BeginTransaction())
+        using (var select = connection.Prepare(
+                   $"select distinct {dayExpr} from {PlaybackSessionsTable} where {PlaybackSessionsTable}.EndedAt >= @CutoffMs order by 1"))
         {
-            var days = new List<string>();
-            using (var select = connection.Prepare(
-                       $"select distinct {dayExpr} from {PlaybackSessionsTable} where {PlaybackSessionsTable}.EndedAt >= @CutoffMs order by 1"))
+            select.Bind("@CutoffMs", cutoffMs);
+            days = select.Select(row => row.GetString(0)).ToList();
+        }
+
+        foreach (var day in days)
+        {
+            using (_lock.Write())
+            using (var connection = CreateConnection())
+            using (var transaction = connection.BeginTransaction())
             {
-                select.Bind("@CutoffMs", cutoffMs);
-                days.AddRange(select.Select(row => row.GetString(0)));
-            }
-
-            if (days.Count > 0)
-            {
-                var placeholders = new StringBuilder(days.Count * 6);
-                for (var index = 0; index < days.Count; index++)
+                using (var delete = connection.Prepare($"delete from {PlaybackRollupsTable} where Day = @Day"))
                 {
-                    if (index > 0)
-                    {
-                        placeholders.Append(", ");
-                    }
-
-                    placeholders.Append("@Day").Append(index);
-                }
-
-                var dayList = placeholders.ToString();
-                using (var delete = connection.Prepare($"delete from {PlaybackRollupsTable} where Day in ({dayList})"))
-                {
-                    for (var index = 0; index < days.Count; index++)
-                    {
-                        delete.Bind($"@Day{index}", days[index]);
-                    }
-
+                    delete.Bind("@Day", day);
                     delete.ExecuteNonQuery();
                 }
 
@@ -156,21 +147,18 @@ public sealed partial class JellyPlayDatabase
                                      sum(case when PlayMethod != 'Transcode' then 1 else 0 end),
                                      sum(case when PlayMethod = 'Transcode' then 1 else 0 end)
                               from {PlaybackSessionsTable}
-                              where {dayExpr} in ({dayList})
+                              where {dayExpr} = @Day
                               group by {dayExpr}, UserId"))
                 {
-                    for (var index = 0; index < days.Count; index++)
-                    {
-                        insert.Bind($"@Day{index}", days[index]);
-                    }
-
+                    insert.Bind("@Day", day);
                     insert.ExecuteNonQuery();
                 }
-            }
 
-            transaction.Commit();
-            return days.Count;
+                transaction.Commit();
+            }
         }
+
+        return days.Count;
     }
 
     /// <summary>Raw session rows (and only those) ending before <paramref name="cutoffMs"/> (unix ms) are deleted; rollups are never touched.</summary>
@@ -207,19 +195,35 @@ public sealed partial class JellyPlayDatabase
         }
     }
 
-    /// <summary>Per-user daily rollups within the UTC day range (inclusive).</summary>
-    public IReadOnlyList<PlaybackRollupRow> GetPlaybackRollups(string fromDayUtc, string toDayUtc)
+    /// <summary>
+    /// Per-user daily rollups within the UTC day range (inclusive). Null
+    /// <paramref name="userId"/> = all users (admin surface); a user id scopes
+    /// the fold to that user's rows — mirroring
+    /// <see cref="GetTopPlaybackItems"/> and <see cref="CountDistinctPlaybackItems"/>.
+    /// </summary>
+    public IReadOnlyList<PlaybackRollupRow> GetPlaybackRollups(string fromDayUtc, string toDayUtc, string? userId = null)
     {
+        var filters = new List<string>(2) { "Day >= @FromDay", "Day <= @ToDay" };
+        if (userId is not null)
+        {
+            filters.Add("UserId = @UserId");
+        }
+
         using (_lock.Read())
         using (var connection = CreateConnection())
         using (var statement = connection.Prepare(
                    $@"select Day, UserId, ItemsPlayed, PlaySeconds, TranscodeSeconds, DirectCount, TranscodeCount
                       from {PlaybackRollupsTable}
-                      where Day >= @FromDay and Day <= @ToDay
+                      where {string.Join(" and ", filters)}
                       order by Day, UserId"))
         {
             statement.Bind("@FromDay", fromDayUtc);
             statement.Bind("@ToDay", toDayUtc);
+            if (userId is not null)
+            {
+                statement.Bind("@UserId", userId);
+            }
+
             return statement.Select(row => new PlaybackRollupRow(
                 row.GetString(0),
                 row.GetString(1),

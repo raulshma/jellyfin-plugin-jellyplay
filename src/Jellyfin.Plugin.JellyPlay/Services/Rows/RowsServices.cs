@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyPlay.Configuration;
+using Jellyfin.Plugin.JellyPlay.Services.Cache;
 using Jellyfin.Plugin.JellyPlay.Services.Fetching;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -27,14 +28,16 @@ public sealed record RowResult(string Title, string Source, IReadOnlyList<RowIte
 public sealed partial class CustomRowsService
 {
     private readonly ResilientFetcher _fetcher;
+    private readonly FileCacheStore _cache;
     private readonly ILibraryManager _libraryManager;
     private readonly Func<RowsFetchConfig> _config;
     private readonly CircuitBreaker _breaker = new();
     private readonly ILogger<CustomRowsService> _logger;
 
-    public CustomRowsService(ResilientFetcher fetcher, ILibraryManager libraryManager, Func<RowsFetchConfig> config, ILogger<CustomRowsService> logger)
+    public CustomRowsService(ResilientFetcher fetcher, FileCacheStore cache, ILibraryManager libraryManager, Func<RowsFetchConfig> config, ILogger<CustomRowsService> logger)
     {
         _fetcher = fetcher;
+        _cache = cache;
         _libraryManager = libraryManager;
         _config = config;
         _logger = logger;
@@ -42,6 +45,21 @@ public sealed partial class CustomRowsService
 
     public async Task<RowResult?> ResolveAsync(CustomRowDefinition row)
     {
+        var limit = row.Limit <= 0 ? 20 : row.Limit;
+
+        // Resolved-result cache: the local-match walk below costs one library
+        // search per entry, so the fully matched result (LocalItemIds included)
+        // is memoized under the same rows TTL. The external list keeps its own
+        // fetcher cache beneath this; the short TTL bounds staleness across
+        // library scans — the same tradeoff the external list already accepts.
+        var resolvedKey = $"rowres:{row.Source}:{row.ListId}:{limit}";
+        var resolved = _cache.Get<RowResult>(resolvedKey, CacheTtl);
+        if (resolved is not null)
+        {
+            // The title is admin-editable state, not fetched data — always the current one.
+            return resolved with { Title = row.Title };
+        }
+
         var items = row.Source switch
         {
             "letterboxd" => await FetchLetterboxdAsync(row.ListId),
@@ -58,10 +76,12 @@ public sealed partial class CustomRowsService
 
         var matched = items
             .Select(item => item with { LocalItemId = FindLocalItem(item) })
-            .Take(row.Limit <= 0 ? 20 : row.Limit)
+            .Take(limit)
             .ToList();
 
-        return new RowResult(row.Title, row.Source, matched);
+        var result = new RowResult(row.Title, row.Source, matched);
+        _cache.Set(resolvedKey, result);
+        return result;
     }
 
     /// <summary>Letterboxd list pages are scrapeable HTML; each entry has a poster with title/year in the film caption.</summary>
@@ -73,7 +93,8 @@ public sealed partial class CustomRowsService
             async Task<List<RowItem>?> (client, cancellationToken) =>
             {
                 using var request = ResilientFetcher.BrowserGetRequest($"https://letterboxd.com/{listSlug}/");
-                var html = await (await client.SendAsync(request, cancellationToken)).Content.ReadAsStringAsync(cancellationToken);
+                using var response = await client.SendAsync(request, cancellationToken);
+                var html = await response.Content.ReadAsStringAsync(cancellationToken);
                 return ParseLetterboxd(html);
             },
             _breaker);
@@ -112,7 +133,8 @@ public sealed partial class CustomRowsService
             async Task<List<RowItem>?> (client, cancellationToken) =>
             {
                 using var request = ResilientFetcher.BrowserGetRequest($"https://www.imdb.com/list/{listId}/");
-                var html = await (await client.SendAsync(request, cancellationToken)).Content.ReadAsStringAsync(cancellationToken);
+                using var response = await client.SendAsync(request, cancellationToken);
+                var html = await response.Content.ReadAsStringAsync(cancellationToken);
                 return ParseImdbList(html);
             },
             _breaker);
@@ -158,7 +180,7 @@ public sealed partial class CustomRowsService
             CacheTtl,
             async Task<List<RowItem>?> (client, cancellationToken) =>
             {
-                var json = await client.GetStringAsync($"https://api.mdblist.com/lists/{listSlug}/items?apikey={apiKey}", cancellationToken);
+                var json = await client.GetStringAsync(MdbListUrls.ListItems(listSlug, apiKey), cancellationToken);
                 return ParseMdbListItems(json);
             },
             _breaker);
@@ -194,7 +216,7 @@ public sealed partial class CustomRowsService
             $"tmdb-list:{listId}",
             CacheTtl,
             async Task<List<RowItem>?> (client, cancellationToken) =>
-                ParseTmdbList(await client.GetStringAsync($"https://api.themoviedb.org/3/list/{Uri.EscapeDataString(listId)}?api_key={apiKey}", cancellationToken)),
+                ParseTmdbList(await client.GetStringAsync(TmdbUrls.List(listId, apiKey), cancellationToken)),
             _breaker);
     }
 
@@ -262,6 +284,9 @@ public sealed partial class CustomRowsService
 /// <summary>Seasonal holiday rows via TMDB keyword discovery, cached per keyword.</summary>
 public sealed class SeasonalService
 {
+    /// <summary>Fixed freshness for the seasonal discovery — deliberately not config-driven: holiday keyword results move on a season scale, not a ratings cycle.</summary>
+    private static readonly TimeSpan SeasonalTtl = TimeSpan.FromDays(2);
+
     private static readonly string[] DefaultKeywords = ["christmas", "halloween", "valentines-day", "summer", "thanksgiving"];
 
     private readonly ResilientFetcher _fetcher;
@@ -290,7 +315,7 @@ public sealed class SeasonalService
 
         var items = await _fetcher.GetOrFetchAsync(
             $"seasonal:{kw}",
-            TimeSpan.FromDays(2),
+            SeasonalTtl,
             (client, cancellationToken) => FetchSeasonalItemsAsync(client, tmdbKey, kw, cancellationToken),
             _breaker);
         return items is null ? null : new RowResult(TitleFor(kw), "tmdb", items);
@@ -298,9 +323,7 @@ public sealed class SeasonalService
 
     private static async Task<List<RowItem>?> FetchSeasonalItemsAsync(HttpClient client, string tmdbKey, string keyword, CancellationToken cancellationToken)
     {
-        var json = await client.GetStringAsync(
-            $"https://api.themoviedb.org/3/discover/movie?api_key={tmdbKey}&with_keywords={Uri.EscapeDataString(keyword)}&sort_by=popularity.desc&vote_count.gte=50",
-            cancellationToken);
+        var json = await client.GetStringAsync(TmdbUrls.DiscoverMoviesByKeyword(keyword, tmdbKey), cancellationToken);
         using var doc = JsonDocument.Parse(json);
         var items = new List<RowItem>();
         foreach (var result in doc.RootElement.GetProperty("results").EnumerateArray())

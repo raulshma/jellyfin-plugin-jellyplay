@@ -20,12 +20,14 @@ namespace Jellyfin.Plugin.JellyPlay.Api;
 public class SettingsController : JellyPlayControllerBase
 {
     private readonly SettingsService _settings;
+    private readonly SnapshotService _snapshots;
     private readonly SseHub _hub;
     private readonly ILogger<SettingsController> _logger;
 
-    public SettingsController(SettingsService settings, SseHub hub, ILogger<SettingsController> logger)
+    public SettingsController(SettingsService settings, SnapshotService snapshots, SseHub hub, ILogger<SettingsController> logger)
     {
         _settings = settings;
+        _snapshots = snapshots;
         _hub = hub;
         _logger = logger;
     }
@@ -118,19 +120,21 @@ public class SettingsController : JellyPlayControllerBase
     [HttpGet("snapshots")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult GetSnapshots()
-        => JellyPlayResponses.Camel(_settings.ListSnapshots(User.GetUserId().ToString()).Select(row => new SnapshotDto(
+        => JellyPlayResponses.Camel(_snapshots.List(User.GetUserId().ToString()).Select(row => new SnapshotDto(
             row.Id,
             row.CreatedAt,
             row.Origin,
             row.Keys,
             row.Bytes)));
 
-    /// <summary>Captures a manual restore point of the caller's whole settings store.</summary>
+    /// <summary>Captures a manual restore point of the caller's whole settings store (full-store copy — rate-limited like the batch routes).</summary>
     [HttpPost("snapshots")]
+    [RateLimit(typeof(Services.Admin.SettingsRateLimiter), "settings")]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public IActionResult CreateSnapshot()
     {
-        var id = _settings.CreateSnapshot(User.GetUserId().ToString());
+        var id = _snapshots.Create(User.GetUserId().ToString(), "manual");
         return id is null
             ? JellyPlayResponses.Error(StatusCodes.Status500InternalServerError, "snapshot-failed")
             : JellyPlayResponses.Camel(new SnapshotCreateResponse(id.Value));
@@ -141,10 +145,13 @@ public class SettingsController : JellyPlayControllerBase
     /// current row, then the snapshot re-applied with a server-stamped LWW
     /// clock (so it wins), riding the ordinary batch pipeline (change log,
     /// anchored SSE event, history). 404 when the id is not the caller's own.
+    /// Rate-limited like the batch routes — a restore is a whole-store write.
     /// </summary>
     [HttpPost("snapshots/{id}/restore")]
+    [RateLimit(typeof(Services.Admin.SettingsRateLimiter), "settings")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public IActionResult RestoreSnapshot([FromRoute, Required] long id)
     {
         var response = _settings.RestoreSnapshot(User.GetUserId().ToString(), id);
@@ -161,9 +168,11 @@ public class SettingsController : JellyPlayControllerBase
     public IActionResult Export()
         => JellyPlayResponses.Camel(_settings.Export(User.GetUserId().ToString()));
 
-    /// <summary>Re-applies an exported bundle for the caller with server-now timestamps (LWW: beats anything older).</summary>
+    /// <summary>Re-applies an exported bundle for the caller with server-now timestamps (LWW: beats anything older). Rate-limited like the batch routes — an import is a whole-store write.</summary>
     [HttpPost("import")]
+    [RateLimit(typeof(Services.Admin.SettingsRateLimiter), "settings")]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public IActionResult Import([FromBody, Required] SettingsExportBundle bundle, [FromQuery] string? deviceId)
         => JellyPlayResponses.Camel(_settings.Import(User.GetUserId().ToString(), deviceId ?? User.GetDeviceId(), bundle));
 
@@ -171,7 +180,7 @@ public class SettingsController : JellyPlayControllerBase
     [HttpGet("stream")]
     public async Task Stream(CancellationToken cancellationToken)
     {
-        var subscriberId = _hub.Subscribe(User.GetUserId().ToString(), "settings");
+        var subscriberId = _hub.Subscribe(User.GetUserId().ToString(), SseHub.SettingsStream);
         await SseStreamWriter.WriteAsync(HttpContext, _hub, subscriberId, cancellationToken);
     }
 }

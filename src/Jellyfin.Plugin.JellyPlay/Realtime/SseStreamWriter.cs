@@ -17,26 +17,19 @@ public static class SseStreamWriter
 {
     public static readonly TimeSpan DefaultKeepAliveInterval = TimeSpan.FromSeconds(15);
 
-    public static Task WriteAsync(HttpContext context, SseHub hub, Guid subscriberId, CancellationToken requestAborted)
-        => WriteAsync(context, hub, subscriberId, DefaultKeepAliveInterval, requestAborted);
-
-    /// <summary>Streams the subscription, replaying <paramref name="replay"/> (reconnect catch-up) before the live feed.</summary>
+    /// <summary>
+    /// Streams the subscription, replaying <paramref name="replay"/> (reconnect catch-up) before the live feed.
+    /// <paramref name="keepAliveInterval"/> default falls back to <see cref="DefaultKeepAliveInterval"/>.
+    /// </summary>
     public static async Task WriteAsync(
         HttpContext context,
         SseHub hub,
         Guid subscriberId,
         CancellationToken requestAborted,
-        IReadOnlyList<SseEvent>? replay = null)
-        => await WriteAsync(context, hub, subscriberId, DefaultKeepAliveInterval, requestAborted, replay).ConfigureAwait(false);
-
-    public static async Task WriteAsync(
-        HttpContext context,
-        SseHub hub,
-        Guid subscriberId,
-        TimeSpan keepAliveInterval,
-        CancellationToken requestAborted,
+        TimeSpan keepAliveInterval = default,
         IReadOnlyList<SseEvent>? replay = null)
     {
+        var keepAlive = keepAliveInterval == default ? DefaultKeepAliveInterval : keepAliveInterval;
         context.Response.Headers.ContentType = "text/event-stream";
         context.Response.Headers.CacheControl = "no-cache";
         context.Response.Headers.Connection = "keep-alive";
@@ -64,7 +57,7 @@ public static class SseStreamWriter
 
             while (!requestAborted.IsCancellationRequested)
             {
-                var evt = await hub.WaitForEventAsync(subscriberId, keepAliveInterval, requestAborted).ConfigureAwait(false);
+                var evt = await hub.WaitForEventAsync(subscriberId, keepAlive, requestAborted).ConfigureAwait(false);
                 if (evt is not null)
                 {
                     await context.Response.WriteAsync(FormatFrame(evt), requestAborted).ConfigureAwait(false);

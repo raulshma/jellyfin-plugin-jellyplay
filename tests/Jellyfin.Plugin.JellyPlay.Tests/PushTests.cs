@@ -285,16 +285,10 @@ public sealed class DeviceRegistrationApiTests : IDisposable
         }
     }
 
-    private EventsController Controller(string userId, string deviceId)
+    private DevicesController Controller(string userId, string deviceId)
     {
-        var hub = new SseHub(NullLogger<SseHub>.Instance);
-        var events = new EventService(
-            hub,
-            () => new EventsConfig(),
-            () => new List<string>(),
-            NullLogger<EventService>.Instance);
-        var devices = new DeviceRegistryService(_db, () => new PushConfig(), SettingsServiceFactory.Create(_db, hub));
-        var controller = new EventsController(hub, events, devices);
+        var devices = new DeviceRegistryService(_db, () => new PushConfig(), SettingsServiceFactory.Create(_db, new SseHub(NullLogger<SseHub>.Instance)));
+        var controller = new DevicesController(devices);
         var context = new DefaultHttpContext
         {
             User = new ClaimsPrincipal(new ClaimsIdentity(
@@ -331,7 +325,7 @@ public sealed class DeviceRegistrationApiTests : IDisposable
         return request;
     }
 
-    private static JArray GetDevicesJson(EventsController controller)
+    private static JArray GetDevicesJson(DevicesController controller)
     {
         var result = Assert.IsAssignableFrom<ContentResult>(controller.GetDevices());
         return JArray.Parse(result.Content!);
@@ -451,9 +445,9 @@ public sealed class PushPayloadTests
     [InlineData("webpush", false)] // unknown kinds stay invalid
     public void IsValidRegistration_GatesKindAndEndpoint(string? kind, bool valid)
     {
-        Assert.Equal(valid, PushDispatcher.IsValidRegistration(kind, "https://push.example/x"));
-        Assert.False(PushDispatcher.IsValidRegistration(kind, " "));
-        Assert.False(PushDispatcher.IsValidRegistration(kind, null));
+        Assert.Equal(valid, PushRegistrations.IsValidRegistration(kind, "https://push.example/x"));
+        Assert.False(PushRegistrations.IsValidRegistration(kind, " "));
+        Assert.False(PushRegistrations.IsValidRegistration(kind, null));
     }
 
     [Fact]
@@ -588,6 +582,46 @@ public sealed class PushDispatcherTests : IDisposable
 
         Assert.Equal(2, recording.Count); // both endpoints attempted despite failures
         Assert.Equal(2, recording.Endpoints.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task RevokedDevices_AreExcludedFromEveryFanOut()
+    {
+        _db.UpsertDevice(new DeviceWrite("live", "u1", "L", "android", "1", 1, "generic", "https://push.example/live", 1));
+        _db.UpsertDevice(new DeviceWrite("gone", "u1", "G", "android", "1", 1, "generic", "https://push.example/gone", 1));
+        _db.SetDeviceRevoked("u1", "gone", revoked: true);
+        _db.UpsertDevice(new DeviceWrite("other-live", "u2", "O", "android", "1", 1, "ntfy", "https://ntfy.sh/other", 1));
+        _db.UpsertDevice(new DeviceWrite("other-gone", "u2", "OG", "android", "1", 1, "ntfy", "https://ntfy.sh/other-gone", 1));
+        _db.SetDeviceRevoked("u2", "other-gone", revoked: true);
+        var recording = new PushRecording();
+
+        // Broadcast (null = every user): the revoked rows must not be consulted at all.
+        await Dispatcher(enabled: true, recording.Sender())
+            .DispatchAsync(new PushMessage(PushKinds.Broadcast, "T", "B"), null);
+
+        Assert.Equal(2, recording.Count);
+        var endpoints = recording.Endpoints.ToList();
+        Assert.Contains("https://push.example/live", endpoints);
+        Assert.Contains("https://ntfy.sh/other", endpoints);
+        Assert.DoesNotContain("https://push.example/gone", endpoints);
+        Assert.DoesNotContain("https://ntfy.sh/other-gone", endpoints);
+    }
+
+    [Fact]
+    public async Task LargeFanOut_DeliversToEveryDevice_UnderBoundedParallelism()
+    {
+        const int deviceCount = 20;
+        for (var i = 0; i < deviceCount; i++)
+        {
+            _db.UpsertDevice(new DeviceWrite($"d{i}", "u1", $"D{i}", "android", "1", 1, "generic", $"https://push.example/d{i}", 1));
+        }
+
+        var recording = new PushRecording();
+        await Dispatcher(enabled: true, recording.Sender())
+            .DispatchAsync(new PushMessage(PushKinds.NewMedia, "T", "B"), new[] { "u1" });
+
+        Assert.Equal(deviceCount, recording.Count);
+        Assert.Equal(deviceCount, recording.Endpoints.Distinct().Count());
     }
 
     [Fact]
@@ -920,6 +954,94 @@ public sealed class PushAudienceTests : IDisposable
         // A beat for any wrongly-issued request to surface; none may arrive.
         await Task.Delay(150);
         Assert.Equal(0, _recording.Count);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Admin messages registry: the row→DTO projection keeps the wire byte-identical
+// ---------------------------------------------------------------------------
+
+/// <summary>
+/// GET jellyplay/admin/messages historically serialized the raw MessageRow
+/// storage records; the service-side projection (AdminMessageDto) must keep
+/// that wire byte-identical — pinned by serializing both through the same gate.
+/// </summary>
+public sealed class AdminMessageWireTests : IDisposable
+{
+    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-admin-msg-" + Guid.NewGuid().ToString("N"));
+    private readonly JellyPlayDatabase _db;
+    private readonly MessageService _service;
+
+    public AdminMessageWireTests()
+    {
+        Directory.CreateDirectory(_tempDir);
+        _db = new JellyPlayDatabase(_tempDir);
+        _service = new MessageService(_db, NullLogger<MessageService>.Instance);
+    }
+
+    public void Dispose()
+    {
+        _db.Dispose();
+        try
+        {
+            Directory.Delete(_tempDir, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+    }
+
+    private static MessageRow Row(string id, long? startsAt = null, long? endsAt = null, int orderIndex = 3)
+        => new(id, "Title " + id, "Body " + id, "accent", "https://link.example/" + id, "Open",
+            "{\"type\":\"all\",\"userIds\":[]}", startsAt, endsAt, orderIndex, 1700000000000);
+
+    [Fact]
+    public void GetAll_ProjectsEveryRowField_Verbatim()
+    {
+        _db.UpsertMessage(Row("m1"));
+        _db.UpsertMessage(Row("m2", 1700000001000, 1700000002000, orderIndex: 9));
+
+        var rows = _db.GetMessages();
+        var dtos = _service.GetAll();
+
+        Assert.Equal(rows.Count, dtos.Count);
+        for (var i = 0; i < rows.Count; i++)
+        {
+            Assert.Equal(
+                (rows[i].Id, rows[i].Title, rows[i].Body, rows[i].Color, rows[i].LinkUrl, rows[i].LinkLabel,
+                    rows[i].AudienceJson, rows[i].StartsAt, rows[i].EndsAt, rows[i].OrderIndex, rows[i].CreatedAt),
+                (dtos[i].Id, dtos[i].Title, dtos[i].Body, dtos[i].Color, dtos[i].LinkUrl, dtos[i].LinkLabel,
+                    dtos[i].AudienceJson, dtos[i].StartsAt, dtos[i].EndsAt, dtos[i].OrderIndex, dtos[i].CreatedAt));
+        }
+    }
+
+    /// <summary>The strongest shape pin: raw storage rows and the service projection serialize to IDENTICAL gate bytes.</summary>
+    [Fact]
+    public void AdminWire_IsByteIdentical_ToTheRawRowShape()
+    {
+        _db.UpsertMessage(Row("m1"));
+        _db.UpsertMessage(Row("m2", 1700000001000, 1700000002000, orderIndex: 9));
+        _db.UpsertMessage(Row("m3", orderIndex: 1)); // no window → startsAt/endsAt omitted (NullValueHandling.Ignore)
+
+        var rawRows = JellyPlayResponses.Camel(new { messages = _db.GetMessages() }).Content;
+        var projected = JellyPlayResponses.Camel(new { messages = _service.GetAll() }).Content;
+
+        Assert.Equal(rawRows, projected);
+
+        var body = JObject.Parse(projected!);
+        var messages = (JArray)body["messages"]!;
+        Assert.Equal(3, messages.Count);
+
+        // CamelCase row field names, audienceJson verbatim, window fields omitted when null.
+        var withWindow = messages.Single(m => m["id"]!.ToString() == "m2");
+        Assert.Equal(
+            new[] { "id", "title", "body", "color", "linkUrl", "linkLabel", "audienceJson", "startsAt", "endsAt", "orderIndex", "createdAt" },
+            ((JObject)withWindow).Properties().Select(p => p.Name).ToArray());
+        Assert.Equal("{\"type\":\"all\",\"userIds\":[]}", withWindow["audienceJson"]!.ToString());
+
+        var windowless = messages.Single(m => m["id"]!.ToString() == "m3");
+        Assert.Null(windowless["startsAt"]);
+        Assert.Null(windowless["endsAt"]);
     }
 }
 

@@ -7,6 +7,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyPlay.Api;
 using Jellyfin.Plugin.JellyPlay.Configuration;
 using Jellyfin.Plugin.JellyPlay.Services.Admin;
 using Jellyfin.Plugin.JellyPlay.Services.Devices;
@@ -64,6 +65,9 @@ public sealed class PushDispatcher
     /// <summary>Named IHttpClientFactory client behind both push transports (dispatcher + FCM token exchange).</summary>
     public const string HttpClientName = "jellyplay-push";
 
+    /// <summary>Bounded fan-out: at most this many device sends in flight per dispatch (a large broadcast must not open 100 sockets at once).</summary>
+    private const int MaxConcurrentSends = 8;
+
     private const string NtfyKindHeader = "X-JellyPlay-Kind";
     private const string NtfyItemIdHeader = "X-JellyPlay-ItemId";
     private const string FcmSendUrlPrefix = "https://fcm.googleapis.com/v1/projects/";
@@ -89,12 +93,6 @@ public sealed class PushDispatcher
         _sender = sender;
         _fcmTokens = fcmTokens;
     }
-
-    /// <summary>Registration gate: kind must be "generic"|"ntfy"|"fcm" and the endpoint a non-blank value (an FCM registration token for fcm).</summary>
-    public static bool IsValidRegistration(string? kind, string? endpoint) => PushRegistrations.IsValidRegistration(kind, endpoint);
-
-    /// <summary>The fcm kind additionally requires configured FCM credentials to be usable (400 push-kind-unavailable otherwise).</summary>
-    public static bool IsFcmKind(string? kind) => PushRegistrations.IsFcmKind(kind);
 
     /// <summary>
     /// Fire-and-forget fan-out to the push-registered devices of
@@ -142,35 +140,7 @@ public sealed class PushDispatcher
             return;
         }
 
-        // One token per fan-out (cached ~55 min inside the provider): a fetch
-        // failure or unconfigured FCM skips every fcm device with no retry storm.
-        string? fcmToken = null;
-        var fcmResolved = false;
-        foreach (var device in devices)
-        {
-            if (IsFcmKind(device.PushKind))
-            {
-                if (!fcmResolved)
-                {
-                    fcmResolved = true;
-                    fcmToken = _fcmTokens is null
-                        ? null
-                        : await _fcmTokens.GetTokenAsync(CancellationToken.None).ConfigureAwait(false);
-                    if (fcmToken is null)
-                    {
-                        _logger.LogDebug("Push dispatch: FCM transport unavailable (unconfigured or token fetch failed)");
-                    }
-                }
-
-                if (fcmToken is null)
-                {
-                    _logger.LogDebug("Push to device {DeviceId} skipped — fcm kind but FCM is not available", device.DeviceId);
-                    continue;
-                }
-            }
-
-            await DispatchOneAsync(device, message, fcmToken).ConfigureAwait(false);
-        }
+        await SendToManyAsync(devices, message, "Push dispatch").ConfigureAwait(false);
     }
 
     /// <summary>
@@ -218,22 +188,38 @@ public sealed class PushDispatcher
             return;
         }
 
+        // The query already excludes revoked devices (ADR-0005, enforced in the
+        // registry SQL); the nudge additionally requires the silent-push cap.
         var capable = devices
-            .Where(device => !device.Revoked && CapsInclude(device.CapsJson, DeviceCaps.SilentPush))
+            .Where(device => CapsInclude(device.CapsJson, DeviceCaps.SilentPush))
             .ToList();
         if (capable.Count == 0)
         {
             return;
         }
 
-        // One token per fan-out (cached inside the provider), resolved lazily
-        // and only when an fcm-capable device is present.
+        var message = new PushMessage(PushKinds.SyncNudge, "JellyPlay", "settings-changed");
+        await SendToManyAsync(capable, message, "Sync-nudge dispatch").ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The ONE fan-out behind every dispatch: resolves the FCM token lazily
+    /// EXACTLY once (a fetch failure or unconfigured FCM skips every fcm device
+    /// with no retry storm — the token is cached ~55 min inside the provider),
+    /// then sends to all devices with bounded parallelism
+    /// (<see cref="MaxConcurrentSends"/> in flight) so a 100-device broadcast is
+    /// ten 10s waves, not a thousand seconds of serial waiting. Per-device
+    /// exception isolation lives in <see cref="DispatchOneAsync"/>.
+    /// </summary>
+    private async Task SendToManyAsync(IReadOnlyList<DeviceRow> devices, PushMessage message, string logContext)
+    {
         string? fcmToken = null;
         var fcmResolved = false;
-        var message = new PushMessage(PushKinds.SyncNudge, "JellyPlay", "settings-changed");
-        foreach (var device in capable)
+        using var gate = new SemaphoreSlim(MaxConcurrentSends, MaxConcurrentSends);
+        var sends = new List<Task>(devices.Count);
+        foreach (var device in devices)
         {
-            if (IsFcmKind(device.PushKind))
+            if (PushRegistrations.IsFcmKind(device.PushKind))
             {
                 if (!fcmResolved)
                 {
@@ -243,17 +229,34 @@ public sealed class PushDispatcher
                         : await _fcmTokens.GetTokenAsync(CancellationToken.None).ConfigureAwait(false);
                     if (fcmToken is null)
                     {
-                        _logger.LogDebug("Sync-nudge dispatch: FCM transport unavailable (unconfigured or token fetch failed)");
+                        _logger.LogDebug("{Context}: FCM transport unavailable (unconfigured or token fetch failed)", logContext);
                     }
                 }
 
                 if (fcmToken is null)
                 {
+                    _logger.LogDebug("Push to device {DeviceId} skipped — fcm kind but FCM is not available", device.DeviceId);
                     continue;
                 }
             }
 
+            await gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            sends.Add(SendOneAsync(gate, device, message, fcmToken));
+        }
+
+        await Task.WhenAll(sends).ConfigureAwait(false);
+    }
+
+    /// <summary>One send under the fan-out's concurrency gate (the slot is always released, even when the send throws).</summary>
+    private async Task SendOneAsync(SemaphoreSlim gate, DeviceRow device, PushMessage message, string? fcmToken)
+    {
+        try
+        {
             await DispatchOneAsync(device, message, fcmToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
         }
     }
 
@@ -294,7 +297,7 @@ public sealed class PushDispatcher
     /// <summary>Builds the kind-specific POST (never throws for a registered device; ntfy topics unresolvable from the URL yield a null-content-free request the transport will fail).</summary>
     internal HttpRequestMessage BuildRequest(DeviceRow device, PushMessage message, string? fcmBearerToken)
     {
-        if (IsFcmKind(device.PushKind))
+        if (PushRegistrations.IsFcmKind(device.PushKind))
         {
             var request = new HttpRequestMessage(
                 HttpMethod.Post,
@@ -305,7 +308,7 @@ public sealed class PushDispatcher
         }
 
         var request2 = new HttpRequestMessage(HttpMethod.Post, device.PushEndpoint);
-        var content = IsNtfy(device.PushKind)
+        var content = PushRegistrations.IsNtfyKind(device.PushKind)
             ? BuildNtfyPayload(message, ExtractNtfyTopic(device.PushEndpoint) ?? string.Empty)
             : BuildGenericPayload(message);
         request2.Content = new StringContent(content, Encoding.UTF8, "application/json");
@@ -426,22 +429,8 @@ public sealed class PushDispatcher
         return new AdminPushOverviewResponse(_config().Enabled, _config().FcmConfigured(), devices);
     }
 
-    private static bool IsNtfy(string? kind) => PushRegistrations.IsNtfyKind(kind);
-
     /// <summary>Sends through the pooled named client (created per request; the factory owns the handler lifetime).</summary>
     private static PushSender NamedClientSender(IHttpClientFactory httpFactory)
         => (request, cancellationToken) => httpFactory.CreateClient(HttpClientName).SendAsync(request, cancellationToken);
 }
-
-/// <summary>Admin overview row: endpoint URLs are secrets — only the host is ever surfaced.</summary>
-public sealed record AdminPushDeviceDto(
-    string DeviceId,
-    string UserName,
-    string DeviceName,
-    string Kind,
-    string EndpointHost,
-    long RegisteredAt);
-
-/// <summary>Response shape for GET jellyplay/admin/push/overview. FCM readiness is reported as a boolean only — the service-account key is never surfaced.</summary>
-public sealed record AdminPushOverviewResponse(bool Enabled, bool FcmConfigured, IReadOnlyList<AdminPushDeviceDto> Devices);
 

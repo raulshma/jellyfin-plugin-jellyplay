@@ -87,9 +87,19 @@ public static class ClientSettingsCatalog
     /// </summary>
     public static readonly IReadOnlyList<ClientSettingDescriptor> KnownSettings = LoadEmbeddedCatalog();
 
+    /// <summary>
+    /// KnownSettings keyed by (Ns, Key), built once — validation hits this per
+    /// property, the linear scan it replaced did not scale. A duplicate id
+    /// keeps the FIRST entry (the old linear FirstOrDefault's tolerance), so
+    /// the index can never throw at load.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<(string Ns, string Key), ClientSettingDescriptor> IndexById =
+        KnownSettings
+            .GroupBy(descriptor => (descriptor.Ns, descriptor.Key))
+            .ToDictionary(group => group.Key, group => group.First());
+
     public static ClientSettingDescriptor? Find(string ns, string key)
-        => KnownSettings.FirstOrDefault(s => string.Equals(s.Ns, ns, StringComparison.Ordinal)
-            && string.Equals(s.Key, key, StringComparison.Ordinal));
+        => IndexById.TryGetValue((ns, key), out var descriptor) ? descriptor : null;
 
     /// <summary>
     /// Validates one admin-defaults value against the catalog. Unknown keys

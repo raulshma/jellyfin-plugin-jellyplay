@@ -134,17 +134,19 @@ public class SseHubTests
     }
 
     [Fact]
-    public void HasSubscriber_ReflectsLiveSubscriptionsOnly()
+    public void PublishToUser_DeliveredCount_ReflectsLiveSubscriptionsOnly()
     {
+        // The delivered count IS the live-subscriber signal (the sync-nudge
+        // gate reads it): zero when nobody is streaming the user's stream.
         var hub = new SseHub(NullLogger<SseHub>.Instance);
-        Assert.False(hub.HasSubscriber("alice", "settings"));
+        Assert.Equal(0, hub.PublishToUser("settings", "alice", "settings.changed", "{}"));
 
         var id = hub.Subscribe("alice", "settings");
-        Assert.True(hub.HasSubscriber("alice", "settings"));
-        Assert.False(hub.HasSubscriber("alice", "events")); // same user, other stream
+        Assert.Equal(1, hub.PublishToUser("settings", "alice", "settings.changed", "{}"));
+        Assert.Equal(0, hub.PublishToUser("events", "alice", "other", "{}")); // same user, other stream
 
         hub.Unsubscribe(id);
-        Assert.False(hub.HasSubscriber("alice", "settings"));
+        Assert.Equal(0, hub.PublishToUser("settings", "alice", "settings.changed", "{}"));
     }
 }
 

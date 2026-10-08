@@ -46,6 +46,9 @@ public sealed class AnalyticsService
     private readonly object _openLock = new();
     private readonly Dictionary<string, OpenPlayback> _open = new(StringComparer.Ordinal);
 
+    /// <summary>Gate timestamp for the cadence-bounded stale-session scan (shared SweepGate).</summary>
+    private long _lastStaleSweepMs;
+
     public AnalyticsService(
         JellyPlayDatabase db,
         Func<AnalyticsConfig> config,
@@ -162,11 +165,15 @@ public sealed class AnalyticsService
         var session = args.Session;
         var key = SessionKey(args.PlaySessionId, resolvedUser, itemId, session?.Client, session?.DeviceName);
 
-        // The host moved on to a new item without a stop event: any other
-        // in-flight session for the same user/client/device is over now.
+        // ONE atomic lock block: collecting-and-removing the replaced sessions
+        // and upserting the current one. Two acquisitions would let a stop
+        // event land in between and observe replaced rows removed from the
+        // map but not yet flushed — half-applied state.
         List<OpenPlayback> replaced;
         lock (_openLock)
         {
+            // The host moved on to a new item without a stop event: any other
+            // in-flight session for the same user/client/device is over now.
             replaced = _open.Values
                 .Where(candidate => candidate.Key != key
                     && string.Equals(candidate.UserId, resolvedUser, StringComparison.Ordinal)
@@ -177,10 +184,7 @@ public sealed class AnalyticsService
             {
                 _open.Remove(candidate.Key);
             }
-        }
 
-        lock (_openLock)
-        {
             if (!_open.TryGetValue(key, out var open))
             {
                 open = new OpenPlayback(key, resolvedUser, itemId)
@@ -233,9 +237,20 @@ public sealed class AnalyticsService
         CloseStaleSessions(now);
     }
 
-    /// <summary>Sessions with no progress past the stale grace are closed at their last-seen time.</summary>
+    /// <summary>
+    /// Sessions with no progress past the stale grace are closed at their
+    /// last-seen time. The O(n) map scan is cadence-bounded through the shared
+    /// <see cref="Helpers.SweepGate"/> — at most one scan per grace window
+    /// (an idle-later session is only detectable after that long anyway), so
+    /// steady-progress events never pay the scan.
+    /// </summary>
     private void CloseStaleSessions(long now)
     {
+        if (!SweepGate.Enter(ref _lastStaleSweepMs, now, PlaybackRecordingRules.StaleSessionGraceMs))
+        {
+            return;
+        }
+
         List<OpenPlayback> stale;
         lock (_openLock)
         {
@@ -456,9 +471,7 @@ public sealed class AnalyticsService
         var fromMs = ToUnixMs(fromDayDate);
         var toMs = ToUnixMs(todayUtc.AddDays(1));
 
-        var rollups = _db.GetPlaybackRollups(DayString(fromDayDate), DayString(todayUtc))
-            .Where(row => string.Equals(row.UserId, userId, StringComparison.Ordinal))
-            .ToList();
+        var rollups = _db.GetPlaybackRollups(DayString(fromDayDate), DayString(todayUtc), userId);
 
         var totals = new AnalyticsMeTotals(
             Plays: rollups.Sum(row => row.ItemsPlayed),

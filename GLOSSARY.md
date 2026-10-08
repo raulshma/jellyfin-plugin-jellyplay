@@ -95,5 +95,7 @@ pipeline for the TTL-cached external sources (TMDB, MDBList, IMDb charts,
 Letterboxd, seasonal lists): one TTL policy, one spoofed browser user agent
 for every scraped source (API sources use the plugin's own client), and
 failure shaped as "no data" (null), never an exception leaking to a route.
-The Fribb anime id index is NOT on this pipeline — it is a separate
-single-flight, memoized fetch with its own staleness window.
+The pipeline is single-flight: concurrent cold fetches for the same source
+coalesce into one upstream hit, and a failed fetch clears its slot so the
+next caller retries. The Fribb anime id index is NOT on this pipeline — it
+is a separate single-flight, memoized fetch with its own staleness window.

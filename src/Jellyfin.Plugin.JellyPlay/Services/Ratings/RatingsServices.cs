@@ -33,7 +33,6 @@ public sealed record ImdbChart(string Chart, IReadOnlyList<ChartEntry> Entries, 
 /// </summary>
 public sealed class MdbListService
 {
-    private const string BaseUrl = "https://api.mdblist.com";
     private readonly ResilientFetcher _fetcher;
     private readonly FileCacheStore _cache;
     private readonly CircuitBreaker _breaker = new();
@@ -66,7 +65,7 @@ public sealed class MdbListService
 
     private static async Task<RatingsResult?> FetchRatingsAsync(HttpClient client, string imdbId, string apiKey, CancellationToken cancellationToken)
     {
-        var response = await client.GetAsync($"{BaseUrl}/find/{imdbId}?apikey={apiKey}", cancellationToken);
+        using var response = await client.GetAsync(MdbListUrls.Find(imdbId, apiKey), cancellationToken);
         response.EnsureSuccessStatusCode();
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
         var ratings = new List<RatingEntry>();
@@ -95,7 +94,7 @@ public sealed class MdbListService
 
         return await _fetcher.FetchAsync(
             "mdblist:keyinfo",
-            async Task<string?> (client, cancellationToken) => await client.GetStringAsync($"{BaseUrl}/user?apikey={ApiKey}", cancellationToken),
+            async Task<string?> (client, cancellationToken) => await client.GetStringAsync(MdbListUrls.User(ApiKey), cancellationToken),
             failureLogLevel: LogLevel.Debug);
     }
 
@@ -115,7 +114,13 @@ public sealed class MdbListService
 /// <summary>TMDB episode/season ratings + next-episode air date.</summary>
 public sealed class TmdbRatingsService
 {
-    private const string BaseUrl = "https://api.themoviedb.org/3";
+    /// <summary>
+    /// Fixed freshness for the next-episode lookup — deliberately NOT the
+    /// configurable CacheTtlHours: air dates go stale hourly, and a stale
+    /// "next episode" is worse than none.
+    /// </summary>
+    private static readonly TimeSpan NextEpisodeTtl = TimeSpan.FromHours(6);
+
     private readonly ResilientFetcher _fetcher;
     private readonly CircuitBreaker _breaker = new();
     private readonly Func<RatingsConfig> _config;
@@ -147,7 +152,7 @@ public sealed class TmdbRatingsService
 
     private static async Task<IReadOnlyDictionary<int, EpisodeRatingsResult>?> FetchSeasonRatingsAsync(HttpClient client, string tmdbId, int seasonNumber, string? apiKey, CancellationToken cancellationToken)
     {
-        var json = await client.GetStringAsync($"{BaseUrl}/tv/{tmdbId}/season/{seasonNumber}?api_key={apiKey}", cancellationToken);
+        var json = await client.GetStringAsync(TmdbUrls.Season(tmdbId, seasonNumber, apiKey), cancellationToken);
         using var doc = JsonDocument.Parse(json);
         var results = new Dictionary<int, EpisodeRatingsResult>();
         foreach (var episode in doc.RootElement.GetProperty("episodes").EnumerateArray())
@@ -179,7 +184,7 @@ public sealed class TmdbRatingsService
 
         return await _fetcher.GetOrFetchAsync(
             $"tmdb:next:{tmdbId}",
-            TimeSpan.FromHours(6),
+            NextEpisodeTtl,
             (client, cancellationToken) => FetchNextEpisodeAsync(client, tmdbId, ApiKey, cancellationToken),
             _breaker,
             failureLogLevel: LogLevel.Debug); // per-episode background lookup — a dead upstream is Debug-worthy
@@ -187,7 +192,7 @@ public sealed class TmdbRatingsService
 
     private static async Task<NextEpisodeInfo?> FetchNextEpisodeAsync(HttpClient client, string tmdbId, string? apiKey, CancellationToken cancellationToken)
     {
-        var json = await client.GetStringAsync($"{BaseUrl}/tv/{tmdbId}?api_key={apiKey}", cancellationToken);
+        var json = await client.GetStringAsync(TmdbUrls.Series(tmdbId, apiKey), cancellationToken);
         using var doc = JsonDocument.Parse(json);
         if (doc.RootElement.TryGetProperty("next_episode_to_air", out var next) && next.ValueKind == JsonValueKind.Object)
         {
@@ -209,6 +214,9 @@ public sealed class TmdbRatingsService
 /// </summary>
 public sealed partial class ImdbChartsService
 {
+    /// <summary>Fixed freshness for the scraped chart — deliberately not config-driven: the chart is one nightly-relevant snapshot, and the refresh task warms it on that cadence.</summary>
+    private static readonly TimeSpan ChartTtl = TimeSpan.FromHours(24);
+
     private const string ChartUrl = "https://www.imdb.com/chart/top/?ref_=nv_tp_250";
     private readonly ResilientFetcher _fetcher;
     private readonly CircuitBreaker _breaker = new(failureThreshold: 2, openWindow: TimeSpan.FromHours(6));
@@ -231,7 +239,7 @@ public sealed partial class ImdbChartsService
 
         return await _fetcher.GetOrFetchAsync(
             "imdb:top250",
-            TimeSpan.FromHours(24),
+            ChartTtl,
             FetchTop250Async,
             _breaker);
     }
@@ -239,7 +247,8 @@ public sealed partial class ImdbChartsService
     private async Task<ImdbChart?> FetchTop250Async(HttpClient client, CancellationToken cancellationToken)
     {
         using var request = ResilientFetcher.BrowserGetRequest(ChartUrl);
-        var html = await (await client.SendAsync(request, cancellationToken)).Content.ReadAsStringAsync(cancellationToken);
+        using var response = await client.SendAsync(request, cancellationToken);
+        var html = await response.Content.ReadAsStringAsync(cancellationToken);
         var entries = ParseTop250(html);
         if (entries.Count == 0)
         {

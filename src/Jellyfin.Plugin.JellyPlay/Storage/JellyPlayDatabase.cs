@@ -26,7 +26,7 @@ public sealed partial class JellyPlayDatabase : IDisposable
     public const string BaseProfile = "";
 
     /// <summary>The schema version produced by this build's DDL + migrations.</summary>
-    public const int CurrentSchemaVersion = 7;
+    public const int CurrentSchemaVersion = 8;
 
     private const string SettingsTable = "settings";
     private const string ChangeLogTable = "change_log";
@@ -166,7 +166,15 @@ public sealed partial class JellyPlayDatabase : IDisposable
                         Payload BLOB NOT NULL)",
                     $"create index if not exists idx_{SnapshotsTable}_user on {SnapshotsTable}(UserId, Id)"
                 ]);
-            })
+            }),
+        (8, "idx_sync_history_user_device",
+            connection => connection.RunQueries(
+            [
+                // GetLatestSyncPerDevice correlates max(Id) per device; without
+                // this index the correlation scanned the whole history per
+                // device on every sync/status poll.
+                $"create index if not exists idx_{SyncHistoryTable}_user_device on {SyncHistoryTable}(UserId, DeviceId, Id)"
+            ]))
     ];
 
     /// <summary>Whether the table has the column (pragma table_info scan) — the guard behind migration 7's column adds.</summary>
@@ -225,6 +233,12 @@ public sealed partial class JellyPlayDatabase : IDisposable
     /// <summary>Version-1 baseline DDL (idempotent) followed by the migration runner.</summary>
     private void InitializeCore(SqliteConnection connection)
     {
+        // journal_mode is PERSISTENT in the file header: set once here (schema
+        // init / quarantine rebuild), never per connection — every open used
+        // to re-issue it. synchronous and foreign_keys are per-connection and
+        // stay on CreateConnection.
+        connection.RunQueries(["pragma journal_mode=WAL"]);
+
         connection.RunQueries(
             [
                 $@"create table if not exists {SettingsTable} (
@@ -470,14 +484,6 @@ public sealed partial class JellyPlayDatabase : IDisposable
         return (0, 0);
     }
 
-    private long totalBytesFor(SqliteConnection connection, string userId)
-    {
-        using var statement = connection.Prepare(
-            $"select coalesce(sum(length(Value)), 0) from {SettingsTable} where UserId = @UserId");
-        statement.Bind("@UserId", userId);
-        return (long)(statement.ExecuteScalar() ?? 0L);
-    }
-
     private static SettingRow ReadSettingRow(SqliteRow row) => new(
         row.GetString(0),
         row.GetString(1),
@@ -546,24 +552,17 @@ public sealed partial class JellyPlayDatabase : IDisposable
         var connection = new SqliteConnection($"Filename={_dbFilePath};Pooling=False");
         connection.Open();
         using var command = connection.CreateCommand();
-        command.CommandText = "pragma journal_mode=WAL; pragma synchronous=NORMAL; pragma foreign_keys=ON;";
+        command.CommandText = "pragma synchronous=NORMAL; pragma foreign_keys=ON;";
         command.ExecuteNonQuery();
         return connection;
     }
 
-    private static void BindNullable(SqliteCommand statement, string name, long? value)
+    /// <summary>Binds a nullable scalar (long or string) as NULL when absent — the one binder both former overloads shared byte-for-byte.</summary>
+    private static void BindNullable(SqliteCommand statement, string name, object? value)
     {
         var parameter = statement.CreateParameter();
         parameter.ParameterName = name;
-        parameter.Value = (object?)value ?? System.DBNull.Value;
-        statement.Parameters.Add(parameter);
-    }
-
-    private static void BindNullableText(SqliteCommand statement, string name, string? value)
-    {
-        var parameter = statement.CreateParameter();
-        parameter.ParameterName = name;
-        parameter.Value = (object?)value ?? System.DBNull.Value;
+        parameter.Value = value ?? System.DBNull.Value;
         statement.Parameters.Add(parameter);
     }
 }

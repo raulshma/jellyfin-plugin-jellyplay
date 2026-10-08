@@ -47,7 +47,7 @@ public sealed class SseKeepaliveTests
         var (context, body) = StreamContext();
         using var cts = new CancellationTokenSource(400);
 
-        await SseStreamWriter.WriteAsync(context, hub, id, TimeSpan.FromMilliseconds(100), cts.Token);
+        await SseStreamWriter.WriteAsync(context, hub, id, cts.Token, TimeSpan.FromMilliseconds(100));
 
         var text = BodyText(body);
         Assert.Contains(": keepalive", text);
@@ -64,7 +64,7 @@ public sealed class SseKeepaliveTests
         var (context, body) = StreamContext();
         using var cts = new CancellationTokenSource(450);
 
-        await SseStreamWriter.WriteAsync(context, hub, id, TimeSpan.FromMilliseconds(100), cts.Token);
+        await SseStreamWriter.WriteAsync(context, hub, id, cts.Token, TimeSpan.FromMilliseconds(100));
 
         var text = BodyText(body);
         Assert.Contains("event: new-media", text);
@@ -85,7 +85,7 @@ public sealed class SseKeepaliveTests
         var (context, _) = StreamContext();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        var writer = SseStreamWriter.WriteAsync(context, hub, id, TimeSpan.FromMilliseconds(100), cts.Token);
+        var writer = SseStreamWriter.WriteAsync(context, hub, id, cts.Token, TimeSpan.FromMilliseconds(100));
         hub.Unsubscribe(id);
         await writer.WaitAsync(TimeSpan.FromSeconds(2)); // would hang if the loop spun on a closed channel
 
@@ -145,6 +145,7 @@ public sealed class DatabaseMigrationTests : IDisposable
         Assert.Equal(JellyPlayDatabase.CurrentSchemaVersion, db.UserVersion);
         Assert.Equal(JellyPlayDatabase.CurrentSchemaVersion, RawUserVersion(DbPath));
         Assert.True(IndexExists(DbPath, "idx_change_log_updated"));
+        Assert.True(IndexExists(DbPath, "idx_sync_history_user_device")); // schema v8
         Assert.True(db.CheckIntegrity().IntegrityOk);
     }
 

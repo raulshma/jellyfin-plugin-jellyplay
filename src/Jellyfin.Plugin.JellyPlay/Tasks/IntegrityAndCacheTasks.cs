@@ -89,27 +89,25 @@ public sealed class ExternalCacheWarmTask : IScheduledTask
 
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
-        try
-        {
-            await _imdb.GetTop250();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Chart warm skipped");
-        }
-
-        progress.Report(50);
-
-        try
-        {
-            await _seasonal.GetSeasonalRow(null);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Seasonal warm skipped");
-        }
+        // Independent sources (separate breakers, separate caches) — warm both
+        // at once; each side's failure is logged, never thrown.
+        var chart = WarmAsync(() => _imdb.GetTop250(), "Chart warm skipped");
+        var seasonal = WarmAsync(() => _seasonal.GetSeasonalRow(null), "Seasonal warm skipped");
+        await Task.WhenAll(chart, seasonal);
 
         progress.Report(100);
+    }
+
+    private async Task WarmAsync(Func<Task> warm, string skipMessage)
+    {
+        try
+        {
+            await warm();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, skipMessage);
+        }
     }
 
     public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()

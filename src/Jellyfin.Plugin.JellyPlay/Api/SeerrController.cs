@@ -170,20 +170,16 @@ public class SeerrController : JellyPlayControllerBase
     /// <summary>
     /// Re-registers the webhook into Seerr. The base URL comes from the incoming
     /// admin request (reverse-proxy path base included) and is persisted into
-    /// config so startup auto-provision works from then on.
+    /// config by the provisioner (the documented ADR-0002 Seerr-lifecycle
+    /// exception lives in the service) so startup auto-provision works from
+    /// then on. The controller only derives the URL and maps the outcome.
     /// </summary>
     [HttpPost("reprovision")]
     [Authorize(Policy = Policies.RequiresElevation)]
     public async Task<IActionResult> Reprovision()
     {
         var baseUrl = RequestBaseUrl();
-        // The one remaining Instance read in a controller: persisting the
-        // derived base URL is plugin-instance lifecycle (SaveConfiguration).
-        var instance = JellyPlayPlugin.Instance!;
-        instance.Configuration.Seerr.JellyfinBaseUrl = baseUrl;
-        instance.SaveConfiguration(instance.Configuration);
-
-        var ok = await _provisioner.ProvisionAsync(baseUrl);
+        var ok = await _provisioner.ProvisionAsync(baseUrl, persistBaseUrl: true);
         return ok
             ? JellyPlayResponses.Camel(new { provisioned = true, baseUrl, baseUrlSource = "request" })
             // Pinned response shape in docs/CONTRACT.md — not the generic error body.

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Entities;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
@@ -102,17 +103,20 @@ public sealed class SimilarItemsService
 
     /// <summary>
     /// The Jellyfin-12 provider pipeline entry (SimilarItemsProviderManager):
-    /// scores the passed item against candidates straight from the library.
-    /// Errors are the manager's to handle (it degrades to empty).
+    /// scores the passed item against candidates straight from the library,
+    /// scoped to the requesting user when the host forwarded one (access-aware
+    /// candidates, matching host semantics). The manager resolves the user
+    /// from the host query (via reflection) and hands it over typed; errors
+    /// are the manager's to handle (it degrades to empty).
     /// </summary>
     public Task<IReadOnlyList<BaseItem>> GetSimilarItemsAsync(
         BaseItem source,
-        object? user,
+        User? user,
         int? limit,
         IReadOnlyList<Guid>? excludeItemIds,
         CancellationToken cancellationToken)
     {
-        var scoredItems = ScoreAgainst(source, source.GetBaseItemKind(), limit ?? 12, excludeItemIds, cancellationToken);
+        var scoredItems = ScoreAgainst(source, source.GetBaseItemKind(), limit ?? 12, user, excludeItemIds, cancellationToken);
         IReadOnlyList<BaseItem> result = scoredItems
             .Select(entry => _libraryManager.GetItemById(entry.ItemId))
             .Where(item => item is not null)
@@ -125,11 +129,14 @@ public sealed class SimilarItemsService
         BaseItem source,
         Jellyfin.Data.Enums.BaseItemKind sourceKind,
         int limit,
+        User? user = null,
         IReadOnlyList<Guid>? excludeItemIds = null,
         CancellationToken cancellationToken = default)
     {
-
-        var candidates = _libraryManager.GetItemList(new InternalItemsQuery(null)
+        // When the host forwarded a user the candidate query is scoped to them
+        // (access-aware, like the stock pipeline); paths without a user stay
+        // unscoped.
+        var candidates = _libraryManager.GetItemList(new InternalItemsQuery(user)
         {
             IncludeItemTypes = new[] { sourceKind },
             Limit = 500,
@@ -138,6 +145,10 @@ public sealed class SimilarItemsService
                 (Jellyfin.Data.Enums.ItemSortBy.Random, Jellyfin.Database.Implementations.Enums.SortOrder.Ascending)
             }
         });
+
+        // The source is loop-invariant: its features (one people lookup per
+        // item) are extracted once, not once per candidate.
+        var sourceFeatures = ExtractFeatures(source);
 
         var scored = new List<ScoredItem>(candidates.Count);
         foreach (var candidate in candidates)
@@ -148,7 +159,7 @@ public sealed class SimilarItemsService
                 continue;
             }
 
-            var score = ScorePair(source, candidate);
+            var score = SimilarityScorer.Score(sourceFeatures, ExtractFeatures(candidate));
             if (score <= 0)
             {
                 continue;
@@ -162,10 +173,6 @@ public sealed class SimilarItemsService
             .Take(Math.Clamp(limit, 1, 100))
             .ToList();
     }
-
-    /// <summary>The shared scorer both entry points use; the source item itself never reaches here (filtered in ScoreAgainst).</summary>
-    private double ScorePair(BaseItem source, BaseItem candidate)
-        => SimilarityScorer.Score(ExtractFeatures(source), ExtractFeatures(candidate));
 
     /// <summary>Collects the comparable features of one library item (people via the library manager).</summary>
     private SimilarityFeatures ExtractFeatures(BaseItem item)

@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Resources;
@@ -24,20 +25,29 @@ public static class DashboardStrings
     private static readonly ResourceManager Manager = new(BaseName, typeof(DashboardStrings).Assembly);
 
     /// <summary>
-    /// The whole table for a culture (parent cultures folded in). A FRESH
-    /// ResourceManager per call: the shared instance's per-culture set cache
+    /// The whole table for a culture, MEMOIZED per culture (parent cultures
+    /// folded in): the table is immutable per culture, so the first request
+    /// for one pays the ResourceSet load and every later request reuses it.
+    /// Each culture's load goes through a FRESH ResourceManager — never the
+    /// shared <see cref="Manager"/> instance, whose per-culture set cache
     /// poisons the invariant set after one culture-miss fallback (a 'de'
-    /// request makes the next en request return an empty table — observed, not
-    /// hypothetical). Never throws — an unreadable set degrades to just the
-    /// invariant fallback.
+    /// request used to make the next en request return an empty table —
+    /// observed, not hypothetical); memoizing per culture keeps that fix's
+    /// semantics, since cultures never share a cached table.
     /// </summary>
+    private static readonly ConcurrentDictionary<CultureInfo, IReadOnlyDictionary<string, string>> Tables = new();
+
     public static IReadOnlyDictionary<string, string> All(CultureInfo? culture = null)
+        => Tables.GetOrAdd(culture ?? CultureInfo.CurrentUICulture, LoadTable);
+
+    /// <summary>Loads one culture's table through its own fresh ResourceManager. Never throws — an unreadable set degrades to just the invariant fallback.</summary>
+    private static IReadOnlyDictionary<string, string> LoadTable(CultureInfo culture)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
         try
         {
             using var set = new ResourceManager(BaseName, typeof(DashboardStrings).Assembly)
-                .GetResourceSet(culture ?? CultureInfo.CurrentUICulture, createIfNotExists: true, tryParents: true);
+                .GetResourceSet(culture, createIfNotExists: true, tryParents: true);
             if (set is null)
             {
                 return result;

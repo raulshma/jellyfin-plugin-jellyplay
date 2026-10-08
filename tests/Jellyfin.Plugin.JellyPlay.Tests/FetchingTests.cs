@@ -298,6 +298,53 @@ public class ResilientFetcherTests : FetcherTestBase
         // One HTTP call: the second request short-circuited on the miss marker.
         Assert.Equal(1, handler.RequestedUrls.Count);
     }
+
+    [Fact]
+    public async Task ConcurrentColdFetches_CoalesceIntoOneUpstreamHit()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new FakeHttpMessageHandler(_ =>
+        {
+            entered.TrySetResult();
+            release.Task.Wait(); // test's main thread releases after the second caller joins
+            return Text("shared");
+        });
+        var fetcher = NewFetcher(handler);
+
+        // The responder blocks on `release`; run the first caller on the pool so
+        // the test's main thread stays free to release it (the sync handler would
+        // otherwise run inline on this thread and deadlock the Wait).
+        var first = Task.Run(() => fetcher.GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync));
+        await entered.Task; // the fetch is in flight
+        var second = fetcher.GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync);
+        await Task.Delay(50); // let the second caller join the shared flight
+        release.TrySetResult();
+
+        var results = await Task.WhenAll(first, second);
+
+        Assert.Equal("shared", results[0]?.Value);
+        Assert.Equal("shared", results[1]?.Value);
+        Assert.Equal(1, handler.RequestedUrls.Count); // two cold callers, one upstream hit
+    }
+
+    [Fact]
+    public async Task FailedFetch_ClearsInFlightSlot_NextCallerRetries()
+    {
+        var handler = new FakeHttpMessageHandler(_ => throw new HttpRequestException("down"));
+        var fetcher = NewFetcher(handler);
+
+        // A faulted flight must not stick: the failure is shaped as null and
+        // the slot clears, so the next cold caller retries the source.
+        Assert.Null(await fetcher.GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync));
+        Assert.Equal(1, handler.RequestedUrls.Count);
+
+        handler.Responder = _ => Text("recovered");
+        var recovered = await fetcher.GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync);
+
+        Assert.Equal("recovered", recovered?.Value);
+        Assert.Equal(2, handler.RequestedUrls.Count);
+    }
 }
 
 public class MdbListServiceTests : FetcherTestBase
@@ -360,6 +407,7 @@ public class CustomRowsServiceTests : FetcherTestBase
     private CustomRowsService NewService(FakeHttpMessageHandler handler)
         => new(
             NewFetcher(handler),
+            Cache,
             libraryManager: null!, // FindLocalItem catches the null-deref and degrades to LocalItemId = null
             () => new RowsFetchConfig("tmdb-key", "mdblist-key", 24),
             NullLogger<CustomRowsService>.Instance);

@@ -125,7 +125,7 @@ public sealed class JellyPlayDatabaseTests : IDisposable
         var second = _db.UpsertSettings("user1", "", new[] { Write("ui", "a", 2), Write("ui", "b", 3) }, Quotas);
         var since = first.Applied[0].Seq;
 
-        var changed = _db.GetChangedSettings("user1", since);
+        var changed = _db.GetChangedSettings("user1", since, JellyPlayDatabase.BaseProfile, offset: 0, limit: 100);
 
         Assert.Equal(2, changed.Count);
         var entryA = changed.Single(row => row.Key == "a");
@@ -148,8 +148,8 @@ public sealed class JellyPlayDatabaseTests : IDisposable
         Assert.Equal("player", rows[0].Ns);
 
         Assert.True(_db.GetChangeLogHead("user1") > headBefore);
-        Assert.Empty(_db.GetChangedSettings("user1", headBefore));
-        var deletedKeys = Assert.Single(_db.GetDeletedSettings("user1", headBefore));
+        Assert.Empty(_db.GetChangedSettings("user1", headBefore, JellyPlayDatabase.BaseProfile, offset: 0, limit: 100));
+        var deletedKeys = Assert.Single(_db.GetDeletedSettings("user1", headBefore, JellyPlayDatabase.BaseProfile));
         Assert.Equal(("ui", "a"), (deletedKeys.Ns, deletedKeys.Key));
     }
 
@@ -211,6 +211,76 @@ public sealed class JellyPlayDatabaseTests : IDisposable
         // Other namespaces are untouched by the prefs cap.
         var other = _db.UpsertSettings("user1", "", new[] { Write("player", "a", 1, "\"12345\"") }, quotas);
         Assert.Single(other.Applied);
+    }
+
+    [Fact]
+    public void Upsert_MidBatchDelete_FreesQuotaForLaterWritesInTheSameBatch()
+    {
+        // The per-batch quota counters must credit a delete that happens
+        // EARLIER in the same batch: one 1022-byte key fills the 1026-byte
+        // store; the batch deletes it and writes a fresh key of the same size.
+        var blob = new string('x', 1020);
+        var tight = new JellyPlayDatabase.Quotas(1024, 1026, 5);
+        _db.UpsertSettings("user1", "", new[] { Write("ns", "k0", 1, $"\"{blob}\"") }, tight);
+        Assert.Equal(1022L, _db.GetUserFootprint("user1").TotalBytes);
+
+        var result = _db.UpsertSettings(
+            "user1",
+            "",
+            new[]
+            {
+                new SettingWrite("ns", "k0", 1, 2, "d1", Array.Empty<byte>(), IsDelete: true),
+                Write("ns", "k1", 3, $"\"{blob}\"")
+            },
+            tight);
+
+        var applied = result.Applied.Single(write => !write.Deleted);
+        Assert.Equal(("ns", "k1"), (applied.Ns, applied.Key));
+        Assert.Single(result.Applied, write => write.Deleted); // the batch's own delete applied too
+        Assert.Empty(result.Rejected);
+        Assert.Equal(1022L, _db.GetUserFootprint("user1").TotalBytes); // one key's worth, not zero, not two
+
+        // And the reverse order still rejects: the write lands first, the
+        // store is full, the delete cannot retroactively un-fill it.
+        var fullFirst = _db.UpsertSettings(
+            "user1",
+            "",
+            new[]
+            {
+                Write("ns", "k2", 4, $"\"{blob}\""),
+                new SettingWrite("ns", "k1", 1, 5, "d1", Array.Empty<byte>(), IsDelete: true)
+            },
+            tight);
+        Assert.Equal("quota-exceeded", Assert.Single(fullFirst.Rejected).Reason);
+        Assert.Single(fullFirst.Applied); // only the delete applied
+    }
+
+    [Fact]
+    public void Upsert_InBatchShrink_ThenGrow_DoesNotFalseRejectQuota()
+    {
+        // An overwrite with a SMALLER value must credit the freed bytes back
+        // to the batch's running counters (the fresh-per-key totals this loop
+        // replaced never double-counted a shrink): one 1022-byte key fills
+        // the 1026-byte store; the batch shrinks the key and grows it back —
+        // neither write may see a phantom quota rejection.
+        var blob = new string('x', 1020);
+        var tight = new JellyPlayDatabase.Quotas(1024, 1026, 5);
+        _db.UpsertSettings("user1", "", new[] { Write("ns", "k0", 1, $"\"{blob}\"") }, tight);
+        Assert.Equal(1022L, _db.GetUserFootprint("user1").TotalBytes);
+
+        var result = _db.UpsertSettings(
+            "user1",
+            "",
+            new[]
+            {
+                Write("ns", "k0", 2, "\"tiny\""), // shrink: frees 1016 bytes in-batch
+                Write("ns", "k0", 3, $"\"{blob}\"") // grows back to full size
+            },
+            tight);
+
+        Assert.Empty(result.Rejected);
+        Assert.Equal(2, result.Applied.Count);
+        Assert.Equal(1022L, _db.GetUserFootprint("user1").TotalBytes);
     }
 
     [Fact]

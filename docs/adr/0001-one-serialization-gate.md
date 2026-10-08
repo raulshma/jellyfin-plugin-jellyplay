@@ -28,3 +28,8 @@ and a lying signature is worse than an honest generic one.
   gate is applied even where a controller forgets.
 - If the host ever exposes per-plugin JSON options, this decision can be
   revisited wholesale: the gate is one file.
+- **Amendment (2026-10-08):** `GET jellyplay/mdblist/keyInfo` intentionally
+  proxies the upstream MDBList body verbatim (raw `Content`, documented in
+  `docs/CONTRACT.md`) and is the one deliberate exception to "every body is
+  produced by the gate" — a pre-existing passthrough, out of the gate's net
+  on purpose. Should more passthrough routes appear, revisit this decision.

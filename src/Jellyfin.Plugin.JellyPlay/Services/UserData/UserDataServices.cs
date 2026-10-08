@@ -35,6 +35,7 @@ public sealed class UserRatingsService
         _logger = logger;
     }
 
+    /// <summary>The user's liked/disliked/rated items, folded from Jellyfin's own user-data store.</summary>
     public IReadOnlyList<UserRatingEntry> GetMyRatings(Guid userId, string? filter)
     {
         var user = _userManager.GetUserById(userId);
@@ -121,4 +122,7 @@ public sealed class BookmarkService
     }
 
     public bool Delete(string userId, string bookmarkId) => _db.DeleteBookmark(userId, bookmarkId);
+
+    public static Api.BookmarkDto ToDto(Storage.Models.BookmarkRow row) => new(
+        row.Id, row.ItemId, row.Position, row.ChapterIndex, row.Label, row.Notes, row.CreatedAt, row.UpdatedAt);
 }

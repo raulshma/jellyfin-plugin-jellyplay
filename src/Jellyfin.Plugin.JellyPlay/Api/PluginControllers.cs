@@ -9,7 +9,6 @@ using Jellyfin.Plugin.JellyPlay.Services.Rows;
 using Jellyfin.Plugin.JellyPlay.Services.Transcodes;
 using Jellyfin.Plugin.JellyPlay.Services.UserData;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
-using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -143,19 +142,16 @@ public class UserDataController : JellyPlayControllerBase
 
     [HttpGet("bookmarks/{itemId}")]
     public IActionResult GetBookmarks([FromRoute, Required] string itemId)
-        => JellyPlayResponses.Camel(new { bookmarks = _bookmarks.GetBookmarks(User.GetUserId().ToString(), itemId).Select(ToDto) });
+        => JellyPlayResponses.Camel(new { bookmarks = _bookmarks.GetBookmarks(User.GetUserId().ToString(), itemId).Select(BookmarkService.ToDto) });
 
     [HttpPost("bookmarks/{itemId}")]
     public IActionResult UpsertBookmark([FromRoute, Required] string itemId, [FromBody, Required] BookmarkRequest request)
-        => JellyPlayResponses.Camel(ToDto(_bookmarks.Upsert(User.GetUserId().ToString(), itemId, request)));
+        => JellyPlayResponses.Camel(BookmarkService.ToDto(_bookmarks.Upsert(User.GetUserId().ToString(), itemId, request)));
 
     [HttpDelete("bookmarks/{itemId}/{bookmarkId}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public IActionResult DeleteBookmark([FromRoute, Required] string itemId, [FromRoute, Required] string bookmarkId)
         => _bookmarks.Delete(User.GetUserId().ToString(), bookmarkId) ? NoContent() : NotFound();
-
-    private static BookmarkDto ToDto(BookmarkRow row) => new(
-        row.Id, row.ItemId, row.Position, row.ChapterIndex, row.Label, row.Notes, row.CreatedAt, row.UpdatedAt);
 }
 
 [ApiController]
@@ -164,12 +160,12 @@ public class UserDataController : JellyPlayControllerBase
 public class TranscodesController : JellyPlayControllerBase
 {
     private readonly TranscodeInsightsService _transcodes;
-    private readonly IUserManager _users;
+    private readonly Services.Admin.AdminUsers _adminUsers;
 
-    public TranscodesController(TranscodeInsightsService transcodes, IUserManager users)
+    public TranscodesController(TranscodeInsightsService transcodes, Services.Admin.AdminUsers adminUsers)
     {
         _transcodes = transcodes;
-        _users = users;
+        _adminUsers = adminUsers;
     }
 
     [HttpGet("transcodes/active")]
@@ -185,9 +181,10 @@ public class TranscodesController : JellyPlayControllerBase
     [HttpGet("transcodes/mine")]
     public IActionResult GetMine()
     {
-        // Sessions carry the username, not the id — resolve it from the auth'd
-        // principal's user id (Identity.Name is not the username contract).
-        var name = _users.GetUserById(User.GetUserId())?.Username ?? string.Empty;
+        // Sessions carry the username, not the id — resolve it through the one
+        // admin-identity module (raw-id fallback when the host is missing the
+        // user; Identity.Name is not the username contract).
+        var name = _adminUsers.ResolveName(User.GetUserId());
         return JellyPlayResponses.Camel(new { transcodes = _transcodes.GetMine(name) });
     }
 }

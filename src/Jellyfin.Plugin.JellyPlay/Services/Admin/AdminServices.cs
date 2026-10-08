@@ -110,8 +110,11 @@ public sealed class AdminDefaultsService
             var (writes, existing) = BuildPushWrites(target, globalDefaults, perUserDefaults);
             foreach (var write in writes)
             {
+                // The exact LWW rule the batch pipeline applies
+                // (<see cref="Storage.Models.SettingsLww"/>): strictly newer
+                // applies; equal or older rejects stale-write.
                 if (existing.TryGetValue(DefaultsEnvelope.Join(write.Ns, write.Key), out var current)
-                    && write.UpdatedAt <= current.UpdatedAt)
+                    && !SettingsLww.WouldApply(write.UpdatedAt, current.UpdatedAt))
                 {
                     wouldReject++;
                     if (rejects.Count < MaxDryRunRejects)
@@ -154,18 +157,19 @@ public sealed class AdminDefaultsService
         // Restore point before the overwrite (best-effort; Create never throws).
         _snapshots.Create(userId, "admin-push");
 
-        var result = _settings.ApplyBatch(userId, JellyPlayDatabase.BaseProfile, "admin-push", writes);
+        var result = _settings.ApplyRawWrites(userId, JellyPlayDatabase.BaseProfile, "admin-push", writes);
         _logger.LogInformation("Pushed {Applied}/{Total} defaults to user {UserId}", result.Applied.Count, writes.Count, userId);
         return result.Applied.Count;
     }
 
     /// <summary>
     /// The merged write set a push would issue for one user (server-now
-    /// stamped) together with the user's current base-profile rows — shared
-    /// verbatim by the real push and the dry-run simulation so the two can
-    /// never disagree about WHAT would be written.
+    /// stamped, serialized straight to its stored bytes) together with the
+    /// user's current base-profile rows — shared verbatim by the real push and
+    /// the dry-run simulation so the two can never disagree about WHAT would
+    /// be written.
     /// </summary>
-    private (List<Api.SettingsWriteDto> Writes, Dictionary<string, Api.SettingsEntryDto> Existing) BuildPushWrites(
+    private (List<SettingWrite> Writes, Dictionary<string, Api.SettingsEntryDto> Existing) BuildPushWrites(
         string userId,
         JsonElement? globalDefaults,
         JsonElement? perUserDefaults)
@@ -173,21 +177,20 @@ public sealed class AdminDefaultsService
         var baseSnapshot = _settings.GetAll(userId, JellyPlayDatabase.BaseProfile);
         var existing = baseSnapshot.Settings.ToDictionary(entry => DefaultsEnvelope.Join(entry.Ns, entry.Key), entry => entry);
 
-        var writes = new List<Api.SettingsWriteDto>();
+        var writes = new List<SettingWrite>();
         foreach (var entry in DefaultsEnvelope.MergeForPush(
                      globalDefaults,
                      perUserDefaults,
                      existing.Keys.ToHashSet(StringComparer.Ordinal)))
         {
             var hasExisting = existing.TryGetValue(DefaultsEnvelope.Join(entry.Ns, entry.Key), out var current);
-            writes.Add(new Api.SettingsWriteDto
-            {
-                Ns = entry.Ns,
-                Key = entry.Key,
-                SchemaVersion = hasExisting ? current.SchemaVersion : 1,
-                UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                Value = entry.Value
-            });
+            writes.Add(new SettingWrite(
+                entry.Ns,
+                entry.Key,
+                hasExisting ? current.SchemaVersion : 1,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                "admin-push",
+                JsonSerializer.SerializeToUtf8Bytes(entry.Value)));
         }
 
         return (writes, existing);
@@ -225,11 +228,7 @@ public sealed class ConfigBackupService
             var backup = JsonSerializer.Deserialize<BackupPayload>(payload)
                 ?? throw new JsonException("Backup payload is empty.");
             _db.RestoreAdminDefaults(backup.AdminDefaults ?? new List<AdminDefaultsRow>());
-            foreach (var message in backup.Messages ?? new List<MessageRow>())
-            {
-                _db.UpsertMessage(message);
-            }
-
+            _db.RestoreMessages(backup.Messages ?? new List<MessageRow>());
             return new RestoreOutcome(true, string.Empty);
         }
         catch (Exception ex)

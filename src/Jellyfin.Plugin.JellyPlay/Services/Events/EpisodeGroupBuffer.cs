@@ -63,18 +63,26 @@ public sealed class EpisodeGroupBuffer
     /// <summary>Releases every group whose window (measured from its first arrival) has fully elapsed.</summary>
     public IReadOnlyList<EpisodeGroup> PopDue(long nowMs, int windowSeconds)
     {
-        var due = new List<EpisodeGroup>();
         var windowMs = windowSeconds * 1000L;
+        return Drain(entry => (nowMs - entry.FirstAddedMs.GetValueOrDefault(nowMs)) >= windowMs);
+    }
+
+    public IReadOnlyList<EpisodeGroup> FlushAll() => Drain(_ => true);
+
+    /// <summary>The one drain loop shared by PopDue/FlushAll: folds every buffer whose entry satisfies <paramref name="due"/> into a group and removes it.</summary>
+    private IReadOnlyList<EpisodeGroup> Drain(Func<BufferEntry, bool> due)
+    {
+        var groups = new List<EpisodeGroup>();
         lock (_lock)
         {
             foreach (var (seasonId, entry) in _buffers)
             {
-                if ((nowMs - entry.FirstAddedMs.GetValueOrDefault(nowMs)) < windowMs)
+                if (!due(entry))
                 {
                     continue;
                 }
 
-                due.Add(new EpisodeGroup(
+                groups.Add(new EpisodeGroup(
                     seasonId,
                     entry.SeriesId,
                     entry.SeriesName,
@@ -85,28 +93,7 @@ public sealed class EpisodeGroupBuffer
             }
         }
 
-        return due;
-    }
-
-    public IReadOnlyList<EpisodeGroup> FlushAll()
-    {
-        var all = new List<EpisodeGroup>();
-        lock (_lock)
-        {
-            foreach (var (seasonId, entry) in _buffers)
-            {
-                all.Add(new EpisodeGroup(
-                    seasonId,
-                    entry.SeriesId,
-                    entry.SeriesName,
-                    entry.SeasonIndex,
-                    entry.Episodes.Values.ToList(),
-                    entry.LibraryId));
-                _buffers.TryRemove(seasonId, out _);
-            }
-        }
-
-        return all;
+        return groups;
     }
 
     public int PendingGroupCount

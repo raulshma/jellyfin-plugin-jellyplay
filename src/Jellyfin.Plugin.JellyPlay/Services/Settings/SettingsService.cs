@@ -77,13 +77,15 @@ public sealed class SettingsService
 
     public SettingsSnapshotResponse GetChanged(string userId, string profile, long since, string? deviceId, long? cursor = null, int? limit = null)
     {
-        var rows = PageRows(
-            _db.GetChangedSettings(userId, since)
-                .Where(row => string.Equals(row.Profile, profile, StringComparison.Ordinal))
-                .ToList(),
-            cursor,
-            limit,
-            out var nextCursor);
+        // The delta pull pages IN SQL now (profile filter + offset window
+        // pushed down to the store); the over-fetch-by-one detects a following
+        // page with the exact NextCursor semantics PageRows used to produce.
+        var clamped = RequestLimits.Clamp(limit ?? 0, DefaultPageLimit, MaxPageLimit);
+        var start = (int)Math.Min(Math.Max(cursor ?? 0, 0), int.MaxValue);
+        var fetched = _db.GetChangedSettings(userId, since, profile, start, clamped + 1);
+        var rows = fetched.Count > clamped ? fetched.Take(clamped).ToList() : fetched.ToList();
+        var nextCursor = fetched.Count > clamped ? start + (long)clamped : (long?)null;
+
         // Delta pulls are recorded (full GET settings reads are not): the
         // history shows which device observed which change. The recorded
         // range is (since, head] — exactly what the pull served (head can
@@ -93,8 +95,7 @@ public sealed class SettingsService
         RecordOperation(userId, deviceId ?? string.Empty, "pull", rows.Count, 0, 0, null, since, head);
         var response = ToSnapshot(userId, profile, head, rows);
         response.NextCursor = nextCursor;
-        var deleted = _db.GetDeletedSettings(userId, since)
-            .Where(key => string.Equals(key.Profile, profile, StringComparison.Ordinal))
+        var deleted = _db.GetDeletedSettings(userId, since, profile)
             .Select(key => new DeletedKeyDto(key.Ns, key.Key))
             .ToList();
         // Omitted (null) when nothing was deleted — additive like modes; old
@@ -118,19 +119,20 @@ public sealed class SettingsService
         return page;
     }
 
+    /// <summary>
+    /// The wire path: a thin adapter over <see cref="ApplyRawWrites"/> — maps
+    /// the Api DTOs to raw writes (serializing each value ONCE to its stored
+    /// bytes) and hands them to the one apply pipeline. All LWW/tombstone/
+    /// quota/history logic lives there, shared with restore, import and the
+    /// admin defaults push.
+    /// </summary>
     public SettingsBatchResponse ApplyBatch(string userId, string? profile, string? deviceId, IReadOnlyList<SettingsWriteDto> writes)
     {
-        profile ??= JellyPlayDatabase.BaseProfile;
-        deviceId ??= "unknown";
-
-        // Registry v7: a revoked device's writes are refused wholesale (its
-        // keys were wiped at revoke time — re-pushing them must not resurrect).
-        var deviceRevoked = _db.IsDeviceRevoked(deviceId);
-        var serverNow = ServerNow;
-
-        var mapped = new List<SettingWrite>(writes.Count);
-        var serialized = new Dictionary<SettingsWriteDto, byte[]>(writes.Count);
-        var preRejected = new List<RejectedSetting>();
+        // Canonical tombstone is `deleted: true` — the flag ONLY. A JSON-null
+        // value without the flag is a stored value like any other (serialized
+        // "null" bytes, the pre-v7 behavior), not a delete: the null tolerance
+        // was non-additive and is gone.
+        var raw = new List<SettingWrite>(writes.Count);
         foreach (var write in writes)
         {
             if (string.IsNullOrWhiteSpace(write.Ns) || string.IsNullOrWhiteSpace(write.Key))
@@ -138,72 +140,68 @@ public sealed class SettingsService
                 continue;
             }
 
-            if (deviceRevoked)
-            {
-                preRejected.Add(new RejectedSetting(write.Ns, write.Key, "device-revoked"));
-                continue;
-            }
-
-            if (write.UpdatedAt > serverNow + MaxClockSkewMilliseconds)
-            {
-                preRejected.Add(new RejectedSetting(write.Ns, write.Key, "clock-skew"));
-                continue;
-            }
-
-            // Canonical tombstone is `deleted: true` — the flag ONLY. A
-            // JSON-null value without the flag is a stored value like any
-            // other (serialized "null" bytes, the pre-v7 behavior), not a
-            // delete: the null tolerance was non-additive and is gone.
-            var isDelete = write.Deleted;
-            var bytes = write.Value.ValueKind is JsonValueKind.Undefined || isDelete
+            var bytes = write.Value.ValueKind is JsonValueKind.Undefined || write.Deleted
                 ? Array.Empty<byte>()
                 : JsonSerializer.SerializeToUtf8Bytes(write.Value);
-            serialized[write] = bytes;
-            mapped.Add(new SettingWrite(write.Ns, write.Key, write.SchemaVersion, write.UpdatedAt, deviceId, bytes, isDelete));
+            raw.Add(new SettingWrite(write.Ns, write.Key, write.SchemaVersion, write.UpdatedAt, deviceId ?? "unknown", bytes, write.Deleted));
         }
 
-        // The push's diff range: change-log head before/after the batch —
-        // (fromSeq, toSeq] is exactly what this batch appended (plus any
-        // concurrent write that landed inside the window).
-        var headBefore = _db.GetChangeLogHead(userId);
-        var result = _db.UpsertSettings(userId, profile, mapped, Quotas);
+        return ApplyRawWrites(userId, profile, deviceId, raw);
+    }
 
-        var applied = result.Applied
-            .Select(a => new AppliedSettingDto(a.Ns, a.Key, a.UpdatedAt, a.Seq, a.Deleted))
-            .ToList();
-        var allRejected = new List<RejectedSetting>(preRejected);
-        allRejected.AddRange(result.Rejected);
-        var rejected = allRejected
-            .Select(r => new RejectedSettingDto(r.Ns, r.Key, r.Reason))
-            .ToList();
+    /// <summary>
+    /// The internal apply path over raw bytes — the deep module behind the DTO
+    /// adapter. Restore, import and the admin defaults push call this directly
+    /// with the bytes they already hold, skipping the JSON round-trip (and the
+    /// reference-keyed byte side-table it needed) entirely. One composite owns
+    /// the whole pipeline: revocation refusal, the clock-skew ceiling,
+    /// LWW/tombstone/quota application, the change log, the history record —
+    /// one connection/transaction — and the service adds the anchored SSE
+    /// event, the admin live-monitor fan-out and the response fold. The
+    /// ceiling defaults to the client-clamp (<see cref="MaxClockSkewMilliseconds"/>
+    /// past server now); a server-initiated writer (the restore) passes its
+    /// own stamp instead — its writes must not be judged by the client clamp.
+    /// </summary>
+    internal SettingsBatchResponse ApplyRawWrites(string userId, string? profile, string? deviceId, IReadOnlyList<SettingWrite> writes, long? maxWriteUpdatedAt = null)
+    {
+        profile ??= JellyPlayDatabase.BaseProfile;
+        deviceId ??= "unknown";
 
-        // Approximate byte size of the batch: the serialized length of the keys that applied.
-        var appliedSet = result.Applied.Select(a => (a.Ns, a.Key)).ToHashSet();
-        var appliedBytes = serialized
-            .Where(pair => appliedSet.Contains((pair.Key.Ns, pair.Key.Key)))
-            .Sum(pair => (long)pair.Value.Length);
-        var head = _db.GetChangeLogHead(userId);
+        var outcome = _db.ApplyBatchWithHistory(
+            userId,
+            profile,
+            writes,
+            Quotas,
+            deviceId,
+            maxWriteUpdatedAt: maxWriteUpdatedAt ?? (ServerNow + MaxClockSkewMilliseconds),
+            op: "push",
+            historyTs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            rejectsJsonBuilder: static rejected => SyncRejectsCodec.Encode(rejected));
 
-        if (result.Applied.Count > 0)
+        if (outcome.Applied.Count > 0)
         {
             var payload = JsonSerializer.Serialize(new
             {
                 type = "settings.changed",
                 profile,
-                ns = string.Join(',', result.Applied.Select(a => a.Ns).Distinct()),
-                count = result.Applied.Count,
+                ns = string.Join(',', outcome.Applied.Select(a => a.Ns).Distinct()),
+                count = outcome.Applied.Count,
                 ts = ServerNow
             });
-            PublishChanged(userId, head, "settings.changed", payload);
+            PublishChanged(userId, outcome.HeadAfter, "settings.changed", payload);
         }
 
-        RecordOperation(userId, deviceId, "push", result.Applied.Count, rejected.Count, appliedBytes, BuildRejectsJson(allRejected), headBefore, head);
+        PublishAdminOp(userId, deviceId, "push", outcome.Applied.Count, outcome.Rejected.Count);
 
         return new SettingsBatchResponse
         {
-            Head = head,
-            Applied = applied,
-            Rejected = rejected
+            Head = outcome.HeadAfter,
+            Applied = outcome.Applied
+                .Select(a => new AppliedSettingDto(a.Ns, a.Key, a.UpdatedAt, a.Seq, a.Deleted))
+                .ToList(),
+            Rejected = outcome.Rejected
+                .Select(r => new RejectedSettingDto(r.Ns, r.Key, r.Reason))
+                .ToList()
         };
     }
 
@@ -264,8 +262,12 @@ public sealed class SettingsService
     /// </summary>
     private void PublishChanged(string userId, long head, string eventName, string payload)
     {
-        _hub.PublishToUser("settings", userId, eventName, payload, (ulong)Math.Max(head, 1));
-        if (!_hub.HasSubscriber(userId, "settings"))
+        // The delivered count IS the live-subscriber signal (zero = nobody is
+        // streaming right now): no second O(n) hub scan. Devices presumed
+        // offline for SSE that registered the "silent-push" cap get the
+        // data-only sync-nudge so they flush promptly.
+        var delivered = _hub.PublishToUser(SseHub.SettingsStream, userId, eventName, payload, (ulong)Math.Max(head, 1));
+        if (delivered == 0)
         {
             _push?.DispatchSyncNudge(userId);
         }
@@ -275,22 +277,22 @@ public sealed class SettingsService
     // Restore points
     // ------------------------------------------------------------------
 
-    /// <summary>The caller's restore points, newest-first.</summary>
-    public IReadOnlyList<SnapshotRow> ListSnapshots(string userId) => _snapshots.List(userId);
-
-    /// <summary>Manual capture (the POST snapshots route).</summary>
-    public long? CreateSnapshot(string userId) => _snapshots.Create(userId, "manual");
-
     /// <summary>
-    /// Restores one of the caller's snapshots: per-profile tombstone batches
-    /// over every current row (one batch per profile that has keys, so each
-    /// 'del' change-log row carries the profile its key belongs to) followed
-    /// by the snapshot re-applied per profile — both server-stamped, the
-    /// re-apply one millisecond past the tombstones so the restore always wins
-    /// LWW. Rides the ordinary batch pipeline, so the change log, the anchored
-    /// SSE event and history recording all happen for free; the returned
-    /// response folds every profile's re-apply batch (applied/rejected across
-    /// all profiles, head = the final change-log head).
+    /// Restores one of the caller's snapshots: a diff-first tombstone pass
+    /// (only keys present now but absent from the snapshot are tombstoned —
+    /// re-tombstoning keys the re-apply would immediately recreate only
+    /// doubled the change-log rows), then the snapshot re-applied per profile
+    /// — server-stamped one millisecond past the NEWEST overlapping live row
+    /// (a client clock up to the skew ceiling in the future may live there),
+    /// so the restore provably wins LWW. That re-apply is bounded by its own
+    /// server stamp (it IS the ceiling), not the client-skew clamp — an
+    /// overlapping row AT the ceiling would otherwise reject the whole
+    /// restore as clock-skew. Rides the raw apply pipeline, so the
+    /// change log, the anchored SSE event and history recording all happen
+    /// for free; the returned response folds every profile's re-apply batch
+    /// (applied/rejected across all profiles, head = the final change-log
+    /// head). Snapshot values are restored as their stored bytes — no JSON
+    /// re-parse.
     /// Returns null when the id is not the caller's own snapshot.
     /// </summary>
     public SettingsBatchResponse? RestoreSnapshot(string userId, long id)
@@ -302,24 +304,34 @@ public sealed class SettingsService
         }
 
         var now = ServerNow;
+        var snapshotKeys = stored.Value.Entries
+            .Select(entry => (Profile: entry.Profile, Ns: entry.Ns, Key: entry.Key))
+            .ToHashSet();
+
+        // Tombstone only the drift the snapshot cannot overwrite: keys that
+        // exist now but are absent from the snapshot. One batch per profile
+        // that has such keys, so each 'del' change-log row carries the profile
+        // its key belongs to. The same pass reads the newest stamp among the
+        // OVERLAPPING rows (the keys the re-apply must beat): now + 1 alone
+        // would silently lose LWW to a row stamped into the future.
         var current = _db.GetAllSettingsRows(userId);
+        var maxOverlapped = current
+            .Where(row => snapshotKeys.Contains((row.Profile, row.Ns, row.Key)))
+            .Select(row => row.UpdatedAt)
+            .DefaultIfEmpty(0)
+            .Max();
+        var restoreStamp = Math.Max(now + 1, maxOverlapped + 1);
         foreach (var profileGroup in current
+                     .Where(row => !snapshotKeys.Contains((row.Profile, row.Ns, row.Key)))
                      .GroupBy(row => row.Profile, StringComparer.Ordinal)
                      .OrderBy(group => group.Key, StringComparer.Ordinal))
         {
-            ApplyBatch(
+            ApplyRawWrites(
                 userId,
                 profileGroup.Key == JellyPlayDatabase.BaseProfile ? null : profileGroup.Key,
                 "restore",
                 profileGroup
-                    .Select(row => new SettingsWriteDto
-                    {
-                        Ns = row.Ns,
-                        Key = row.Key,
-                        SchemaVersion = row.SchemaVersion,
-                        UpdatedAt = now,
-                        Deleted = true
-                    })
+                    .Select(row => new SettingWrite(row.Ns, row.Key, row.SchemaVersion, now, "restore", Array.Empty<byte>(), IsDelete: true))
                     .ToList());
         }
 
@@ -331,38 +343,31 @@ public sealed class SettingsService
             var writes = profileGroup
                 .GroupBy(entry => (entry.Ns, entry.Key))
                 .Select(group => group.First())
-                .Select(entry => new SettingsWriteDto
-                {
-                    Ns = entry.Ns,
-                    Key = entry.Key,
-                    SchemaVersion = entry.SchemaVersion,
-                    UpdatedAt = now + 1,
-                    Value = ToJsonElement(SnapshotService.DecodeValue(entry))
-                })
+                .Select(entry => new SettingWrite(
+                    entry.Ns,
+                    entry.Key,
+                    entry.SchemaVersion,
+                    restoreStamp,
+                    "restore",
+                    SnapshotService.DecodeValue(entry)))
                 .ToList();
-            var batch = ApplyBatch(
+            var batch = ApplyRawWrites(
                 userId,
                 profileGroup.Key == JellyPlayDatabase.BaseProfile ? null : profileGroup.Key,
                 "restore",
-                writes);
+                writes,
+                // The restore is server-initiated and bounded by its own
+                // server stamp, not the client-skew clamp: the re-apply writes
+                // are stamped restoreStamp itself, which the clamp would
+                // reject as clock-skew whenever an overlapping live row sits
+                // exactly AT the ceiling.
+                maxWriteUpdatedAt: restoreStamp);
             response.Head = Math.Max(response.Head, batch.Head);
             response.Applied.AddRange(batch.Applied);
             response.Rejected.AddRange(batch.Rejected);
         }
 
         return response;
-    }
-
-    private static JsonElement ToJsonElement(byte[] bytes)
-    {
-        try
-        {
-            return JsonDocument.Parse(bytes).RootElement.Clone();
-        }
-        catch (JsonException)
-        {
-            return JsonDocument.Parse("null").RootElement.Clone();
-        }
     }
 
     // ------------------------------------------------------------------
@@ -399,9 +404,9 @@ public sealed class SettingsService
     }
 
     /// <summary>
-    /// Imports a bundle: every row is re-applied through the ordinary batch
-    /// pipeline with a server-now timestamp (so the import beats anything
-    /// older than now, per LWW) and per-profile batching preserved.
+    /// Imports a bundle: every row is re-applied through the raw apply path
+    /// with a server-now timestamp (so the import beats anything older than
+    /// now, per LWW) and per-profile batching preserved.
     /// </summary>
     public SettingsBatchResponse Import(string userId, string? deviceId, SettingsExportBundle bundle)
     {
@@ -410,21 +415,20 @@ public sealed class SettingsService
         foreach (var profile in bundle.Profiles)
         {
             var writes = profile.Settings
-                .Select(entry => new SettingsWriteDto
-                {
-                    Ns = entry.Ns,
-                    Key = entry.Key,
-                    SchemaVersion = entry.SchemaVersion,
-                    UpdatedAt = now,
-                    Value = entry.Value
-                })
+                .Select(entry => new SettingWrite(
+                    entry.Ns,
+                    entry.Key,
+                    entry.SchemaVersion,
+                    now,
+                    deviceId ?? "import",
+                    JsonSerializer.SerializeToUtf8Bytes(entry.Value)))
                 .ToList();
             if (writes.Count == 0)
             {
                 continue;
             }
 
-            var batch = ApplyBatch(userId, profile.Profile, deviceId ?? "import", writes);
+            var batch = ApplyRawWrites(userId, profile.Profile, deviceId ?? "import", writes);
             response.Head = Math.Max(response.Head, batch.Head);
             response.Applied.AddRange(batch.Applied);
             response.Rejected.AddRange(batch.Rejected);
@@ -437,26 +441,11 @@ public sealed class SettingsService
     // Sync history recording (observability; never fails the operation)
     // ------------------------------------------------------------------
 
-    /// <summary>RejectsJson is capped at this many entries per recorded operation.</summary>
-    internal const int MaxRecordedRejects = 10;
-
-    private static readonly System.Text.Json.JsonSerializerOptions RejectJsonOptions = new()
-    {
-        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-    };
+    /// <summary>RejectsJson is capped at this many entries per recorded operation (the codec owns the cap).</summary>
+    internal const int MaxRecordedRejects = SyncRejectsCodec.MaxRecordedRejects;
 
     /// <summary>Capped <c>[{ns,key,reason}]</c> JSON for a recorded operation; null when nothing was rejected.</summary>
-    internal static string? BuildRejectsJson(IReadOnlyList<RejectedSetting> rejected)
-    {
-        if (rejected.Count == 0)
-        {
-            return null;
-        }
-
-        return JsonSerializer.Serialize(
-            rejected.Take(MaxRecordedRejects).Select(r => new SyncRejectDto(r.Ns, r.Key, r.Reason)),
-            RejectJsonOptions);
-    }
+    internal static string? BuildRejectsJson(IReadOnlyList<RejectedSetting> rejected) => SyncRejectsCodec.Encode(rejected);
 
     /// <summary>
     /// Appends one sync_history row (with the operation's change-log range:
@@ -554,7 +543,7 @@ public sealed class SettingsService
         foreach (var entry in defaults)
         {
             merged[(entry.Ns, entry.Key)] = DefaultsToRow(userId, profile, entry.Ns, entry.Key, entry.Value);
-            modes[DefaultModeKey(entry.Ns, entry.Key)] = entry.Mode == AdminDefaultMode.Forced ? "forced" : "suggested";
+            modes[DefaultsEnvelope.Join(entry.Ns, entry.Key)] = entry.Mode == AdminDefaultMode.Forced ? "forced" : "suggested";
         }
 
         // Every remaining resolved key is user-owned (base or profile overlay):
@@ -562,15 +551,13 @@ public sealed class SettingsService
         // user value (the user's value wins, so the provenance is the user's).
         foreach (var row in merged.Values)
         {
-            modes.TryAdd(DefaultModeKey(row.Ns, row.Key), "unset");
+            modes.TryAdd(DefaultsEnvelope.Join(row.Ns, row.Key), "unset");
         }
 
         var response = ToSnapshot(userId, profile, _db.GetChangeLogHead(userId), merged.Values.ToList());
         response.Modes = modes;
         return response;
     }
-
-    private static string DefaultModeKey(string ns, string key) => DefaultsEnvelope.Join(ns, key);
 
     /// <summary>
     /// Batch into a device profile — the cross-profile copy/mutation surface.

@@ -39,6 +39,12 @@ public class JellyPlayController : JellyPlayControllerBase
         JellyPlayContract.Features.Analytics
     ];
 
+    /// <summary>The plugin's wire version — assembly metadata, immutable once loaded; resolved once, not per request.</summary>
+    private static readonly string PluginVersion
+        = typeof(JellyPlayPlugin).Assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version
+          ?? typeof(JellyPlayPlugin).Assembly.GetName().Version?.ToString()
+          ?? string.Empty;
+
     private readonly SettingsService _settings;
     private readonly Func<Configuration.PluginConfiguration> _config;
     private readonly Services.Recommendations.SimilarItemsProviderManager _similarItems;
@@ -65,9 +71,7 @@ public class JellyPlayController : JellyPlayControllerBase
 
         return JellyPlayResponses.Camel(new CapabilitiesResponse(
             JellyPlayContract.ContractVersion,
-            typeof(JellyPlayPlugin).Assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version
-                ?? typeof(JellyPlayPlugin).Assembly.GetName().Version?.ToString()
-                ?? string.Empty,
+            PluginVersion,
             features,
             System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             ["", "desktop", "phone", "tv"],

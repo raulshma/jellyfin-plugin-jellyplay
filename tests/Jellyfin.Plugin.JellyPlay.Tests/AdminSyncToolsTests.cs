@@ -28,13 +28,15 @@ public sealed class AdminPreviewTests : IDisposable
 {
     private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-admin-preview-" + Guid.NewGuid().ToString("N"));
     private readonly JellyPlayDatabase _db;
+    private readonly SnapshotService _snapshots;
     private readonly SettingsService _service;
 
     public AdminPreviewTests()
     {
         Directory.CreateDirectory(_tempDir);
         _db = new JellyPlayDatabase(_tempDir);
-        _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => new Configuration.SyncConfig(), NullLogger<SettingsService>.Instance, new SnapshotService(_db, () => new Configuration.SyncConfig()));
+        _snapshots = new SnapshotService(_db, () => new Configuration.SyncConfig());
+        _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => new Configuration.SyncConfig(), NullLogger<SettingsService>.Instance, _snapshots);
     }
 
     public void Dispose()
@@ -84,7 +86,7 @@ public sealed class AdminPreviewTests : IDisposable
         Assert.True(bytes > 0);
         Assert.Equal(headBefore, _db.GetChangeLogHead("u1"));
         Assert.Equal(historyBefore, _db.GetSyncHistory("u1", 0, 50).Count);
-        Assert.Empty(_service.ListSnapshots("u1"));
+        Assert.Empty(_snapshots.List("u1"));
 
         // And a user with NO rows previews cleanly (defaults only) without
         // creating anything.
@@ -99,6 +101,7 @@ public sealed class AdminPushDryRunTests : IDisposable
 {
     private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-admin-dryrun-" + Guid.NewGuid().ToString("N"));
     private readonly JellyPlayDatabase _db;
+    private readonly SnapshotService _snapshots;
     private readonly SettingsService _service;
     private readonly AdminDefaultsService _admin;
 
@@ -106,11 +109,12 @@ public sealed class AdminPushDryRunTests : IDisposable
     {
         Directory.CreateDirectory(_tempDir);
         _db = new JellyPlayDatabase(_tempDir);
-        _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => new Configuration.SyncConfig(), NullLogger<SettingsService>.Instance, new SnapshotService(_db, () => new Configuration.SyncConfig()));
+        _snapshots = new SnapshotService(_db, () => new Configuration.SyncConfig());
+        _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => new Configuration.SyncConfig(), NullLogger<SettingsService>.Instance, _snapshots);
         _admin = new AdminDefaultsService(
             _service,
             _db,
-            new SnapshotService(_db, () => new Configuration.SyncConfig()),
+            _snapshots,
             NullLogger<AdminDefaultsService>.Instance);
     }
 
@@ -162,8 +166,8 @@ public sealed class AdminPushDryRunTests : IDisposable
         // restore points, no NEW history rows, the head untouched.
         Assert.Equal("\"user\"", _service.GetAll("u1", "").Settings.Single().Value.GetRawText());
         Assert.Equal("\"future\"", _service.GetAll("u2", "").Settings.Single().Value.GetRawText());
-        Assert.Empty(_service.ListSnapshots("u1"));
-        Assert.Empty(_service.ListSnapshots("u2"));
+        Assert.Empty(_snapshots.List("u1"));
+        Assert.Empty(_snapshots.List("u2"));
         Assert.Equal(historyBefore, _db.GetSyncHistory("u1", 0, 50).Count);
         Assert.Empty(_db.GetSyncHistory("u2", 0, 50));
         Assert.Equal(headBefore, _db.GetChangeLogHead("u1"));
@@ -173,7 +177,7 @@ public sealed class AdminPushDryRunTests : IDisposable
         Assert.Equal(1, pushed.KeysPushed);
         Assert.Null(pushed.DryRun);
         Assert.Equal("\"dark\"", _service.GetAll("u1", "").Settings.Single().Value.GetRawText());
-        Assert.Single(_service.ListSnapshots("u1"), row => row.Origin == "admin-push");
+        Assert.Single(_snapshots.List("u1"), row => row.Origin == "admin-push");
     }
 
     [Fact]

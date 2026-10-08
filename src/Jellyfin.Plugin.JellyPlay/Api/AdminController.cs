@@ -42,10 +42,13 @@ public class AdminController : JellyPlayControllerBase
     /// Push stored tri-state defaults into user base settings (all users or
     /// one). The additive <c>?dryRun=true</c> simulates the push: it reports
     /// would-apply/would-reject (and catalog problems) and writes NOTHING —
-    /// no rows, no restore points, no history.
+    /// no rows, no restore points, no history. Rate-limited per admin — the
+    /// non-dry-run form rewrites every user's base settings.
     /// </summary>
     [HttpPost("pushDefaults/{userId?}")]
+    [RateLimit(typeof(PushDefaultsRateLimiter), "pushDefaults")]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public IActionResult PushDefaults([FromRoute] string? userId, [FromQuery] bool dryRun = false)
     {
         var outcome = _defaults.PushDefaults(string.IsNullOrEmpty(userId) ? null : userId, dryRun);

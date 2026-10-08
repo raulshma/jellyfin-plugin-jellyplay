@@ -290,6 +290,18 @@ public sealed record DeviceDto(
     IReadOnlyList<string>? Caps = null,
     bool Revoked = false);
 
+/// <summary>Admin push-overview row: endpoint URLs are secrets — only the host is ever surfaced.</summary>
+public sealed record AdminPushDeviceDto(
+    string DeviceId,
+    string UserName,
+    string DeviceName,
+    string Kind,
+    string EndpointHost,
+    long RegisteredAt);
+
+/// <summary>Response shape for GET jellyplay/admin/push/overview. FCM readiness is reported as a boolean only — the service-account key is never surfaced.</summary>
+public sealed record AdminPushOverviewResponse(bool Enabled, bool FcmConfigured, IReadOnlyList<AdminPushDeviceDto> Devices);
+
 // ---------------------------------------------------------------------------
 // Restore points (GET/POST jellyplay/settings/snapshots, POST …/{id}/restore)
 // ---------------------------------------------------------------------------
@@ -343,6 +355,27 @@ public sealed record MessageDto(
     int OrderIndex,
     long CreatedAt,
     bool Read);
+
+/// <summary>
+/// Message row as the admin registry (GET jellyplay/admin/messages) returns
+/// it: the storage record's fields verbatim — audienceJson is the stored
+/// audience payload text and startsAt/endsAt are omitted from the wire when
+/// null. Byte-identical to the pre-projection raw-row shape, by design: this
+/// record exists only so the row→wire projection lives in the service (the
+/// inbox's <see cref="MessageDto"/> is the user-facing projection).
+/// </summary>
+public sealed record AdminMessageDto(
+    string Id,
+    string Title,
+    string Body,
+    string Color,
+    string LinkUrl,
+    string LinkLabel,
+    string AudienceJson,
+    long? StartsAt,
+    long? EndsAt,
+    int OrderIndex,
+    long CreatedAt);
 
 public sealed class MessageAdminRequest
 {

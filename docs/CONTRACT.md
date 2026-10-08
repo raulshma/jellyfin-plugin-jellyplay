@@ -248,12 +248,15 @@ POST jellyplay/settings/snapshots                 → { id }  (manual capture)
 POST jellyplay/settings/snapshots/{id}/restore    → { head, applied: […], rejected: […] }  |  404 (not owned)
 ```
 
-Restore = a tombstone batch over every current row followed by the snapshot
-re-applied — both server-stamped, the re-apply one millisecond past the
-tombstones so the restore always wins LWW regardless of client clocks. It
-rides the ordinary batch pipeline: change log, anchored `settings.changed`
-SSE and history recording all happen. `rejected` is normally empty; entries
-there mean the restored value crossed a quota as-is.
+Restore = a diff-first tombstone pass — only the keys present now but absent
+from the snapshot are tombstoned (re-tombstoning keys the re-apply would
+immediately recreate is pure change-log noise) — followed by the snapshot
+re-applied, server-stamped one millisecond past the NEWEST stamp any
+overlapping live row carries (a client clock may run up to the skew ceiling
+into the future), so the restore provably wins LWW regardless of client
+clocks. It rides the ordinary batch pipeline: change log, anchored
+`settings.changed` SSE and history recording all happen. `rejected` is
+normally empty; entries there mean the restored value crossed a quota as-is.
 
 ### Export / import (additive, under `settings-sync`)
 
@@ -466,7 +469,7 @@ POST /newsletter/test  [admin]   → 204 | 400 { error: "smtp-unconfigured" }
 
 ```
 GET jellyplay/mdblist/ratings?imdbId=      → { imdbId, ratings: [{source, score?, votes?, url?}] } | 404
-GET jellyplay/mdblist/keyInfo  [admin]
+GET jellyplay/mdblist/keyInfo  [admin]     → served VERBATIM: this endpoint intentionally proxies the upstream MDBList body through as-is (raw `Content`, not the plugin's camelCase gate)
 POST jellyplay/mdblist/clearCache?imdbId=  [admin] → 204
 GET jellyplay/tmdb/seasonRatings?tmdbId=&seasonNumber=  → { season, episodes: {"<n>": {tmdbScore, tmdbVotes, entries[]}} }
 GET jellyplay/tmdb/nextEpisode?tmdbId=     → { name?, airDate? }

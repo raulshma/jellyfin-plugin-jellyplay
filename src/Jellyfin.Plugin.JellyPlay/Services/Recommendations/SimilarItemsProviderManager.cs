@@ -266,12 +266,16 @@ public class SimilarItemsProviderManager : IHostedService
         object? rawQuery,
         CancellationToken cancellationToken)
     {
-        object? user = null;
+        // The host query type only exists at runtime (Jellyfin 12), so its
+        // User property surfaces here as object? — resolved to the host's
+        // entity type once, at this reflection boundary; everything
+        // downstream is typed.
+        Jellyfin.Database.Implementations.Entities.User? user = null;
         int? limit = null;
         IReadOnlyList<Guid>? excludeItemIds = null;
         if (rawQuery != null)
         {
-            user = _queryUser?.GetValue(rawQuery);
+            user = _queryUser?.GetValue(rawQuery) as Jellyfin.Database.Implementations.Entities.User;
             limit = _queryLimit?.GetValue(rawQuery) as int?;
             excludeItemIds = _queryExcludeItemIds?.GetValue(rawQuery) as IReadOnlyList<Guid>;
         }

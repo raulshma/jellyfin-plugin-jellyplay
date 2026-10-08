@@ -84,3 +84,17 @@ public sealed class RateLimitFilter : IAsyncActionFilter
                 services.GetService<Func<Configuration.SeerrConfig>>()?.Invoke().TrustProxyHeaders ?? false)
             : keyPrefix + ":" + httpContext.User.GetUserId();
 }
+
+/// <summary>
+/// POST admin/pushDefaults: 5/min per admin — the route rewrites every user's
+/// base settings in one call, so the abuse budget is the tightest of the
+/// mutating routes. (The sibling limiter budgets live in
+/// Services/Admin/RateLimiter.cs; this one sits beside the attribute it feeds
+/// because the admin push route is an Api-surface concern.)
+/// </summary>
+public sealed class PushDefaultsRateLimiter : RateLimiter
+{
+    public PushDefaultsRateLimiter() : base(limit: 5, windowMs: 60_000)
+    {
+    }
+}

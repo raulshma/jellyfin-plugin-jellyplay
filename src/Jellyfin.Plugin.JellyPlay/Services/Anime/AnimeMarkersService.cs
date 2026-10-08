@@ -143,8 +143,8 @@ public sealed partial class AnimeMarkersService
     private const string FillerListBase = "https://www.animefillerlist.com/shows/";
     private const string TenraiBase = "https://api.tenrai.org/v1/recaps";
 
-    /// <summary>TTL for cached "no markers found" results — shorter than the positive cache so a fixed slug/mapping is picked up quickly.</summary>
-    private static readonly TimeSpan MissCacheTtl = TimeSpan.FromHours(2);
+    /// <summary>TTL for cached "no markers found" results — shorter than the positive cache so a fixed slug/mapping is picked up quickly. The shared miss-marker TTL (same window the fetch pipeline uses for its own miss markers).</summary>
+    private static readonly TimeSpan MissCacheTtl = ResilientFetcher.DefaultMissTtl;
 
     private readonly IHttpClientFactory _httpFactory;
     private readonly ResilientFetcher _fetcher;
@@ -183,7 +183,7 @@ public sealed partial class AnimeMarkersService
         }
     }
 
-    public async Task<SeriesMarkers?> GetSeriesMarkers(string seriesId, string? providerSeriesId)
+    public async Task<SeriesMarkers?> GetSeriesMarkers(string seriesId, string? providerSeriesId, CancellationToken cancellationToken = default)
     {
         var config = _config();
         if (!IsEnabled)
@@ -192,24 +192,18 @@ public sealed partial class AnimeMarkersService
         }
 
         var cacheKey = $"animemarkers:{seriesId}";
-        var cached = _cache.Get<SeriesMarkers>(cacheKey, TimeSpan.FromHours(Math.Max(1, config.RefreshIntervalHours)));
+        var ttl = TimeSpan.FromHours(Math.Max(1, config.RefreshIntervalHours));
+        var cached = _cache.Get<SeriesMarkers>(cacheKey, ttl);
         if (cached is not null)
         {
             return cached;
         }
 
-        var missCacheKey = $"animemarkers-miss:{seriesId}";
-        if (_cache.Get<bool>(missCacheKey, MissCacheTtl))
-        {
-            return null;
-        }
-
-        var now = _fetcher.NowMs;
         var series = ResolveSeries(seriesId);
         // Precedence: explicit admin override (matched by seriesId) > the
         // library's provider ids + explicit hint > name-slug fallback.
         var (ids, overridden) = AnimeIdResolver.Resolve(config.SeriesOverrides, seriesId, AnimeIdResolver.FromProviderIds(series?.ProviderIds, providerSeriesId));
-        var mapping = await ResolveMappingAsync(ids);
+        var mapping = await ResolveMappingAsync(ids, cancellationToken);
 
         // An explicit override pins the pair directly; otherwise the Fribb
         // cross-mapping stays authoritative. Tenrai keys on AniList ids: the
@@ -218,7 +212,6 @@ public sealed partial class AnimeMarkersService
         var anilistId = overridden
             ? ids.AniListId ?? mapping?.AniListId ?? ids.ExplicitHint
             : mapping?.AniListId ?? ids.AniListId ?? ids.ExplicitHint;
-        var malId = overridden ? ids.MalId ?? mapping?.MalId : mapping?.MalId;
 
         // AnimeFillerList addresses shows by name slug — never by Jellyfin id.
         // An explicit providerSeriesId is treated as the slug (that source's
@@ -227,42 +220,55 @@ public sealed partial class AnimeMarkersService
             ? ids.ExplicitHint!
             : series?.Name ?? string.Empty);
 
-        var markers = new List<AnimeMarker>();
-        var fillerAttempted = false;
-        var tenraiAttempted = false;
-        if (config.EnableFillerList && fillerSlug.Length > 0 && !_fillerBreaker.IsOpen(now))
+        // Source selection only: each candidate carries its own breaker, so an
+        // open circuit means that source is skipped — never a poisoned cache.
+        var sources = new List<ResilientFetcher.MultiSource<List<AnimeMarker>>>();
+        if (config.EnableFillerList && fillerSlug.Length > 0)
         {
-            fillerAttempted = true;
-            markers.AddRange(await FetchFillerMarkers(fillerSlug));
+            sources.Add(new ResilientFetcher.MultiSource<List<AnimeMarker>>(
+                $"filler:{fillerSlug}",
+                (client, ct) => ScrapeFillerListAsync(client, fillerSlug, ct),
+                _fillerBreaker,
+                LogLevel.Debug));
         }
 
-        if (config.EnableTenrai && !string.IsNullOrEmpty(anilistId) && !_tenraiBreaker.IsOpen(now))
+        if (config.EnableTenrai && !string.IsNullOrEmpty(anilistId))
         {
-            tenraiAttempted = true;
-            markers.AddRange(await FetchTenraiRecaps(anilistId));
+            sources.Add(new ResilientFetcher.MultiSource<List<AnimeMarker>>(
+                $"tenrai:{anilistId}",
+                (client, ct) => ScrapeTenraiRecapsAsync(client, anilistId!, ct),
+                _tenraiBreaker,
+                LogLevel.Debug));
         }
 
-        if (markers.Count == 0)
-        {
-            // Only memoize the miss when a source was actually attempted — an
-            // open breaker means nothing was tried, so don't poison the cache.
-            if (fillerAttempted || tenraiAttempted)
+        // The independent sources run concurrently; the fetch pipeline owns the
+        // cache/miss choreography (a miss is memoized only when a source was
+        // really attempted) and coalesces concurrent cold callers per series.
+        return await _fetcher.GetOrFetchMultiAsync(
+            cacheKey,
+            ttl,
+            sources,
+            merge: values =>
             {
-                _cache.Set(missCacheKey, true);
-            }
+                var markers = new List<AnimeMarker>();
+                foreach (var value in values)
+                {
+                    markers.AddRange(value ?? new List<AnimeMarker>());
+                }
 
-            return null;
-        }
-
-        var result = new SeriesMarkers(seriesId, anilistId, mapping?.MalId, markers.OrderBy(marker => marker.EpisodeNumber).ToList());
-        _cache.Set(cacheKey, result);
-        return result;
+                return markers.Count == 0
+                    ? null
+                    : new SeriesMarkers(seriesId, anilistId, mapping?.MalId, markers.OrderBy(marker => marker.EpisodeNumber).ToList());
+            },
+            missCache: true,
+            missTtl: MissCacheTtl,
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>Resolves episode marker rows for episode lists (client batches by series).</summary>
-    public async Task<IReadOnlyList<AnimeMarker>> GetEpisodeMarkers(string seriesId, int fromEpisode, int toEpisode)
+    public async Task<IReadOnlyList<AnimeMarker>> GetEpisodeMarkers(string seriesId, int fromEpisode, int toEpisode, CancellationToken cancellationToken = default)
     {
-        var markers = await GetSeriesMarkers(seriesId, providerSeriesId: null);
+        var markers = await GetSeriesMarkers(seriesId, providerSeriesId: null, cancellationToken);
         return markers?.Markers
             .Where(marker => marker.EpisodeNumber >= fromEpisode && marker.EpisodeNumber <= toEpisode)
             .ToList() ?? new List<AnimeMarker>();
@@ -281,20 +287,11 @@ public sealed partial class AnimeMarkersService
         }
     }
 
-    private async Task<List<AnimeMarker>> FetchFillerMarkers(string slug)
-    {
-        var markers = await _fetcher.FetchAsync(
-            $"filler:{slug}",
-            (client, cancellationToken) => ScrapeFillerListAsync(client, slug, cancellationToken),
-            _fillerBreaker,
-            LogLevel.Debug);
-        return markers ?? new List<AnimeMarker>();
-    }
-
     private static async Task<List<AnimeMarker>?> ScrapeFillerListAsync(HttpClient client, string slug, CancellationToken cancellationToken)
     {
         using var request = ResilientFetcher.BrowserGetRequest($"{FillerListBase}{Uri.EscapeDataString(slug)}");
-        var html = await (await client.SendAsync(request, cancellationToken)).Content.ReadAsStringAsync(cancellationToken);
+        using var response = await client.SendAsync(request, cancellationToken);
+        var html = await response.Content.ReadAsStringAsync(cancellationToken);
         var markers = ParseFillerList(html);
         if (markers.Count == 0)
         {
@@ -332,16 +329,8 @@ public sealed partial class AnimeMarkersService
         System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex FillerRowRegex();
 
-    private async Task<List<AnimeMarker>> FetchTenraiRecaps(string anilistId)
-    {
-        var markers = await _fetcher.FetchAsync(
-            $"tenrai:{anilistId}",
-            async Task<List<AnimeMarker>?> (client, cancellationToken) =>
-                ParseTenraiRecaps(await client.GetStringAsync($"{TenraiBase}?anilist_id={Uri.EscapeDataString(anilistId)}", cancellationToken)),
-            _tenraiBreaker,
-            LogLevel.Debug);
-        return markers ?? new List<AnimeMarker>();
-    }
+    private static async Task<List<AnimeMarker>?> ScrapeTenraiRecapsAsync(HttpClient client, string anilistId, CancellationToken cancellationToken)
+        => ParseTenraiRecaps(await client.GetStringAsync($"{TenraiBase}?anilist_id={Uri.EscapeDataString(anilistId)}", cancellationToken));
 
     private static List<AnimeMarker> ParseTenraiRecaps(string json)
     {
@@ -360,9 +349,9 @@ public sealed partial class AnimeMarkersService
     }
 
     /// <summary>Loads (and periodically refreshes) the Fribb anime-list mapping, then matches the series' ids against it.</summary>
-    private async Task<FribbEntry?> ResolveMappingAsync(AnimeProviderIds ids)
+    private async Task<FribbEntry?> ResolveMappingAsync(AnimeProviderIds ids, CancellationToken cancellationToken)
     {
-        await EnsureFribbIndexAsync();
+        await EnsureFribbIndexAsync(cancellationToken);
         lock (_fribbLock)
         {
             foreach (var key in ids.LookupKeys())
@@ -381,9 +370,12 @@ public sealed partial class AnimeMarkersService
     /// Loads (and periodically refreshes) the Fribb anime-list mapping.
     /// Single-flight: concurrent cold callers share ONE fetch task (the
     /// in-flight slot is guarded by the lock and cleared on failure so the
-    /// next caller retries); a loaded index re-fetches only once stale.
+    /// next caller retries); a loaded index re-fetches only once stale. The
+    /// shared slot's fetch runs with <see cref="CancellationToken.None"/> —
+    /// the slot is process-wide, so no single caller's abort may cancel the
+    /// load out from under every other concurrent caller.
     /// </summary>
-    private async Task EnsureFribbIndexAsync()
+    private async Task EnsureFribbIndexAsync(CancellationToken cancellationToken)
     {
         Task fetch;
         lock (_fribbLock)
@@ -393,19 +385,19 @@ public sealed partial class AnimeMarkersService
                 return;
             }
 
-            fetch = _fribbFetch ??= FetchFribbIndexAsync();
+            fetch = _fribbFetch ??= FetchFribbIndexAsync(CancellationToken.None);
         }
 
         await fetch;
     }
 
-    private async Task FetchFribbIndexAsync()
+    private async Task FetchFribbIndexAsync(CancellationToken cancellationToken)
     {
         try
         {
             var url = _config().FribbListUrl;
             var client = _httpFactory.CreateClient("JellyPlayHttpClient");
-            var json = await client.GetStringAsync(url);
+            var json = await client.GetStringAsync(url, cancellationToken);
             using var doc = JsonDocument.Parse(json);
             var index = new Dictionary<string, FribbEntry>(StringComparer.Ordinal);
             foreach (var entry in doc.RootElement.EnumerateArray())

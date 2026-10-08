@@ -34,7 +34,7 @@ public sealed class SmtpNewsletterSender : INewsletterSender
             throw new InvalidOperationException("No newsletter recipients resolved.");
         }
 
-        var settings = NewsletterSettings();
+        var settings = _config();
         using var message = new MimeMessage();
         message.From.Add(new MailboxAddress(settings.FromName, settings.FromAddress));
         foreach (var recipient in recipients.Where(address => !string.IsNullOrWhiteSpace(address)))
@@ -62,8 +62,6 @@ public sealed class SmtpNewsletterSender : INewsletterSender
             await client.DisconnectAsync(true);
         }
     }
-
-    private NewsletterConfig NewsletterSettings() => _config();
 }
 
 /// <summary>
@@ -128,7 +126,7 @@ public sealed class NewsletterService
     }
 
     /// <summary>Composes a simple HTML digest from items added in the last 7 days.</summary>
-    private async Task<(string Subject, string Html)> ComposeFromRecentlyAdded()
+    private Task<(string Subject, string Html)> ComposeFromRecentlyAdded()
     {
         var since = _clock.GetUtcNow().UtcDateTime.AddDays(-7);
         var query = new MediaBrowser.Controller.Entities.InternalItemsQuery(user: null)
@@ -155,6 +153,6 @@ public sealed class NewsletterService
             <p style="color:#888">Sent by the JellyPlay plugin.</p>
             </body></html>
             """;
-        return ($"JellyPlay digest — {items.Count} new items", html);
+        return Task.FromResult(($"JellyPlay digest — {items.Count} new items", html));
     }
 }

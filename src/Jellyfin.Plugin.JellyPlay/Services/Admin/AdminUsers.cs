@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Jellyfin.Data;
 using MediaBrowser.Controller.Library;
 
@@ -15,22 +16,53 @@ namespace Jellyfin.Plugin.JellyPlay.Services.Admin;
 /// </summary>
 public sealed class AdminUsers
 {
-    private readonly IUserManager _users;
+    /// <summary>
+    /// The admin-id memoization window (ms). Long enough to collapse a burst
+    /// (an ItemAdded flush batch resolves the audience once anyway — this is
+    /// belt-and-braces for the other callers), short enough that a permission
+    /// change applies within seconds, without a restart.
+    /// </summary>
+    private const long MemoTtlMs = 10_000;
 
-    public AdminUsers(IUserManager users)
+    private readonly IUserManager _users;
+    private readonly TimeProvider _clock;
+    private IReadOnlyList<string>? _adminIdsCache;
+    private long _adminIdsAtMs;
+
+    public AdminUsers(IUserManager users, TimeProvider? clock = null)
     {
         _users = users;
+        _clock = clock ?? TimeProvider.System;
     }
 
     /// <summary>Display name for one host user; the id string when the host does not know the user.</summary>
     public string ResolveName(Guid userId) => DisplayName(userId.ToString(), id => _users.GetUserById(id)?.Username);
 
-    /// <summary>The host's administrator ids — audience "admins". Fresh per call so
-    /// permission changes apply to the next event without a restart.</summary>
-    public IReadOnlyList<string> AdminUserIds => _users.GetUsers()
-        .Where(user => user.HasPermission(Jellyfin.Database.Implementations.Enums.PermissionKind.IsAdministrator))
-        .Select(user => user.Id.ToString())
-        .ToList();
+    /// <summary>The host's administrator ids — audience "admins". Memoized for a few
+    /// seconds behind the injected clock: a 2000-item import must not pay a
+    /// full <see cref="IUserManager"/> enumeration per event (and the event
+    /// pipeline resolves once per flush batch besides). Permission changes
+    /// still apply within the TTL — no restart needed.</summary>
+    public IReadOnlyList<string> AdminUserIds
+    {
+        get
+        {
+            var now = _clock.GetUtcNow().ToUnixTimeMilliseconds();
+            var cached = _adminIdsCache;
+            if (cached is not null && now - Volatile.Read(ref _adminIdsAtMs) < MemoTtlMs)
+            {
+                return cached;
+            }
+
+            var fresh = _users.GetUsers()
+                .Where(user => user.HasPermission(Jellyfin.Database.Implementations.Enums.PermissionKind.IsAdministrator))
+                .Select(user => user.Id.ToString())
+                .ToList();
+            _adminIdsCache = fresh;
+            Volatile.Write(ref _adminIdsAtMs, now);
+            return fresh;
+        }
+    }
 
     /// <summary>Every host user (id + username) — the admin pickers' data source (drill-down, preview simulator). Fresh per call.</summary>
     public IReadOnlyList<Api.AdminUserRef> AllUsers()

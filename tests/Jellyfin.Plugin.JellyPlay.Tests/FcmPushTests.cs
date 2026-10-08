@@ -15,7 +15,6 @@ using Jellyfin.Plugin.JellyPlay.Configuration;
 using Jellyfin.Plugin.JellyPlay.Realtime;
 using Jellyfin.Plugin.JellyPlay.Services.Admin;
 using Jellyfin.Plugin.JellyPlay.Services.Devices;
-using Jellyfin.Plugin.JellyPlay.Services.Events;
 using Jellyfin.Plugin.JellyPlay.Services.Push;
 using Jellyfin.Plugin.JellyPlay.Storage;
 using Jellyfin.Plugin.JellyPlay.Storage.Models;
@@ -621,18 +620,10 @@ public sealed class FcmRegistrationApiTests : IDisposable
         }
     }
 
-    private EventsController Controller(bool withPushConfig = true)
+    private DevicesController Controller(bool withPushConfig = true)
     {
-        var hub = new SseHub(NullLogger<SseHub>.Instance);
-        var events = new EventService(
-            hub,
-            () => new EventsConfig(),
-            () => new List<string>(),
-            NullLogger<EventService>.Instance);
-        var controller = new EventsController(
-            hub,
-            events,
-            new DeviceRegistryService(_db, () => _pushConfig, SettingsServiceFactory.Create(_db, hub)));
+        var controller = new DevicesController(
+            new DeviceRegistryService(_db, () => _pushConfig, SettingsServiceFactory.Create(_db, new SseHub(NullLogger<SseHub>.Instance))));
         var context = new DefaultHttpContext
         {
             User = new ClaimsPrincipal(new ClaimsIdentity(

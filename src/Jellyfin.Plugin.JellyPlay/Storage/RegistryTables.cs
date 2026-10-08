@@ -40,11 +40,11 @@ public sealed partial class JellyPlayDatabase
             statement.Bind("@Platform", device.Platform);
             statement.Bind("@AppVersion", device.AppVersion);
             statement.Bind("@LastSeen", device.LastSeen);
-            BindNullableText(statement, "@PushKind", device.PushKind);
-            BindNullableText(statement, "@PushEndpoint", device.PushEndpoint);
+            BindNullable(statement, "@PushKind", device.PushKind);
+            BindNullable(statement, "@PushEndpoint", device.PushEndpoint);
             BindNullable(statement, "@CreatedAt", device.CreatedAt);
-            BindNullableText(statement, "@Model", device.Model);
-            BindNullableText(statement, "@CapsJson", device.CapsJson);
+            BindNullable(statement, "@Model", device.Model);
+            BindNullable(statement, "@CapsJson", device.CapsJson);
             statement.ExecuteNonQuery();
         }
     }
@@ -80,9 +80,32 @@ public sealed partial class JellyPlayDatabase
         }
     }
 
-    /// <summary>Whether the device row is revoked (unknown ids are never revoked).</summary>
+    /// <summary>
+    /// Whether the device row is revoked (unknown ids are never revoked). A
+    /// scalar probe: the hot push/validate path used to hydrate the full row
+    /// (caps blob included) to read one bool.
+    /// </summary>
     public bool IsDeviceRevoked(string deviceId)
-        => GetDeviceById(deviceId)?.Revoked ?? false;
+    {
+        using (_lock.Read())
+        using (var connection = CreateConnection())
+        {
+            return IsDeviceRevoked(connection, deviceId);
+        }
+    }
+
+    /// <summary>Connection-scoped revoked probe (the batch-apply composite reads it inside its own transaction).</summary>
+    private static bool IsDeviceRevoked(SqliteConnection connection, string deviceId)
+    {
+        using var statement = connection.Prepare($"select Revoked from {DevicesTable} where DeviceId = @DeviceId");
+        statement.Bind("@DeviceId", deviceId);
+        foreach (var revoked in statement.Select(row => row.GetInt64(0) != 0))
+        {
+            return revoked;
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Owner-scoped partial update: fields left null keep their stored value
@@ -96,8 +119,8 @@ public sealed partial class JellyPlayDatabase
         using (var statement = connection.Prepare(
                    $"update {DevicesTable} set Name = coalesce(@Name, Name), Model = coalesce(@Model, Model) where DeviceId = @DeviceId and UserId = @UserId"))
         {
-            BindNullableText(statement, "@Name", name);
-            BindNullableText(statement, "@Model", model);
+            BindNullable(statement, "@Name", name);
+            BindNullable(statement, "@Model", model);
             statement.Bind("@DeviceId", deviceId);
             statement.Bind("@UserId", userId);
             return statement.ExecuteNonQuery() > 0;
@@ -134,9 +157,11 @@ public sealed partial class JellyPlayDatabase
     }
 
     /// <summary>
-    /// Push-registered devices (PushKind + PushEndpoint both set). Null
-    /// <paramref name="userIds"/> = every user ("all" audience); an empty
-    /// collection matches nobody — callers treat null and [] differently.
+    /// Push-registered devices (PushKind + PushEndpoint both set, not revoked —
+    /// ADR-0005: a revoked device is excluded from EVERY push fan-out here, at
+    /// the source). Null <paramref name="userIds"/> = every user ("all"
+    /// audience); an empty collection matches nobody — callers treat null and
+    /// [] differently.
     /// </summary>
     public IReadOnlyList<DeviceRow> GetPushDevices(IReadOnlyCollection<string>? userIds)
     {
@@ -145,7 +170,7 @@ public sealed partial class JellyPlayDatabase
             return Array.Empty<DeviceRow>();
         }
 
-        var filters = new List<string> { "PushKind is not null", "PushEndpoint is not null", "PushEndpoint != ''" };
+        var filters = new List<string> { "PushKind is not null", "PushEndpoint is not null", "PushEndpoint != ''", "Revoked = 0" };
         if (userIds is not null)
         {
             var placeholders = new List<string>(userIds.Count);
@@ -197,27 +222,33 @@ public sealed partial class JellyPlayDatabase
     {
         using (_lock.Write())
         using (var connection = CreateConnection())
-        using (var statement = connection.Prepare(
-                   $@"insert into {MessagesTable}
-                      (Id, Title, Body, Color, LinkUrl, LinkLabel, AudienceJson, StartsAt, EndsAt, OrderIndex, CreatedAt)
-                      values (@Id, @Title, @Body, @Color, @LinkUrl, @LinkLabel, @AudienceJson, @StartsAt, @EndsAt, @OrderIndex, @CreatedAt)
-                      on conflict (Id) do update set
-                          Title = @Title, Body = @Body, Color = @Color, LinkUrl = @LinkUrl, LinkLabel = @LinkLabel,
-                          AudienceJson = @AudienceJson, StartsAt = @StartsAt, EndsAt = @EndsAt, OrderIndex = @OrderIndex"))
         {
-            statement.Bind("@Id", message.Id);
-            statement.Bind("@Title", message.Title);
-            statement.Bind("@Body", message.Body);
-            statement.Bind("@Color", message.Color);
-            statement.Bind("@LinkUrl", message.LinkUrl);
-            statement.Bind("@LinkLabel", message.LinkLabel);
-            statement.Bind("@AudienceJson", message.AudienceJson);
-            BindNullable(statement, "@StartsAt", message.StartsAt);
-            BindNullable(statement, "@EndsAt", message.EndsAt);
-            statement.Bind("@OrderIndex", message.OrderIndex);
-            statement.Bind("@CreatedAt", message.CreatedAt);
-            statement.ExecuteNonQuery();
+            UpsertMessageCore(connection, message);
         }
+    }
+
+    /// <summary>Connection-scoped message upsert core — the ONE 12-binding upsert both public paths share (the backup restore replays it inside its own transaction).</summary>
+    private void UpsertMessageCore(SqliteConnection connection, MessageRow row)
+    {
+        using var statement = connection.Prepare(
+            $@"insert into {MessagesTable}
+               (Id, Title, Body, Color, LinkUrl, LinkLabel, AudienceJson, StartsAt, EndsAt, OrderIndex, CreatedAt)
+               values (@Id, @Title, @Body, @Color, @LinkUrl, @LinkLabel, @AudienceJson, @StartsAt, @EndsAt, @OrderIndex, @CreatedAt)
+               on conflict (Id) do update set
+                   Title = @Title, Body = @Body, Color = @Color, LinkUrl = @LinkUrl, LinkLabel = @LinkLabel,
+                   AudienceJson = @AudienceJson, StartsAt = @StartsAt, EndsAt = @EndsAt, OrderIndex = @OrderIndex");
+        statement.Bind("@Id", row.Id);
+        statement.Bind("@Title", row.Title);
+        statement.Bind("@Body", row.Body);
+        statement.Bind("@Color", row.Color);
+        statement.Bind("@LinkUrl", row.LinkUrl);
+        statement.Bind("@LinkLabel", row.LinkLabel);
+        statement.Bind("@AudienceJson", row.AudienceJson);
+        BindNullable(statement, "@StartsAt", row.StartsAt);
+        BindNullable(statement, "@EndsAt", row.EndsAt);
+        statement.Bind("@OrderIndex", row.OrderIndex);
+        statement.Bind("@CreatedAt", row.CreatedAt);
+        statement.ExecuteNonQuery();
     }
 
     public bool DeleteMessage(string messageId)
@@ -442,6 +473,28 @@ public sealed partial class JellyPlayDatabase
                 statement.Bind("@Payload", row.Payload);
                 statement.Bind("@UpdatedAt", row.UpdatedAt);
                 statement.ExecuteNonQuery();
+            }
+
+            transaction.Commit();
+        }
+    }
+
+    /// <summary>
+    /// Transactional restore of the message registry from a backup: every row
+    /// upserted in ONE transaction (the per-message autocommit loop this
+    /// replaces could leave a half-restored registry behind a failure). The
+    /// same upsert semantics as <see cref="UpsertMessage"/> — a restore merges,
+    /// rows absent from the backup are kept, read state is untouched.
+    /// </summary>
+    public void RestoreMessages(IReadOnlyList<MessageRow> rows)
+    {
+        using (_lock.Write())
+        using (var connection = CreateConnection())
+        using (var transaction = connection.BeginTransaction())
+        {
+            foreach (var row in rows)
+            {
+                UpsertMessageCore(connection, row);
             }
 
             transaction.Commit();

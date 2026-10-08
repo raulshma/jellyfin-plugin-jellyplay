@@ -31,12 +31,27 @@ public sealed class SeerrWebhookProvisioner
         _logger = logger;
     }
 
-    public async Task<bool> ProvisionAsync(string pluginWebhookBaseUrl)
+    /// <summary>
+    /// Registers the webhook in Seerr. With <paramref name="persistBaseUrl"/>
+    /// (the admin reprovision route) the passed base URL is FIRST persisted
+    /// into plugin config — the documented ADR-0002 exception: this is
+    /// plugin-instance lifecycle (SaveConfiguration) and lives here in the
+    /// service, not in the controller — so startup auto-provision works from
+    /// then on, even when the Seerr call itself fails.
+    /// </summary>
+    public async Task<bool> ProvisionAsync(string pluginWebhookBaseUrl, bool persistBaseUrl = false)
     {
         var config = _config();
         if (string.IsNullOrEmpty(config.ServerUrl) || string.IsNullOrEmpty(config.ApiKey) || !config.AutoProvisionWebhook)
         {
             return false;
+        }
+
+        if (persistBaseUrl)
+        {
+            var instance = JellyPlayPlugin.Instance!;
+            instance.Configuration.Seerr.JellyfinBaseUrl = pluginWebhookBaseUrl;
+            instance.SaveConfiguration(instance.Configuration);
         }
 
         try

@@ -34,6 +34,7 @@ public sealed class SettingsServiceTests : IDisposable
 {
     private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-svc-tests-" + Guid.NewGuid().ToString("N"));
     private readonly JellyPlayDatabase _db;
+    private readonly SnapshotService _snapshots;
     private readonly SettingsService _service;
     private Configuration.SyncConfig _syncConfig = new();
 
@@ -41,7 +42,8 @@ public sealed class SettingsServiceTests : IDisposable
     {
         Directory.CreateDirectory(_tempDir);
         _db = new JellyPlayDatabase(_tempDir);
-        _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => _syncConfig, NullLogger<SettingsService>.Instance, new SnapshotService(_db, () => _syncConfig));
+        _snapshots = new SnapshotService(_db, () => _syncConfig);
+        _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => _syncConfig, NullLogger<SettingsService>.Instance, _snapshots);
     }
 
     public void Dispose()
@@ -416,7 +418,7 @@ public sealed class SettingsServiceTests : IDisposable
     public void RestoreSnapshot_ReturnsTheStoreToItsCapturedState()
     {
         _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1, "\"one\""), Dto("ui", "b", 1, "\"two\"") });
-        var snapshotId = _service.CreateSnapshot("u1")!.Value;
+        var snapshotId = _snapshots.Create("u1", "manual")!.Value;
 
         // Destructive drift after the capture: overwrite one key, delete another.
         _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 2, "\"CHANGED\"") });
@@ -440,13 +442,85 @@ public sealed class SettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void RestoreSnapshot_TombstonesOnlyKeysAbsentFromTheSnapshot()
+    {
+        // Drift by overwrite alone: every snapshot key is still present, so
+        // the restore diff must not tombstone ANY row (the del+put pairs the
+        // full-retombstone path produced were pure change-log noise).
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1, "\"one\"") });
+        var snapshotId = _snapshots.Create("u1", "manual")!.Value;
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 2, "\"CHANGED\"") });
+        var preRestoreHead = _db.GetChangeLogHead("u1");
+
+        var response = _service.RestoreSnapshot("u1", snapshotId);
+
+        Assert.NotNull(response);
+        Assert.Single(response!.Applied, entry => entry.Key == "a");
+        Assert.Equal("\"one\"", _service.GetAll("u1", "").Settings.Single().Value.GetRawText());
+
+        // No deletions were recorded by the restore, in any profile.
+        Assert.Empty(_db.GetDeletedSettings("u1", preRestoreHead, JellyPlayDatabase.BaseProfile));
+        Assert.Empty(_db.GetDeletedSettings("u1", preRestoreHead, "tv"));
+    }
+
+    [Fact]
+    public void RestoreSnapshot_OverlappingRowStampedIntoTheFuture_SnapshotValueStillWins()
+    {
+        // A live row may carry a client stamp up to the skew ceiling into the
+        // future; the re-apply must be stamped past IT, or the snapshot value
+        // silently loses LWW for that key (tombstone-everything never lost
+        // this race — the restore must not either).
+        var at = DateTimeOffset.Parse("2026-01-01T00:00:00Z");
+        var serverNow = at.ToUnixTimeMilliseconds();
+        var service = SettingsServiceFactory.Create(_db, new SseHub(NullLogger<SseHub>.Instance), clock: new FixedTimeProvider(at));
+
+        service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1, "\"keep\"") });
+        var snapshotId = _snapshots.Create("u1", "manual")!.Value;
+        // ~4 minutes ahead — inside the clamp, so the hijack applies.
+        service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", serverNow + 4 * 60 * 1000, "\"hijacked\"") });
+
+        var response = service.RestoreSnapshot("u1", snapshotId);
+
+        Assert.NotNull(response);
+        Assert.Single(response!.Applied, entry => entry.Key == "a"); // neither stale-write nor clock-skew
+        Assert.Empty(response!.Rejected);
+        Assert.Equal("\"keep\"", service.GetAll("u1", "").Settings.Single(entry => entry.Key == "a").Value.GetRawText());
+    }
+
+    [Fact]
+    public void RestoreSnapshot_OverlappingRowAtTheSkewCeiling_SnapshotValueStillWins()
+    {
+        // The adversarial edge of the future-stamp case: the overlapping live
+        // row sits EXACTLY at the skew ceiling (same server millisecond), so
+        // the restore's stamp is ceiling + 1 — beyond the client clamp. The
+        // restore is server-initiated and bounded by its own server stamp: it
+        // must still apply (no clock-skew, no stale-write) and the snapshot
+        // value must win, not silently restore nothing.
+        var at = DateTimeOffset.Parse("2026-01-01T00:00:00Z");
+        var serverNow = at.ToUnixTimeMilliseconds();
+        var service = SettingsServiceFactory.Create(_db, new SseHub(NullLogger<SseHub>.Instance), clock: new FixedTimeProvider(at));
+
+        service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1, "\"keep\"") });
+        var snapshotId = _snapshots.Create("u1", "manual")!.Value;
+        // Exactly AT the 5-minute clamp ceiling — the furthest stamp the clamp admits.
+        service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", serverNow + SettingsService.MaxClockSkewMilliseconds, "\"hijacked\"") });
+
+        var response = service.RestoreSnapshot("u1", snapshotId);
+
+        Assert.NotNull(response);
+        Assert.Single(response!.Applied, entry => entry.Key == "a");
+        Assert.Empty(response!.Rejected); // in particular: no "clock-skew" rejects
+        Assert.Equal("\"keep\"", service.GetAll("u1", "").Settings.Single(entry => entry.Key == "a").Value.GetRawText());
+    }
+
+    [Fact]
     public void RestoreSnapshot_ForeignOrUnknownId_IsNull()
     {
         _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1) });
-        _service.CreateSnapshot("u1");
+        _snapshots.Create("u1", "manual");
 
         Assert.Null(_service.RestoreSnapshot("u1", 999));
-        Assert.Empty(_service.ListSnapshots("u2")); // snapshots are owner-scoped
+        Assert.Empty(_snapshots.List("u2")); // snapshots are owner-scoped
     }
 
     [Fact]
@@ -455,7 +529,7 @@ public sealed class SettingsServiceTests : IDisposable
         // A snapshot spanning the base profile AND a device profile.
         _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1, "\"one\"") });
         _service.ApplyBatch("u1", "tv", "d1", new[] { Dto("ui", "layout", 1, "\"tv\"") });
-        var snapshotId = _service.CreateSnapshot("u1")!.Value;
+        var snapshotId = _snapshots.Create("u1", "manual")!.Value;
 
         // Drift after the capture: both keys overwritten, plus a tv-only key
         // the snapshot does not hold (it must stay gone after the restore).
@@ -486,7 +560,9 @@ public sealed class SettingsServiceTests : IDisposable
         Assert.Contains(rows, row => row.Profile == "tv" && row.Key == "layout");
 
         // The still-absent tv-only key is tombstoned under tv, not base.
-        var deleted = _db.GetDeletedSettings("u1", preRestoreHead);
+        var deleted = _db.GetDeletedSettings("u1", preRestoreHead, "tv")
+            .Concat(_db.GetDeletedSettings("u1", preRestoreHead, JellyPlayDatabase.BaseProfile))
+            .ToList();
         Assert.Equal("tv", deleted.Single(key => key.Key == "extra").Profile);
     }
 
@@ -496,7 +572,7 @@ public sealed class SettingsServiceTests : IDisposable
         _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "theme", 1, "\"base\"") });
 
         _service.SetDeviceProfile("u1", "tv", "d1", new[] { Dto("ui", "theme", 2, "\"tv\"") });
-        Assert.Single(_service.ListSnapshots("u1"), row => row.Origin == "profile-copy");
+        Assert.Single(_snapshots.List("u1"), row => row.Origin == "profile-copy");
 
         var snapshots = new SnapshotService(_db, () => new Configuration.SyncConfig());
         var admin = new Services.Admin.AdminDefaultsService(
@@ -509,10 +585,10 @@ public sealed class SettingsServiceTests : IDisposable
             JsonDocument.Parse("{\"player/skip\":{\"mode\":\"forced\",\"value\":15}}").RootElement);
         admin.PushDefaults("u1");
 
-        Assert.Single(_service.ListSnapshots("u1"), row => row.Origin == "admin-push");
+        Assert.Single(_snapshots.List("u1"), row => row.Origin == "admin-push");
         // Manual captures work too.
-        Assert.NotNull(_service.CreateSnapshot("u1"));
-        Assert.Single(_service.ListSnapshots("u1"), row => row.Origin == "manual");
+        Assert.NotNull(_snapshots.Create("u1", "manual"));
+        Assert.Single(_snapshots.List("u1"), row => row.Origin == "manual");
     }
 
     // ------------------------------------------------------------------

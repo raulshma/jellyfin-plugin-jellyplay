@@ -2,11 +2,12 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Text.Json;
-using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyPlay.Api;
 using Jellyfin.Plugin.JellyPlay.Configuration;
+using Jellyfin.Plugin.JellyPlay.Helpers;
 using Jellyfin.Plugin.JellyPlay.Realtime;
 using Jellyfin.Plugin.JellyPlay.Services.Push;
+using Jellyfin.Plugin.JellyPlay.Services.Shared;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyPlay.Services.Events;
@@ -27,6 +28,7 @@ public sealed class EventService
     private readonly ILogger<EventService> _logger;
     private readonly TimeProvider _clock;
     private readonly ConcurrentDictionary<string, long> _recentEventKeys = new();
+    private long _lastSweepMs;
 
     public EventService(
         SseHub hub,
@@ -44,7 +46,7 @@ public sealed class EventService
         _clock = clock ?? TimeProvider.System;
     }
 
-    public int PublishNewMedia(EpisodeGroup group)
+    public int PublishNewMedia(EpisodeGroup group, IReadOnlyList<string>? adminUserIds = null)
     {
         var config = _config();
         if (!config.NewMediaEnabled)
@@ -54,7 +56,9 @@ public sealed class EventService
 
         if (config.NewMediaEnabledLibraries.Count > 0
             && group.LibraryId is not null
-            && !config.NewMediaEnabledLibraries.Contains(Guid.Parse(group.LibraryId)))
+            && !config.NewMediaEnabledLibraries.Contains(Guid.TryParse(group.LibraryId, out var groupLibraryId)
+                ? groupLibraryId
+                : Guid.Empty))
         {
             return 0;
         }
@@ -80,7 +84,7 @@ public sealed class EventService
             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
 
         return DeliverNewMedia(config, payload, new PushMessage(
-            PushKinds.NewMedia, title, "New media added", first.ItemId.ToString()));
+            PushKinds.NewMedia, title, "New media added", first.ItemId.ToString()), adminUserIds);
     }
 
     public int PublishNewMovie(Guid itemId, string title, string? libraryId)
@@ -93,7 +97,9 @@ public sealed class EventService
 
         if (config.NewMediaEnabledLibraries.Count > 0
             && libraryId is not null
-            && !config.NewMediaEnabledLibraries.Contains(Guid.Parse(libraryId)))
+            && !config.NewMediaEnabledLibraries.Contains(Guid.TryParse(libraryId, out var libraryGuid)
+                ? libraryGuid
+                : Guid.Empty))
         {
             return 0;
         }
@@ -106,7 +112,7 @@ public sealed class EventService
         var payload = JsonSerializer.Serialize(new NewMediaEventPayload(
             "new-media", itemId.ToString(), null, null, title, 1, libraryId,
             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
-        return DeliverNewMedia(_config(), payload, new PushMessage(PushKinds.NewMedia, title, "New media added"));
+        return DeliverNewMedia(config, payload, new PushMessage(PushKinds.NewMedia, title, "New media added"), adminUserIds: null);
     }
 
     public int PublishBroadcast(string title, string body, string? url)
@@ -155,10 +161,13 @@ public sealed class EventService
     /// subscribers via PublishToUsers; anything else ("all") broadcasts. Push
     /// fans out to the SAME resolved target set (admins' devices, or every
     /// user's devices when null) — one audience resolution drives both.
+    /// <paramref name="adminUserIds"/> lets a flush batch resolve the audience
+    /// ONCE and share it across every item in the batch; null falls back to a
+    /// per-event resolution (memoized briefly in <see cref="Admin.AdminUsers.AdminUserIds"/>).
     /// </summary>
-    private int DeliverNewMedia(EventsConfig config, string payload, PushMessage push)
+    private int DeliverNewMedia(EventsConfig config, string payload, PushMessage push, IReadOnlyList<string>? adminUserIds)
     {
-        var targets = ResolveAudienceTargets(config.NewMediaAudience, _adminUserIds());
+        var targets = ResolveAudienceTargets(config.NewMediaAudience, adminUserIds ?? _adminUserIds());
         _push?.DispatchToUsers(push, targets);
         return targets is null
             ? _hub.PublishAll("events", "new-media", payload)
@@ -168,12 +177,11 @@ public sealed class EventService
     /// <summary>
     /// Resolves the new-media audience targets: null = broadcast to every
     /// subscriber ("all"); otherwise the admin user ids ("admins").
-    /// Pure so the audience resolution is unit-testable without the host.
+    /// Delegates to the shared <see cref="Audience"/> module — kept as a
+    /// member so the pure decision stays pinned by tests here.
     /// </summary>
     internal static IReadOnlySet<string>? ResolveAudienceTargets(string? audience, IReadOnlyList<string> adminUserIds)
-        => string.Equals(audience, "admins", StringComparison.OrdinalIgnoreCase)
-            ? new HashSet<string>(adminUserIds, StringComparer.Ordinal)
-            : null;
+        => Audience.ResolveEventTargets(audience, adminUserIds);
 
     private bool ShouldEmit(string key, int thresholdSeconds)
     {
@@ -199,7 +207,11 @@ public sealed class EventService
             }
         }
 
-        if (_recentEventKeys.Count > 1024)
+        // Occasional sweep of stale dedup keys (the rate limiter's pattern):
+        // the SweepGate lets one caller past per window (floored at a minute so
+        // a zero/tiny dedup threshold cannot turn the sweep into a per-event
+        // full-map scan), so a steady event rate pays the O(n) cleanup rarely.
+        if (SweepGate.Enter(ref _lastSweepMs, now, Math.Max(thresholdMs, 60_000)))
         {
             foreach (var (k, timestamp) in _recentEventKeys)
             {

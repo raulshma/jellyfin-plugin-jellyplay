@@ -23,8 +23,16 @@ namespace Jellyfin.Plugin.JellyPlay.Realtime;
 /// </summary>
 public sealed class SseHub
 {
-    /// <summary>The stream the replay ring serves ("settings" resumes via its change-log cursor instead).</summary>
+    /// <summary>The stream the replay ring serves (the settings stream resumes via its change-log cursor instead).</summary>
     public const string EventsStream = "events";
+
+    /// <summary>
+    /// The per-user settings-sync stream: carries the anchored
+    /// <c>settings.changed</c> / <c>settings.reset</c> events — the SSE id IS
+    /// the user's change-log head at publish time, so a reconnecting client
+    /// resumes the delta pull from that cursor.
+    /// </summary>
+    public const string SettingsStream = "settings";
 
     /// <summary>
     /// The admin live-monitor stream (RequiresElevation subscribers only — the
@@ -90,12 +98,6 @@ public sealed class SseHub
             subscriber.Channel.Writer.TryComplete();
         }
     }
-
-    /// <summary>Whether ANY subscriber is currently connected to the stream for the user (the sync-nudge gate).</summary>
-    public bool HasSubscriber(string userId, string stream)
-        => _subscribers.Values.Any(subscriber
-            => string.Equals(subscriber.UserId, userId, StringComparison.Ordinal)
-            && string.Equals(subscriber.Stream, stream, StringComparison.Ordinal));
 
     /// <summary>Publish to every subscriber of the stream regardless of user.</summary>
     public int PublishAll(string stream, string eventName, string jsonData)

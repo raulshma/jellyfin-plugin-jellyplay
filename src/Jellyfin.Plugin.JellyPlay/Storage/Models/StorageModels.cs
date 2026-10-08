@@ -32,6 +32,20 @@ public sealed record RejectedSetting(string Ns, string Key, string Reason);
 
 public sealed record UpsertResult(IReadOnlyList<AppliedSetting> Applied, IReadOnlyList<RejectedSetting> Rejected);
 
+/// <summary>
+/// The ONE last-write-wins predicate, shared by the batch write pipeline and
+/// the admin dry-run simulator so the two can never disagree: a write applies
+/// only when strictly newer than the incumbent; an equal timestamp rejects
+/// (deterministic, no oscillation). The same rule judges an absent row against
+/// the key's latest change-log entry (put or tombstone) — the anti-resurrection
+/// watermark.
+/// </summary>
+internal static class SettingsLww
+{
+    /// <summary>Whether a write stamped <paramref name="writeUpdatedAt"/> beats the incumbent stamped <paramref name="incumbentUpdatedAt"/>.</summary>
+    public static bool WouldApply(long writeUpdatedAt, long incumbentUpdatedAt) => writeUpdatedAt > incumbentUpdatedAt;
+}
+
 /// <summary>A key tombstoned (deleted) at or after a delta cursor; the payload carried no value.</summary>
 public sealed record DeletedSettingKey(string Profile, string Ns, string Key);
 
@@ -161,10 +175,29 @@ public sealed record SyncHistoryRow(
     long Bytes,
     string? RejectsJson,
     long? FromSeq = null,
-    long? ToSeq = null);
+    long? ToSeq = null)
+{
+    /// <summary>Whether the operation brackets a non-empty change-log range (schema v6+; false on legacy rows and no-op operations).</summary>
+    public bool HasRange => FromSeq is not null && ToSeq is not null && FromSeq != ToSeq;
+}
 
 /// <summary>Latest sync operation per device, folded from sync_history.</summary>
 public sealed record DeviceSyncSummary(string DeviceId, long LastSyncAt, string LastOp);
+
+/// <summary>
+/// The sync-status bundle: everything a status poll needs (change-log head,
+/// footprint, namespace rollups, per-device fold) resolved in ONE connection
+/// by <see cref="JellyPlayDatabase.GetSyncStatusBundle"/>.
+/// </summary>
+public sealed record SyncStatusBundle(
+    long Head,
+    int KeyCount,
+    long TotalBytes,
+    IReadOnlyList<NamespaceFootprint> Namespaces,
+    IReadOnlyList<DeviceSyncSummary> PerDevice);
+
+/// <summary>One recorded operation together with its resolved per-key diff (the audit export's fold).</summary>
+public sealed record SyncHistoryWithKeys(SyncHistoryRow Row, IReadOnlyList<ChangeLogEntry> Keys);
 
 /// <summary>Per-user rollup of sync_history: most recent operation and distinct device count.</summary>
 public sealed record UserSyncSummary(string UserId, long LastSyncAt, int DeviceCount);

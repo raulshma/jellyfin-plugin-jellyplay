@@ -41,18 +41,18 @@ public sealed class SyncInsightsService
     public SyncStatusResponse GetStatus(string userId)
     {
         var config = _config();
-        var (keys, bytes) = _db.GetUserFootprint(userId);
+        var bundle = _db.GetSyncStatusBundle(userId);
         return new SyncStatusResponse(
-            Head: _db.GetChangeLogHead(userId),
-            Keys: keys,
-            Bytes: bytes,
+            Head: bundle.Head,
+            Keys: bundle.KeyCount,
+            Bytes: bundle.TotalBytes,
             QuotaBytes: config.MaxUserBytes,
             QuotaKeys: config.MaxKeysPerUser,
             HistoryRetentionDays: config.HistoryRetentionDays,
-            Namespaces: _db.GetNamespaceFootprints(userId)
+            Namespaces: bundle.Namespaces
                 .Select(row => new SyncNamespaceInfo(row.Ns, row.Keys, row.Bytes))
                 .ToList(),
-            PerDevice: _db.GetLatestSyncPerDevice(userId)
+            PerDevice: bundle.PerDevice
                 .Select(row => new SyncDeviceSummary(row.DeviceId, row.LastSyncAt, row.LastOp))
                 .ToList());
     }
@@ -112,12 +112,12 @@ public sealed class SyncInsightsService
             return null;
         }
 
-        if (row.FromSeq is null || row.ToSeq is null || row.FromSeq == row.ToSeq)
+        if (!row.HasRange)
         {
             return new SyncHistoryKeysResponse(row.Id, row.Op, Array.Empty<SyncHistoryKeyDto>());
         }
 
-        var keys = _db.GetChangeLogRange(userId, row.FromSeq.Value, row.ToSeq.Value, clamped)
+        var keys = _db.GetChangeLogRange(userId, row.FromSeq!.Value, row.ToSeq!.Value, clamped)
             .Select(entry => new SyncHistoryKeyDto(entry.Ns, entry.Key, entry.UpdatedAt))
             .ToList();
         return new SyncHistoryKeysResponse(row.Id, row.Op, keys);
@@ -141,39 +141,18 @@ public sealed class SyncInsightsService
     public AuditExportResponse ExportAudit(string userId, int limit)
     {
         var clamped = RequestLimits.Clamp(limit, DefaultAuditLimit, MaxAuditLimit);
-        var history = _db.GetSyncHistory(userId, 0, clamped)
-            .Select(row =>
-            {
-                List<SyncRejectDto>? rejects = null;
-                if (!string.IsNullOrEmpty(row.RejectsJson))
-                {
-                    try
-                    {
-                        rejects = JsonSerializer.Deserialize<List<SyncRejectDto>>(row.RejectsJson, RejectJsonOptions);
-                    }
-                    catch (JsonException)
-                    {
-                        // Same degradation as the history endpoint: counts stay authoritative.
-                    }
-                }
-
-                IReadOnlyList<SyncHistoryKeyDto> keys = row.FromSeq is null || row.ToSeq is null || row.FromSeq == row.ToSeq
-                    ? Array.Empty<SyncHistoryKeyDto>()
-                    : _db.GetChangeLogRange(userId, row.FromSeq.Value, row.ToSeq.Value, MaxKeysLimit)
-                        .Select(entry => new SyncHistoryKeyDto(entry.Ns, entry.Key, entry.UpdatedAt))
-                        .ToList();
-                return new AuditEntryDto(
-                    row.Id,
-                    row.Ts,
-                    row.DeviceId,
-                    row.Op,
-                    row.KeysApplied,
-                    row.KeysRejected,
-                    rejects,
-                    row.FromSeq,
-                    row.ToSeq,
-                    keys);
-            })
+        var history = _db.GetSyncHistoryWithKeys(userId, 0, clamped, MaxKeysLimit)
+            .Select(row => new AuditEntryDto(
+                row.Row.Id,
+                row.Row.Ts,
+                row.Row.DeviceId,
+                row.Row.Op,
+                row.Row.KeysApplied,
+                row.Row.KeysRejected,
+                SyncRejectsCodec.Decode(row.Row.RejectsJson),
+                row.Row.FromSeq,
+                row.Row.ToSeq,
+                row.Keys.Select(entry => new SyncHistoryKeyDto(entry.Ns, entry.Key, entry.UpdatedAt)).ToList()))
             .ToList();
 
         return new AuditExportResponse(userId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), history);
@@ -204,28 +183,60 @@ public sealed class SyncInsightsService
     }
 
     private static SyncHistoryEntryDto ToEntryDto(SyncHistoryRow row)
-    {
-        List<SyncRejectDto>? rejects = null;
-        if (!string.IsNullOrEmpty(row.RejectsJson))
-        {
-            try
-            {
-                rejects = JsonSerializer.Deserialize<List<SyncRejectDto>>(row.RejectsJson, RejectJsonOptions);
-            }
-            catch (JsonException)
-            {
-                // A malformed cap array degrades to "no rejects listed" — the
-                // counts remain authoritative.
-            }
-        }
+        => new(row.Id, row.Ts, row.DeviceId, row.Op, row.KeysApplied, row.KeysRejected, SyncRejectsCodec.Decode(row.RejectsJson), row.FromSeq, row.ToSeq);
+}
 
-        return new SyncHistoryEntryDto(row.Id, row.Ts, row.DeviceId, row.Op, row.KeysApplied, row.KeysRejected, rejects, row.FromSeq, row.ToSeq);
-    }
+/// <summary>
+/// The ONE rejects codec for recorded sync operations: it encodes the capped
+/// <c>[{ns,key,reason}]</c> array (camelCase, degrade-to-null on malformed
+/// input) and decodes it back, sharing a single serializer options instance.
+/// Both the record side (SettingsService batch recording) and every read side
+/// (the history endpoint, the audit export) go through here, so the wire
+/// shape can never drift between writer and readers.
+/// </summary>
+public static class SyncRejectsCodec
+{
+    /// <summary>RejectsJson is capped at this many entries per recorded operation; counts stay authoritative beyond the cap.</summary>
+    internal const int MaxRecordedRejects = 10;
 
-    private static readonly JsonSerializerOptions RejectJsonOptions = new()
+    private static readonly JsonSerializerOptions Options = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
+
+    /// <summary>Capped rejects JSON for a recorded operation; null when nothing was rejected.</summary>
+    public static string? Encode(IReadOnlyList<RejectedSetting> rejected)
+    {
+        if (rejected.Count == 0)
+        {
+            return null;
+        }
+
+        return JsonSerializer.Serialize(
+            rejected.Take(MaxRecordedRejects).Select(r => new SyncRejectDto(r.Ns, r.Key, r.Reason)),
+            Options);
+    }
+
+    /// <summary>
+    /// Decodes a stored rejects payload; null when absent or malformed (the
+    /// counts remain authoritative — the same degradation on every read side).
+    /// </summary>
+    public static List<SyncRejectDto>? Decode(string? rejectsJson)
+    {
+        if (string.IsNullOrEmpty(rejectsJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<SyncRejectDto>>(rejectsJson, Options);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 }
 
 /// <summary>

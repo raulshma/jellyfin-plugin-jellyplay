@@ -119,14 +119,14 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         // module, so the resolution rule and the "who is an admin" query each
         // have a single home.
         serviceCollection.AddSingleton<Services.Admin.AdminUsers>();
+        // The admin-id set crosses to EventService as the same Func seam the
+        // config sections use (ADR-0002): EventService itself is constructed
+        // by DI — no factory here reads the plugin singleton inline.
+        serviceCollection.AddSingleton(sp => new Func<IReadOnlyList<string>>(() => sp.GetRequiredService<Services.Admin.AdminUsers>().AdminUserIds));
 
-        // Events & messages
-        serviceCollection.AddSingleton(sp => new EventService(
-            sp.GetRequiredService<SseHub>(),
-            () => JellyPlayPlugin.Instance!.Configuration.Events,
-            () => sp.GetRequiredService<Services.Admin.AdminUsers>().AdminUserIds,
-            sp.GetRequiredService<ILogger<EventService>>(),
-            sp.GetRequiredService<Services.Push.PushDispatcher>()));
+        // Events & messages — constructor-injected (hub, config Func, admin-ids
+        // Func, logger, dispatcher) straight from this container.
+        serviceCollection.AddSingleton<EventService>();
         serviceCollection.AddSingleton<EpisodeGroupBuffer>();
         serviceCollection.AddSingleton<MessageService>();
         serviceCollection.AddHostedService<ItemAddedWatcher>();
@@ -182,10 +182,11 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<AdminDefaultsService>();
         serviceCollection.AddSingleton<ConfigBackupService>();
         // Mutating-route abuse containment (settings POST 30/min per user, broadcast 10/min per admin,
-        // anonymous seerr webhook intake 30/min per remote client)
+        // anonymous seerr webhook intake 30/min per remote client, admin pushDefaults 5/min per admin)
         serviceCollection.AddSingleton<Services.Admin.SettingsRateLimiter>();
         serviceCollection.AddSingleton<Services.Admin.BroadcastRateLimiter>();
         serviceCollection.AddSingleton<Services.Admin.WebhookRateLimiter>();
+        serviceCollection.AddSingleton<Api.PushDefaultsRateLimiter>();
 
         // Jellyfin-12 similar-items pipeline registration (reflection-guarded; no-op on 10.11).
         // One singleton shared by both faces: the controller injects the concrete
