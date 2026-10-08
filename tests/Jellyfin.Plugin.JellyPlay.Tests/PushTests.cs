@@ -47,11 +47,15 @@ internal sealed class PushRecording
     public PushSender Sender(Func<int, Task<HttpResponseMessage>>? perCall = null)
         => async (request, cancellationToken) =>
         {
-            var index = Interlocked.Increment(ref Count) - 1;
+            // Record first, increment last: WaitAsync releases on Count, so the
+            // endpoint/body must already be enqueued when it fires — otherwise a
+            // waiter can observe Count and read an empty queue. The increment
+            // still precedes perCall so throwing attempts are counted too.
             Endpoints.Enqueue(request.RequestUri?.ToString() ?? string.Empty);
             Bodies.Enqueue(request.Content is null
                 ? string.Empty
                 : await request.Content.ReadAsStringAsync(cancellationToken));
+            var index = Interlocked.Increment(ref Count) - 1;
             return perCall is null
                 ? new HttpResponseMessage(HttpStatusCode.OK)
                 : await perCall(index);
