@@ -62,7 +62,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add manifest.json
           git commit -m "manifest: v$VERSION"
-          git push
+          # Tag checkout is a detached HEAD; push the manifest commit to main explicitly.
+          git push origin "HEAD:main"
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/Jellyfin.Plugin.JellyPlay.zip
