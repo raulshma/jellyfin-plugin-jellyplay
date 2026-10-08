@@ -432,10 +432,11 @@ public class CustomRowsServiceTests : FetcherTestBase
     [Fact]
     public async Task ResolveAsync_Letterboxd_ParsesThroughFetcher_AndCaches()
     {
+        // Current letterboxd markup: lazy-poster React stubs with data attributes.
         const string html = """
-            <ul class="film-list">
+            <ul class="poster-list -p125 -grid">
               <li class="posteritem">
-                <img alt="Seven Samurai (1954)" src="/x.jpg"><a href="/film/seven-samurai/"></a>
+                <div class="react-component" data-component-class="LazyPoster" data-item-name="Seven Samurai (1954)" data-item-slug="seven-samurai" data-item-link="/film/seven-samurai/"></div>
               </li>
             </ul>
             """;

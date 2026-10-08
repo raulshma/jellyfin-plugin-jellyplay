@@ -155,7 +155,7 @@
     <value>Client defaults</value>
   </data>
   <data name="DefaultsDescription" xml:space="preserve">
-    <value>Tri-state defaults for the clients' synced settings. Pick a key from the client's own preference catalog (or Custom… for keys newer than this plugin's catalog) — the value editor follows the key's type. Suggested fills only what the user has not set; forced overrides the user. Save writes the map, Push applies it to user accounts (forced always, suggested only where the key is unset).</value>
+    <value>Tri-state defaults for the clients' synced settings. Type in the Key field to search the client's own preference catalog — each hit shows what the setting does, and the value editor follows the key's type (anything not in the catalog is kept as a custom key, for clients newer than this plugin's catalog). Suggested fills only what the user has not set; forced overrides the user. Save writes the map, Push applies it to user accounts (forced always, suggested only where the key is unset).</value>
   </data>
   <data name="DefaultsEmpty" xml:space="preserve">
     <value>No defaults configured yet.</value>
@@ -246,6 +246,42 @@
   </data>
   <data name="DefaultsInvalidJson" xml:space="preserve">
     <value>"{0}" is not valid JSON — saved as a plain string.</value>
+  </data>
+  <data name="DefaultsSearchPlaceholder" xml:space="preserve">
+    <value>Type to search the client's settings…</value>
+  </data>
+  <data name="DefaultsClientDefault" xml:space="preserve">
+    <value>Client default: {0}</value>
+  </data>
+  <data name="DefaultsRange" xml:space="preserve">
+    <value>Range: {0}–{1}</value>
+  </data>
+  <data name="DefaultsMin" xml:space="preserve">
+    <value>Min: {0}</value>
+  </data>
+  <data name="DefaultsMax" xml:space="preserve">
+    <value>Max: {0}</value>
+  </data>
+  <data name="DefaultsInvalidRangeBetween" xml:space="preserve">
+    <value>Must be between {0} and {1}.</value>
+  </data>
+  <data name="DefaultsInvalidRangeMin" xml:space="preserve">
+    <value>Must be at least {0}.</value>
+  </data>
+  <data name="DefaultsInvalidRangeMax" xml:space="preserve">
+    <value>Must be at most {0}.</value>
+  </data>
+  <data name="DefaultsJsonOk" xml:space="preserve">
+    <value>Valid JSON — stored as JSON.</value>
+  </data>
+  <data name="DefaultsJsonText" xml:space="preserve">
+    <value>Not JSON — will be stored as a plain string.</value>
+  </data>
+  <data name="DefaultsMoreResults" xml:space="preserve">
+    <value>{0} more…</value>
+  </data>
+  <data name="DefaultsNoMatches" xml:space="preserve">
+    <value>No matching catalog key — press Enter to keep it as a custom key.</value>
   </data>
 
   <data name="SectionBackup" xml:space="preserve">

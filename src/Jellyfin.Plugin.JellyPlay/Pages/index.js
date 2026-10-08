@@ -39,25 +39,29 @@
     }
 
     // Pulls a readable message out of an error body — the defaults endpoint
-    // answers 400 with { error, message, problems: [...] }.
+    // answers 400 with { error, message, problems: [...] }. The problems
+    // ride on the thrown Error (`error.problems`) so callers can anchor them
+    // back to the offending editor rows.
     function extractErrorDetail(text, status) {
         try {
             var parsed = JSON.parse(text);
             if (parsed && Array.isArray(parsed.problems) && parsed.problems.length > 0) {
-                return parsed.problems.join(' ');
+                var error = new Error(parsed.problems.join(' '));
+                error.problems = parsed.problems;
+                return error;
             }
             if (parsed && typeof parsed.message === 'string' && parsed.message) {
-                return parsed.message;
+                return new Error(parsed.message);
             }
         } catch (ignored) { }
-        return String(status);
+        return new Error(String(status));
     }
 
     function apiGet(path) {
         return fetch(window.ApiClient.getUrl(path), { headers: authHeaders() }).then(function (response) {
             if (!response.ok) {
                 return response.text().then(function (text) {
-                    throw new Error(extractErrorDetail(text, response.status));
+                    throw extractErrorDetail(text, response.status);
                 });
             }
             return response.json();
@@ -72,7 +76,7 @@
         }).then(function (response) {
             if (!response.ok) {
                 return response.text().then(function (text) {
-                    throw new Error(extractErrorDetail(text, response.status));
+                    throw extractErrorDetail(text, response.status);
                 });
             }
             return response.status === 204 ? null : response.json();
@@ -187,7 +191,11 @@
     // fills it. Rows wrap on narrow viewports instead of overflowing.
 
     function ensureRowStyles() {
-        if (document.getElementById('jellyplayRowStyles')) { return; }
+        // Re-inject rather than skip: the SPA keeps this document (and the
+        // old style element) alive across page visits, so a plugin upgrade
+        // serving newer CSS must replace the stale block, not bow out.
+        var existing = document.getElementById('jellyplayRowStyles');
+        if (existing) { existing.remove(); }
         var style = document.createElement('style');
         style.id = 'jellyplayRowStyles';
         style.textContent = [
@@ -200,30 +208,33 @@
             '.jellyplay-field .emby-input, .jellyplay-field .emby-select { width:100%; min-width:0; flex:1 1 auto; }',
             '.jellyplay-field.invalid .emby-input, .jellyplay-field.invalid .emby-select, .jellyplay-field.invalid input { outline:1px solid #ff6c6c; }',
             '.jellyplay-field-error { font-size:.8em; color:#ff6c6c; padding-left:2px; }',
+            '.jellyplay-field-help { flex-basis:100%; font-size:.82em; color:rgba(255,255,255,.65); padding-left:2px; }',
+            '.jellyplay-field-help.ok { color:#7ddb87; }',
+            '.jellyplay-switch { display:inline-flex; align-items:center; cursor:pointer; margin:6px 0; }',
+            '.jellyplay-switch-input { position:absolute; opacity:0; width:0; height:0; margin:0; }',
+            '.jellyplay-switch-track { width:34px; height:14px; border-radius:7px; background:rgba(255,255,255,.3); position:relative; transition:background .15s; flex:0 0 auto; }',
+            '.jellyplay-switch-knob { position:absolute; top:-3px; left:0; width:20px; height:20px; border-radius:50%; background:#f2f2f2; box-shadow:0 1px 3px rgba(0,0,0,.4); transition:transform .15s, background .15s; }',
+            '.jellyplay-switch-input:checked + .jellyplay-switch-track { background:rgba(0,164,220,.5); }',
+            '.jellyplay-switch-input:checked + .jellyplay-switch-track .jellyplay-switch-knob { transform:translateX(14px); background:#00a4dc; }',
+            '.jellyplay-switch-input:focus-visible + .jellyplay-switch-track { outline:1px solid #00a4dc; outline-offset:2px; }',
             '.jellyplay-field-boolean { flex-direction:row; align-items:center; gap:8px; }',
             '.jellyplay-field-boolean .jellyplay-field-label { padding:0; }',
             '.jellyplay-row .jellyplay-remove { flex:0 0 auto; margin:0 0 2px; }',
             '.jellyplay-row .jellyplay-test { flex:0 0 auto; margin:0 0 2px; }',
             '.jellyplay-test-status { flex-basis:100%; font-size:.85em; color:rgba(255,255,255,.75); }',
             '.jellyplay-test-status.fail { color:#ff6c6c; }',
+            '.jellyplay-combobox { position:relative; }',
+            '.jellyplay-combobox-menu { position:absolute; top:100%; left:0; right:0; z-index:100; max-height:280px; overflow-y:auto; background:#1c1c1e; border:1px solid rgba(255,255,255,.18); border-radius:.35em; box-shadow:0 8px 24px rgba(0,0,0,.55); margin-top:2px; }',
+            '.jellyplay-cbo-group { font-size:.72em; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:rgba(255,255,255,.5); padding:8px 10px 2px; }',
+            '.jellyplay-cbo-option { padding:6px 10px; cursor:pointer; }',
+            '.jellyplay-cbo-option.active, .jellyplay-cbo-option:hover { background:rgba(255,255,255,.12); }',
+            '.jellyplay-cbo-option .cbo-label { display:block; font-size:.92em; }',
+            '.jellyplay-cbo-option .cbo-key { display:block; font-size:.78em; color:rgba(255,255,255,.55); font-family:monospace; }',
+            '.jellyplay-cbo-option .cbo-desc { display:block; font-size:.78em; color:rgba(255,255,255,.6); }',
+            '.jellyplay-cbo-foot { padding:6px 10px; font-size:.8em; color:rgba(255,255,255,.5); border-top:1px solid rgba(255,255,255,.1); }',
             '@media (max-width:40em) { .jellyplay-field, .jellyplay-field.narrow { flex-basis:100%; } .jellyplay-field.fixed { flex:1 1 40%; } }'
         ].join('\n');
         document.head.appendChild(style);
-
-        rebuildKnownKeysDatalist();
-    }
-
-    function rebuildKnownKeysDatalist() {
-        var existing = document.getElementById('jellyplayKnownKeys');
-        if (existing) { existing.remove(); }
-        var datalist = document.createElement('datalist');
-        datalist.id = 'jellyplayKnownKeys';
-        KNOWN_KEYS.forEach(function (entry) {
-            var option = document.createElement('option');
-            option.value = entry.key;
-            datalist.appendChild(option);
-        });
-        document.body.appendChild(datalist);
     }
 
     function fieldLabel(text) {
@@ -292,9 +303,22 @@
     function buildValueControl(kind, info, initial) {
         var control;
         if (kind === 'boolean') {
+            // A styled toggle instead of a bare checkbox. The hidden input
+            // stays the [data-kind] control, so the read/validate/wire paths
+            // are unchanged; the wrapper is what gets appended.
+            var shell = document.createElement('label');
+            shell.className = 'jellyplay-switch';
             control = document.createElement('input');
             control.type = 'checkbox';
+            control.className = 'jellyplay-switch-input';
             control.checked = initial === true;
+            var track = document.createElement('span');
+            track.className = 'jellyplay-switch-track';
+            track.appendChild(document.createElement('span')).className = 'jellyplay-switch-knob';
+            shell.appendChild(control);
+            shell.appendChild(track);
+            control.setAttribute('data-kind', kind);
+            return shell;
         } else if (kind === 'number') {
             control = document.createElement('input');
             control.type = 'number';
@@ -305,10 +329,14 @@
         } else if (kind === 'enum') {
             control = document.createElement('select');
             control.className = 'emby-select';
-            (info ? info.options : []).forEach(function (optionValue) {
+            var enumOptions = (info && info.options) || [];
+            var enumLabels = (info && info.optionLabels) || [];
+            enumOptions.forEach(function (optionValue, index) {
                 var option = document.createElement('option');
                 option.value = optionValue;
-                option.textContent = optionValue;
+                // The wire value is the raw enum constant; the display label
+                // is the humanized mirror the catalog carries alongside it.
+                option.textContent = enumLabels[index] || optionValue;
                 control.appendChild(option);
             });
             if (initial !== undefined && initial !== null && (info.options || []).indexOf(String(initial)) !== -1) {
@@ -335,26 +363,84 @@
         return parsed.empty ? null : parsed.value;
     }
 
-    // The defaults key picker: a catalog-driven select (grouped by namespace)
-    // with a "Custom…" escape hatch for keys newer than the plugin's catalog.
-    function rowKeySelect(row) { return row.querySelector('[data-role="defaults-key"]'); }
-    function rowCustomKeyInput(row) { return row.querySelector('[data-role="defaults-custom-key"]'); }
+    // The defaults key picker: a single search input over the catalog with a
+    // suggestion dropdown. Free-typed text matching no catalog entry simply
+    // IS the custom key — the old "Custom…" escape hatch, implicit.
+    function rowKeyInput(row) { return row.querySelector('[data-role="defaults-key-input"]'); }
+    function rowKeyMenu(row) { return row.querySelector('[data-role="defaults-key-menu"]'); }
 
-    // The row's effective key: the catalog pick, or the custom-key text when
-    // "Custom…" is selected (always the latter when the catalog is empty).
+    // The row's effective key: whatever the picker holds — a catalog pick or
+    // a hand-typed custom key.
     function rowKeyValue(row) {
-        var select = rowKeySelect(row);
-        if (select && select.value !== '') { return select.value; }
-        var custom = rowCustomKeyInput(row);
-        return custom ? custom.value.trim() : '';
+        var input = rowKeyInput(row);
+        return input ? input.value.trim() : '';
     }
 
-    // The control error marks should attach to: the custom input while it is
-    // the active editor, the select otherwise.
-    function rowKeyErrorControl(row) {
-        var select = rowKeySelect(row);
-        var custom = rowCustomKeyInput(row);
-        return (select && select.value === '' && custom) ? custom : (select || custom);
+    // fmt's argument convention substitutes the fallback into {0}, so a
+    // message carrying its OWN {n} placeholders cannot go through it. This
+    // variant is alertFmt's convention (args from index 2) but returns the
+    // string instead of alerting.
+    function sub(key, fallback) {
+        var text = strings[key] || fallback;
+        for (var i = 2; i < arguments.length; i++) {
+            text = String(text).replace('{' + (i - 2) + '}', String(arguments[i]));
+        }
+        return text;
+    }
+
+    // The per-key help line: what the setting does, the client's own default,
+    // and the audited numeric range — the constraints BEFORE typing. Hidden
+    // for custom (unknown) keys, where there is nothing to say.
+    function refreshDefaultsHelp(row, info) {
+        var help = row.querySelector('[data-role="defaults-help"]');
+        if (!help) { return; }
+        help.textContent = '';
+        if (!info) { help.style.display = 'none'; return; }
+        var head = info.label || '';
+        if (info.description) { head += (head ? ' — ' : '') + info.description; }
+        var parts = head ? [head] : [];
+        if (info.defaultValue !== undefined && info.defaultValue !== null) {
+            parts.push(sub('DefaultsClientDefault', 'Client default: {0}', formatValue(info.defaultValue)));
+        }
+        if (info.kind === 'number') {
+            var hasMin = info.min !== undefined && info.min !== null;
+            var hasMax = info.max !== undefined && info.max !== null;
+            if (hasMin && hasMax) {
+                parts.push(sub('DefaultsRange', 'Range: {0}–{1}', info.min, info.max));
+            } else if (hasMin) {
+                parts.push(sub('DefaultsMin', 'Min: {0}', info.min));
+            } else if (hasMax) {
+                parts.push(sub('DefaultsMax', 'Max: {0}', info.max));
+            }
+        }
+        help.textContent = parts.join(' · ');
+        help.style.display = parts.length > 0 ? '' : 'none';
+    }
+
+    // The custom-value status line: makes the JSON-vs-plain-string fallback
+    // explicit instead of silent. Stays quiet when the field error already
+    // flags the value.
+    function refreshJsonStatus(row) {
+        var wrap = row.querySelector('[data-role="defaults-value"]');
+        var status = row.querySelector('[data-role="defaults-json-status"]');
+        if (!wrap || !status) { return; }
+        status.classList.remove('ok');
+        if (wrap.getAttribute('data-kind') !== 'json') { status.style.display = 'none'; return; }
+        var control = wrap.querySelector('[data-kind]');
+        var raw = control ? control.value.trim() : '';
+        if (raw.length === 0) { status.style.display = 'none'; return; }
+        if (/^[\[{]/.test(raw)) {
+            if (isParsableJson(raw)) {
+                status.textContent = strings.DefaultsJsonOk || 'Valid JSON — stored as JSON.';
+                status.classList.add('ok');
+                status.style.display = '';
+            } else {
+                status.style.display = 'none';
+            }
+            return;
+        }
+        status.textContent = strings.DefaultsJsonText || 'Not JSON — will be stored as a plain string.';
+        status.style.display = '';
     }
 
     // Swaps the value control when the typed key changes kind, carrying the
@@ -365,13 +451,19 @@
         if (!wrap) { return; }
         var info = knownKeyInfo(rowKeyValue(row));
         var kind = info ? info.kind : 'json';
+        // Help and status track the KEY, so they refresh even when the kind
+        // (and therefore the control) does not change.
+        refreshDefaultsHelp(row, info);
+        refreshJsonStatus(row);
         if (wrap.getAttribute('data-kind') === kind) { return; }
         var previous = readDefaultValue(wrap);
         var usable = previous !== null && previous !== undefined && previous !== '';
         var initial = usable ? previous : (info ? info.defaultValue : undefined);
         var label = wrap.querySelector('.jellyplay-field-label');
         clearFieldErrors(row);
-        wrap.querySelectorAll('input, select, .jellyplay-field-error').forEach(function (node) { node.remove(); });
+        // .jellyplay-switch goes too — it wraps the boolean input, and
+        // removing only the input would leave an empty track husk behind.
+        wrap.querySelectorAll('input, select, .jellyplay-switch, .jellyplay-field-error').forEach(function (node) { node.remove(); });
         var control = buildValueControl(kind, info, initial);
         if (kind === 'boolean') {
             wrap.classList.add('jellyplay-field-boolean');
@@ -398,7 +490,7 @@
         if (blank) { return true; }
 
         var ok = true;
-        var keyControl = rowKeyErrorControl(row);
+        var keyControl = rowKeyInput(row);
         if (key.length === 0) {
             setFieldError(keyControl, strings.DefaultsInvalidKey || 'Enter or pick a key.');
             ok = false;
@@ -423,7 +515,25 @@
         if (invalid) {
             setFieldError(valueWrap.querySelector('[data-kind]'), strings.DefaultsInvalidValue || 'Enter a value.');
             ok = false;
+        } else if (valueWrap.getAttribute('data-kind') === 'number' && value !== null && !isNaN(value)) {
+            // Catalog range check — mirrors the server's ValidateValue against
+            // the same descriptor, so an out-of-range number dies here first.
+            var rangeInfo = knownKeyInfo(key);
+            var rangeControl = valueWrap.querySelector('[data-kind]');
+            var hasMin = rangeInfo && rangeInfo.min !== undefined && rangeInfo.min !== null;
+            var hasMax = rangeInfo && rangeInfo.max !== undefined && rangeInfo.max !== null;
+            if (hasMin && hasMax && (value < rangeInfo.min || value > rangeInfo.max)) {
+                setFieldError(rangeControl, sub('DefaultsInvalidRangeBetween', 'Must be between {0} and {1}.', rangeInfo.min, rangeInfo.max));
+                ok = false;
+            } else if (hasMin && value < rangeInfo.min) {
+                setFieldError(rangeControl, sub('DefaultsInvalidRangeMin', 'Must be at least {0}.', rangeInfo.min));
+                ok = false;
+            } else if (hasMax && value > rangeInfo.max) {
+                setFieldError(rangeControl, sub('DefaultsInvalidRangeMax', 'Must be at most {0}.', rangeInfo.max));
+                ok = false;
+            }
         }
+        refreshJsonStatus(row);
         return ok;
     }
 
@@ -452,46 +562,156 @@
         return ok;
     }
 
-    // Builds the catalog key picker: one optgroup per namespace, option text
-    // = the key name (tooltip = label + description), plus a "Custom…"
-    // option that reveals the free-text input for keys the catalog does not
-    // know yet (newer client than plugin).
-    function buildKeySelect(initialKey) {
-        var select = document.createElement('select');
-        select.className = 'emby-select';
-        select.setAttribute('data-role', 'defaults-key');
+    // Upper bound on suggestion hits rendered at once — the catalog holds
+    // ~145 keys and an unfiltered query would render them all.
+    var KEY_MATCH_LIMIT = 50;
 
-        var customOption = document.createElement('option');
-        customOption.value = '';
-        customOption.textContent = strings.DefaultsCustomKey || 'Custom…';
-        select.appendChild(customOption);
-
-        var byNs = {};
-        KNOWN_KEYS.forEach(function (entry) {
-            var separator = entry.key.indexOf('/');
-            var ns = separator > 0 ? entry.key.slice(0, separator) : '';
-            if (!byNs[ns]) { byNs[ns] = []; }
-            byNs[ns].push(entry);
-        });
-        Object.keys(byNs).sort().forEach(function (ns) {
-            var group = document.createElement('optgroup');
-            group.label = ns;
-            byNs[ns].forEach(function (entry) {
-                var option = document.createElement('option');
-                option.value = entry.key;
-                var separator = entry.key.indexOf('/');
-                option.textContent = separator > 0 ? entry.key.slice(separator + 1) : entry.key;
-                var hint = [entry.label, entry.description].filter(Boolean).join(' — ');
-                if (hint) { option.title = hint; }
-                group.appendChild(option);
-            });
-            select.appendChild(group);
-        });
-
-        if (initialKey && knownKeyInfo(initialKey)) {
-            select.value = initialKey;
+    // Renders the suggestion menu: catalog entries matching the query
+    // (label, key, or description — empty query browses the whole catalog),
+    // grouped by the client's domain, capped, with a footer for the overflow
+    // or the no-match/custom hint.
+    function renderKeyMenu(row) {
+        var input = rowKeyInput(row);
+        var menu = rowKeyMenu(row);
+        if (!input || !menu) { return; }
+        var query = input.value.trim().toLowerCase();
+        // Ranked matches: a query hit on the key or label outranks one only
+        // riding the description ("downmix" must surface downmix_boost_db,
+        // not a whose description merely says "downmixed").
+        var matches = [];
+        var overflow = 0;
+        for (var rank = 0; rank < 2 && matches.length <= KEY_MATCH_LIMIT; rank++) {
+            for (var i = 0; i < KNOWN_KEYS.length; i++) {
+                var entry = KNOWN_KEYS[i];
+                var inKey = entry.key.toLowerCase().indexOf(query) !== -1
+                    || (entry.label || '').toLowerCase().indexOf(query) !== -1;
+                var inDesc = (entry.description || '').toLowerCase().indexOf(query) !== -1;
+                if (!query || (rank === 0 ? inKey : (!inKey && inDesc))) {
+                    if (matches.length < KEY_MATCH_LIMIT) {
+                        matches.push(entry);
+                    } else {
+                        overflow++;
+                    }
+                }
+            }
         }
-        return select;
+
+        menu.textContent = '';
+        var lastGroup = null;
+        matches.forEach(function (entry) {
+            if (entry.group && entry.group !== lastGroup) {
+                var group = document.createElement('div');
+                group.className = 'jellyplay-cbo-group';
+                group.textContent = entry.group;
+                menu.appendChild(group);
+                lastGroup = entry.group;
+            }
+            var option = document.createElement('div');
+            option.className = 'jellyplay-cbo-option';
+            option.setAttribute('data-key', entry.key);
+            var label = document.createElement('span');
+            label.className = 'cbo-label';
+            label.textContent = entry.label || entry.key;
+            option.appendChild(label);
+            var slug = document.createElement('span');
+            slug.className = 'cbo-key';
+            slug.textContent = entry.key;
+            option.appendChild(slug);
+            if (entry.description) {
+                var desc = document.createElement('span');
+                desc.className = 'cbo-desc';
+                desc.textContent = entry.description;
+                option.appendChild(desc);
+            }
+            // preventDefault on mousedown keeps the input focused (no blur
+            // race) while the click still selects.
+            option.addEventListener('mousedown', function (event) {
+                event.preventDefault();
+                selectKey(row, entry.key);
+            });
+            menu.appendChild(option);
+        });
+        if (overflow > 0 || matches.length === 0) {
+            var foot = document.createElement('div');
+            foot.className = 'jellyplay-cbo-foot';
+            foot.textContent = overflow > 0
+                ? sub('DefaultsMoreResults', '{0} more…', overflow)
+                : (strings.DefaultsNoMatches || 'No matching catalog key — keep it as a custom key.');
+            menu.appendChild(foot);
+        }
+        menu.hidden = false;
+        setActiveOption(menu, matches.length > 0 ? 0 : -1);
+    }
+
+    function closeKeyMenu(row) {
+        var menu = rowKeyMenu(row);
+        if (menu) { menu.hidden = true; }
+    }
+
+    function activeOptionIndex(menu) {
+        return Number(menu.getAttribute('data-active') || '-1');
+    }
+
+    function setActiveOption(menu, index) {
+        var options = menu.querySelectorAll('.jellyplay-cbo-option');
+        if (options.length === 0) {
+            menu.setAttribute('data-active', '-1');
+            return;
+        }
+        var next = ((index % options.length) + options.length) % options.length;
+        options.forEach(function (option, i) {
+            option.classList.toggle('active', i === next);
+        });
+        if (options[next].scrollIntoView) { options[next].scrollIntoView({ block: 'nearest' }); }
+        menu.setAttribute('data-active', String(next));
+    }
+
+    function selectKey(row, key) {
+        var input = rowKeyInput(row);
+        input.value = key;
+        closeKeyMenu(row);
+        syncValueKind(row);
+        validateDefaultRow(row);
+        input.focus();
+    }
+
+    // Wires one key picker: filter-as-you-type, keyboard navigation
+    // (↑/↓/Enter/Esc), click selection. Enter never submits the surrounding
+    // dashboard form — the input is a picker, not a submit button.
+    function wireCombobox(row, input, menu) {
+        input.addEventListener('input', function () {
+            renderKeyMenu(row);
+            validateDefaultRow(row);
+        });
+        input.addEventListener('focus', function () { renderKeyMenu(row); });
+        input.addEventListener('keydown', function (event) {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                if (menu.hidden) { renderKeyMenu(row); return; }
+                var delta = event.key === 'ArrowDown' ? 1 : -1;
+                setActiveOption(menu, activeOptionIndex(menu) + delta);
+                return;
+            }
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                if (!menu.hidden) {
+                    var options = menu.querySelectorAll('.jellyplay-cbo-option');
+                    var index = activeOptionIndex(menu);
+                    if (index >= 0 && options[index]) {
+                        selectKey(row, options[index].getAttribute('data-key'));
+                    } else {
+                        closeKeyMenu(row);
+                    }
+                }
+                return;
+            }
+            if (event.key === 'Escape') { closeKeyMenu(row); }
+        });
+        input.addEventListener('blur', function () { closeKeyMenu(row); });
+        input.addEventListener('change', function () {
+            syncValueKind(row);
+            validateDefaultRow(row);
+        });
     }
 
     function addDefaultRow(key, entry) {
@@ -500,32 +720,23 @@
         row.className = 'jellyplay-row';
 
         var keyWrap = document.createElement('div');
-        keyWrap.className = 'jellyplay-field';
+        keyWrap.className = 'jellyplay-field jellyplay-combobox';
         keyWrap.appendChild(fieldLabel(strings.DefaultsColumnKey || 'Key'));
-        var keySelect = buildKeySelect(key);
-        keyWrap.appendChild(keySelect);
-
-        var customInput = document.createElement('input');
-        customInput.type = 'text';
-        customInput.className = 'emby-input';
-        customInput.placeholder = 'namespace/key';
-        customInput.setAttribute('data-role', 'defaults-custom-key');
-        customInput.setAttribute('list', 'jellyplayKnownKeys');
-        customInput.setAttribute('autocomplete', 'off');
-        customInput.style.marginTop = '4px';
-        if (key && !knownKeyInfo(key)) { customInput.value = key; }
-        customInput.style.display = keySelect.value === '' ? '' : 'none';
-        keyWrap.appendChild(customInput);
+        var keyInput = document.createElement('input');
+        keyInput.type = 'text';
+        keyInput.className = 'emby-input';
+        keyInput.setAttribute('data-role', 'defaults-key-input');
+        keyInput.setAttribute('autocomplete', 'off');
+        keyInput.placeholder = strings.DefaultsSearchPlaceholder || "Type to search the client's settings…";
+        if (key) { keyInput.value = key; }
+        keyWrap.appendChild(keyInput);
+        var keyMenu = document.createElement('div');
+        keyMenu.className = 'jellyplay-combobox-menu';
+        keyMenu.setAttribute('data-role', 'defaults-key-menu');
+        keyMenu.hidden = true;
+        keyWrap.appendChild(keyMenu);
         row.appendChild(keyWrap);
-
-        keySelect.addEventListener('change', function () {
-            customInput.style.display = keySelect.value === '' ? '' : 'none';
-            if (keySelect.value === '') { customInput.focus(); }
-            syncValueKind(row);
-            validateDefaultRow(row);
-        });
-        customInput.addEventListener('input', function () { validateDefaultRow(row); });
-        customInput.addEventListener('change', function () { syncValueKind(row); });
+        wireCombobox(row, keyInput, keyMenu);
 
         var modeSelect = appendField(row, strings.DefaultsColumnMode || 'Mode', {
             tag: 'select', className: 'emby-select', variant: 'narrow'
@@ -542,22 +753,34 @@
         modeSelect.value = (entry && entry.mode === 'forced') ? 'forced' : 'suggested';
 
         var info = knownKeyInfo(rowKeyValue(row));
-        var valueWrap = appendField(row, strings.DefaultsColumnValue || 'Value', {
-            tag: 'input', className: 'emby-input', placeholder: 'value (JSON)'
-        });
-        valueWrap.setAttribute('data-role', 'defaults-value');
         var kind = info ? info.kind : 'json';
-        valueWrap.setAttribute('data-kind', kind);
+        var valueWrap = document.createElement('div');
+        valueWrap.className = 'jellyplay-field';
         if (kind === 'boolean') { valueWrap.classList.add('jellyplay-field-boolean'); }
-        valueWrap.querySelectorAll('input').forEach(function (node) { node.remove(); });
+        valueWrap.setAttribute('data-role', 'defaults-value');
+        valueWrap.setAttribute('data-kind', kind);
+        valueWrap.appendChild(fieldLabel(strings.DefaultsColumnValue || 'Value'));
         var valueControl = buildValueControl(kind, info, entry ? entry.value : undefined);
         valueWrap.appendChild(valueControl);
+        row.appendChild(valueWrap);
 
         valueControl.addEventListener('input', function () { validateDefaultRow(row); });
         valueControl.addEventListener('change', function () { validateDefaultRow(row); });
 
+        var jsonStatus = document.createElement('div');
+        jsonStatus.className = 'jellyplay-field-help';
+        jsonStatus.setAttribute('data-role', 'defaults-json-status');
+        jsonStatus.style.display = 'none';
+        valueWrap.appendChild(jsonStatus);
+
+        var help = document.createElement('div');
+        help.className = 'jellyplay-field-help';
+        help.setAttribute('data-role', 'defaults-help');
+        row.appendChild(help);
+
         removeButton(row, refreshDefaultsEmptyLabel);
         defaultsList().appendChild(row);
+        syncValueKind(row);
         refreshDefaultsEmptyLabel();
     }
 
@@ -594,6 +817,28 @@
         addDefaultRow('', { mode: 'suggested' });
     });
 
+    // Anchors a 400's structured problems back onto their rows: each problem
+    // is "<ns>/<key>: <message>", so the prefix finds the row and the message
+    // lands on its value control as a normal inline field error. Unmatched
+    // problems stay in the toast.
+    function anchorDefaultProblems(error) {
+        var problems = error && error.problems;
+        if (!Array.isArray(problems)) { return; }
+        problems.forEach(function (problem) {
+            var separator = String(problem).indexOf(': ');
+            if (separator <= 0) { return; }
+            var key = String(problem).slice(0, separator);
+            var message = String(problem).slice(separator + 2);
+            var match = null;
+            Array.prototype.forEach.call(defaultsList().children, function (row) {
+                if (rowKeyValue(row) === key) { match = row; }
+            });
+            if (!match) { return; }
+            var control = match.querySelector('[data-role="defaults-value"] [data-kind]');
+            if (control) { setFieldError(control, message); }
+        });
+    }
+
     document.getElementById('jellyplayDefaultsSave').addEventListener('click', function () {
         if (!validateDefaults()) {
             alertFmt('EditorFixHighlighted', 'Fix the highlighted fields.');
@@ -603,6 +848,7 @@
             alertText('DefaultsSaved', 'Defaults saved.');
             return loadDefaults();
         }).catch(function (error) {
+            anchorDefaultProblems(error);
             alertFmt('DefaultsRejected', 'Save rejected: {0}', error && error.message || error);
         });
     });
@@ -645,13 +891,15 @@
         }
     ];
 
-    // Suggestions for the client defaults key field, loaded from the plugin's
-    // catalog (GET jellyplay/settings/catalog) — the plugin owns the key
-    // list; this page only renders it. The catalog is GENERATED from the
-    // client's own preference declarations, so every key/type/enum option is
-    // the real thing the client syncs. Unknown keys remain reachable through
-    // the "Custom…" escape hatch (forward compatibility).
+    // The client defaults key catalog, loaded from the plugin (GET
+    // jellyplay/settings/catalog) — the plugin owns the key list; this page
+    // only renders it. The catalog is GENERATED from the client's own
+    // preference declarations, so every key/type/enum option (and its human
+    // label/description) is the real thing the client syncs. Keys the catalog
+    // does not know yet (a newer client against an older plugin) stay legal:
+    // free-typed text simply IS the custom key.
     var KNOWN_KEYS = [];
+    var KNOWN_KEY_INDEX = {};
 
     function loadCatalog() {
         return apiGet('jellyplay/settings/catalog').then(function (res) {
@@ -665,26 +913,27 @@
                     kind: kind,
                     label: descriptor.label,
                     description: descriptor.description,
+                    group: descriptor.group,
                     options: descriptor.options,
+                    optionLabels: descriptor.optionLabels,
                     min: descriptor.min,
                     max: descriptor.max,
                     defaultValue: descriptor.defaultValue
                 };
             });
+            KNOWN_KEY_INDEX = {};
+            KNOWN_KEYS.forEach(function (entry) {
+                KNOWN_KEY_INDEX[entry.key] = entry;
+            });
         }).catch(function () {
             // Catalog unavailable: editors degrade to free-text keys/values.
             KNOWN_KEYS = [];
-        }).then(function () {
-            rebuildKnownKeysDatalist();
+            KNOWN_KEY_INDEX = {};
         });
     }
 
     function knownKeyInfo(key) {
-        var match = null;
-        KNOWN_KEYS.forEach(function (entry) {
-            if (entry.key === key) { match = entry; }
-        });
-        return match;
+        return Object.prototype.hasOwnProperty.call(KNOWN_KEY_INDEX, key) ? KNOWN_KEY_INDEX[key] : null;
     }
 
     function fmtMsg(text, value) {

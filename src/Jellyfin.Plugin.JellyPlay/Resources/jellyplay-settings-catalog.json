@@ -5,7 +5,8 @@
             "ns": "prefs",
             "key": "dynamic_theming",
             "label": "Dynamic Theming",
-            "description": "",
+            "description": "Colors extracted dynamically from playing media artwork",
+            "group": "Appearance",
             "valueType": "boolean",
             "defaultValue": true
         },
@@ -13,7 +14,8 @@
             "ns": "prefs",
             "key": "theme_mode",
             "label": "Theme Mode",
-            "description": "",
+            "description": "Follow system setting, light mode, or dark mode",
+            "group": "Appearance",
             "valueType": "enum",
             "defaultValue": "SYSTEM",
             "options": [
@@ -21,26 +23,39 @@
                 "LIGHT",
                 "DARK",
                 "SCHEDULED"
+            ],
+            "optionLabels": [
+                "System",
+                "Light",
+                "Dark",
+                "Scheduled"
             ]
         },
         {
             "ns": "prefs",
             "key": "contrast_level",
             "label": "Contrast Level",
-            "description": "",
+            "description": "Adjust system contrast: standard, medium, or high",
+            "group": "Appearance",
             "valueType": "enum",
             "defaultValue": "DEFAULT",
             "options": [
                 "DEFAULT",
                 "MEDIUM",
                 "HIGH"
+            ],
+            "optionLabels": [
+                "Default",
+                "Medium",
+                "High"
             ]
         },
         {
             "ns": "prefs",
             "key": "oled_mode",
-            "label": "Oled Mode",
-            "description": "",
+            "label": "OLED Mode",
+            "description": "Pure black backgrounds optimized for AMOLED displays",
+            "group": "Appearance",
             "valueType": "boolean",
             "defaultValue": false
         },
@@ -48,15 +63,17 @@
             "ns": "prefs",
             "key": "performance_mode",
             "label": "Performance Mode",
-            "description": "",
+            "description": "Reduces heavy animations and layout calculations for low-end devices",
+            "group": "Appearance",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "accent_color_swatch",
-            "label": "Accent Color Swatch",
-            "description": "",
+            "label": "Accent Color",
+            "description": "Select custom accent color swatch or dynamic",
+            "group": "Appearance",
             "valueType": "string",
             "defaultValue": "dynamic"
         },
@@ -64,7 +81,8 @@
             "ns": "prefs",
             "key": "color_style",
             "label": "Color Style",
-            "description": "",
+            "description": "Define the visual vibe of generated palettes",
+            "group": "Appearance",
             "valueType": "enum",
             "defaultValue": "TONAL_SPOT",
             "options": [
@@ -73,13 +91,21 @@
                 "EXPRESSIVE",
                 "MUTED",
                 "MONOCHROME"
+            ],
+            "optionLabels": [
+                "Tonal Spot",
+                "Vibrant",
+                "Expressive",
+                "Muted",
+                "Monochrome"
             ]
         },
         {
             "ns": "prefs",
             "key": "theme_variant",
-            "label": "Theme Variant",
-            "description": "",
+            "label": "Theme Style",
+            "description": "Pick a themed look: Standard, Synthwave, Soothing, Monochrome, Vivid, Aurora, Sakura, or Vector Pop",
+            "group": "Appearance",
             "valueType": "string",
             "defaultValue": "standard"
         },
@@ -88,6 +114,7 @@
             "key": "synthwave_mode",
             "label": "Synthwave Mode",
             "description": "",
+            "group": "Appearance",
             "valueType": "boolean",
             "defaultValue": false
         },
@@ -96,6 +123,7 @@
             "key": "synthwave_accent",
             "label": "Synthwave Accent",
             "description": "",
+            "group": "Appearance",
             "valueType": "string",
             "defaultValue": "magenta"
         },
@@ -104,6 +132,7 @@
             "key": "soothing_mode",
             "label": "Soothing Mode",
             "description": "",
+            "group": "Appearance",
             "valueType": "boolean",
             "defaultValue": false
         },
@@ -112,6 +141,7 @@
             "key": "soothing_accent",
             "label": "Soothing Accent",
             "description": "",
+            "group": "Appearance",
             "valueType": "string",
             "defaultValue": "ocean"
         },
@@ -120,6 +150,7 @@
             "key": "monochrome_mode",
             "label": "Monochrome Mode",
             "description": "",
+            "group": "Appearance",
             "valueType": "boolean",
             "defaultValue": false
         },
@@ -128,6 +159,7 @@
             "key": "vivid_accent",
             "label": "Vivid Accent",
             "description": "",
+            "group": "Appearance",
             "valueType": "string",
             "defaultValue": "punch"
         },
@@ -136,6 +168,7 @@
             "key": "aurora_accent",
             "label": "Aurora Accent",
             "description": "",
+            "group": "Appearance",
             "valueType": "string",
             "defaultValue": "emerald"
         },
@@ -144,6 +177,7 @@
             "key": "sakura_accent",
             "label": "Sakura Accent",
             "description": "",
+            "group": "Appearance",
             "valueType": "string",
             "defaultValue": "rose"
         },
@@ -152,6 +186,7 @@
             "key": "vector_pop_accent",
             "label": "Vector Pop Accent",
             "description": "",
+            "group": "Appearance",
             "valueType": "string",
             "defaultValue": "cobalt"
         },
@@ -160,22 +195,25 @@
             "key": "show_advanced_settings",
             "label": "Show Advanced Settings",
             "description": "",
+            "group": "Appearance",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "reduce_motion_enabled",
-            "label": "Reduce Motion Enabled",
-            "description": "",
+            "label": "Reduce Motion",
+            "description": "Disable parallax transitions and extreme list scaling effects",
+            "group": "Appearance",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "blue_light_filter_enabled",
-            "label": "Blue Light Filter Enabled",
-            "description": "",
+            "label": "Blue Light Filter",
+            "description": "Tint the screen amber to reduce eye strain at night",
+            "group": "Appearance",
             "valueType": "boolean",
             "defaultValue": false
         },
@@ -183,31 +221,35 @@
             "ns": "prefs",
             "key": "blue_light_filter_strength",
             "label": "Blue Light Filter Strength",
-            "description": "",
+            "description": "Intensity of the amber overlay",
+            "group": "Appearance",
             "valueType": "number",
             "defaultValue": 0.30000001192092896
         },
         {
             "ns": "prefs",
             "key": "backdrop_theme_music_enabled",
-            "label": "Backdrop Theme Music Enabled",
-            "description": "",
+            "label": "Backdrop Theme Music",
+            "description": "Play theme songs on detail pages",
+            "group": "Appearance",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "haptics_enabled",
-            "label": "Haptics Enabled",
-            "description": "",
+            "label": "Haptic Feedback",
+            "description": "Enable vibration feedback for UI interactions",
+            "group": "Appearance",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "date_format_preference",
-            "label": "Date Format Preference",
-            "description": "",
+            "label": "Date Format",
+            "description": "Choose how dates are displayed throughout the app",
+            "group": "Appearance",
             "valueType": "enum",
             "defaultValue": "SYSTEM",
             "options": [
@@ -217,13 +259,22 @@
                 "EU",
                 "LONG",
                 "SHORT"
+            ],
+            "optionLabels": [
+                "System",
+                "Us",
+                "Iso",
+                "Eu",
+                "Long",
+                "Short"
             ]
         },
         {
             "ns": "prefs",
             "key": "app_font_scale",
-            "label": "App Font Scale",
-            "description": "",
+            "label": "Font Size",
+            "description": "Adjust the text size across the entire app",
+            "group": "Appearance",
             "valueType": "enum",
             "defaultValue": "DEFAULT",
             "options": [
@@ -232,21 +283,30 @@
                 "MEDIUM",
                 "LARGE",
                 "EXTRA_LARGE"
+            ],
+            "optionLabels": [
+                "Small",
+                "Default",
+                "Medium",
+                "Large",
+                "Extra Large"
             ]
         },
         {
             "ns": "prefs",
             "key": "scheduled_theme_start_hour",
-            "label": "Scheduled Theme Start Hour",
-            "description": "",
+            "label": "Theme Scheduled Start",
+            "description": "Hour to switch to the daytime theme",
+            "group": "Appearance",
             "valueType": "number",
             "defaultValue": 22
         },
         {
             "ns": "prefs",
             "key": "scheduled_theme_end_hour",
-            "label": "Scheduled Theme End Hour",
-            "description": "",
+            "label": "Theme Scheduled End",
+            "description": "Hour to switch to the nighttime theme",
+            "group": "Appearance",
             "valueType": "number",
             "defaultValue": 7
         },
@@ -254,7 +314,8 @@
             "ns": "prefs",
             "key": "color_blind_mode",
             "label": "Color Blind Mode",
-            "description": "",
+            "description": "Adjust colors for color vision deficiency",
+            "group": "Appearance",
             "valueType": "enum",
             "defaultValue": "NONE",
             "options": [
@@ -262,58 +323,83 @@
                 "PROTANOPIA",
                 "DEUTERANOPIA",
                 "TRITANOPIA"
+            ],
+            "optionLabels": [
+                "None",
+                "Protanopia",
+                "Deuteranopia",
+                "Tritanopia"
             ]
         },
         {
             "ns": "prefs",
             "key": "hand_mode",
-            "label": "Hand Mode",
-            "description": "",
+            "label": "Handedness",
+            "description": "Mirror navigation for left-handed use",
+            "group": "Appearance",
             "valueType": "enum",
             "defaultValue": "RIGHT",
             "options": [
                 "RIGHT",
                 "LEFT"
+            ],
+            "optionLabels": [
+                "Right",
+                "Left"
             ]
         },
         {
             "ns": "prefs",
             "key": "layout_mode",
-            "label": "Layout Mode",
-            "description": "",
+            "label": "Layout",
+            "description": "Force the phone or tablet layout instead of following the window size",
+            "group": "Appearance",
             "valueType": "enum",
             "defaultValue": "AUTO",
             "options": [
                 "AUTO",
                 "PHONE",
                 "TABLET"
+            ],
+            "optionLabels": [
+                "Auto",
+                "Phone",
+                "Tablet"
             ]
         },
         {
             "ns": "prefs",
             "key": "tv_overscan",
-            "label": "Tv Overscan",
-            "description": "",
+            "label": "Screen fit",
+            "description": "TV overscan safe-area padding (Off / 5% / 10%)",
+            "group": "Appearance",
             "valueType": "enum",
             "defaultValue": "FIVE",
             "options": [
                 "OFF",
                 "FIVE",
                 "TEN"
+            ],
+            "optionLabels": [
+                "Off",
+                "Five",
+                "Ten"
             ]
         },
         {
             "ns": "prefs",
             "key": "preferred_player",
-            "label": "Preferred Player",
-            "description": "",
+            "label": "Player Engine",
+            "description": "Select default media playback engine: MPV, ExoPlayer, LibVLC",
+            "group": "Playback",
             "valueType": "string"
         },
         {
             "ns": "prefs",
             "key": "preferred_external_player",
-            "label": "Preferred External Player",
-            "description": "",
+            "label": "Preferred External App",
+            "description": "Pick which external player app opens playback",
+            "group": "Playback",
             "valueType": "enum",
             "defaultValue": "SYSTEM_CHOOSER",
             "options": [
@@ -323,13 +409,22 @@
                 "MX_PLAYER_PRO",
                 "VLC",
                 "MPV_KT"
+            ],
+            "optionLabels": [
+                "System Chooser",
+                "Mpv",
+                "Mx Player Free",
+                "Mx Player Pro",
+                "Vlc",
+                "Mpv Kt"
             ]
         },
         {
             "ns": "prefs",
             "key": "streaming_quality",
             "label": "Streaming Quality",
-            "description": "",
+            "description": "Set default video quality for streaming: 1080p, 4K, SD, Auto",
+            "group": "Playback",
             "valueType": "enum",
             "defaultValue": "AUTO",
             "options": [
@@ -339,6 +434,14 @@
                 "HD_720P",
                 "FHD_1080P",
                 "UHD_4K"
+            ],
+            "optionLabels": [
+                "Auto",
+                "Low 360p",
+                "Sd 480p",
+                "Hd 720p",
+                "Fhd 1080p",
+                "Uhd 4k"
             ]
         },
         {
@@ -346,6 +449,7 @@
             "key": "cellular_streaming_quality",
             "label": "Cellular Streaming Quality",
             "description": "",
+            "group": "Playback",
             "valueType": "enum",
             "defaultValue": "AUTO",
             "options": [
@@ -355,6 +459,14 @@
                 "HD_720P",
                 "FHD_1080P",
                 "UHD_4K"
+            ],
+            "optionLabels": [
+                "Auto",
+                "Low 360p",
+                "Sd 480p",
+                "Hd 720p",
+                "Fhd 1080p",
+                "Uhd 4k"
             ]
         },
         {
@@ -362,6 +474,7 @@
             "key": "playback_mode",
             "label": "Playback Mode",
             "description": "",
+            "group": "Playback",
             "valueType": "string"
         },
         {
@@ -369,52 +482,71 @@
             "key": "force_direct_play",
             "label": "Force Direct Play",
             "description": "",
+            "group": "Playback",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "live_stream_option",
-            "label": "Live Stream Option",
-            "description": "",
+            "label": "Live TV Stream",
+            "description": "Direct Stream or Transcode live TV channels (HTSP / tuner delivery)",
+            "group": "Playback",
             "valueType": "enum",
             "defaultValue": "AUTO",
             "options": [
                 "AUTO",
                 "DIRECT_STREAM",
                 "TRANSCODE"
+            ],
+            "optionLabels": [
+                "Auto",
+                "Direct Stream",
+                "Transcode"
             ]
         },
         {
             "ns": "prefs",
             "key": "offline_playback_preference",
-            "label": "Offline Playback Preference",
-            "description": "",
+            "label": "Offline Playback",
+            "description": "Choose the downloaded copy or the server stream when both are available",
+            "group": "Playback",
             "valueType": "enum",
             "defaultValue": "PREFER_DOWNLOADED",
             "options": [
                 "PREFER_DOWNLOADED",
                 "PREFER_STREAMING"
+            ],
+            "optionLabels": [
+                "Prefer Downloaded",
+                "Prefer Streaming"
             ]
         },
         {
             "ns": "prefs",
             "key": "decoder_mode",
-            "label": "Decoder Mode",
-            "description": "",
+            "label": "Hardware Decoder Mode",
+            "description": "Choose hardware, software, or copy-back decoding",
+            "group": "Playback",
             "valueType": "enum",
             "defaultValue": "HW_PREFERRED",
             "options": [
                 "HW_PREFERRED",
                 "HW_ONLY",
                 "SW_ONLY"
+            ],
+            "optionLabels": [
+                "Hw Preferred",
+                "Hw Only",
+                "Sw Only"
             ]
         },
         {
             "ns": "prefs",
             "key": "audio_passthrough",
             "label": "Audio Passthrough",
-            "description": "",
+            "description": "Directly route raw audio format streams to receiver",
+            "group": "Playback",
             "valueType": "boolean",
             "defaultValue": false
         },
@@ -423,13 +555,15 @@
             "key": "audio_passthrough_codecs",
             "label": "Audio Passthrough Codecs",
             "description": "",
+            "group": "Playback",
             "valueType": "string"
         },
         {
             "ns": "prefs",
             "key": "max_audio_channels",
             "label": "Max Audio Channels",
-            "description": "",
+            "description": "Cap the output speaker layout — wider sources are downmixed or transcoded",
+            "group": "Playback",
             "valueType": "enum",
             "defaultValue": "AUTO",
             "options": [
@@ -438,76 +572,94 @@
                 "STEREO",
                 "FIVE_POINT_ONE",
                 "SEVEN_POINT_ONE"
+            ],
+            "optionLabels": [
+                "Auto",
+                "Mono",
+                "Stereo",
+                "Five Point One",
+                "Seven Point One"
             ]
         },
         {
             "ns": "prefs",
             "key": "downmix_boost_db",
-            "label": "Downmix Boost Db",
-            "description": "",
+            "label": "Stereo Downmix Boost",
+            "description": "Loudness compensation applied when surround audio is downmixed to stereo (0–12 dB)",
+            "group": "Playback",
             "valueType": "number",
-            "defaultValue": 0.0
+            "defaultValue": 0.0,
+            "min": 0.0,
+            "max": 12.0
         },
         {
             "ns": "prefs",
             "key": "frame_rate_matching",
             "label": "Frame Rate Matching",
             "description": "",
+            "group": "Playback",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "refresh_rate_mode",
-            "label": "Refresh Rate Mode",
-            "description": "",
+            "label": "Frame Rate Match",
+            "description": "Synchronize display refresh rate to video frames (TV/HDMI)",
+            "group": "Playback",
             "valueType": "string"
         },
         {
             "ns": "prefs",
             "key": "keep_screen_on_during_video",
-            "label": "Keep Screen On During Video",
-            "description": "",
+            "label": "Keep Screen On",
+            "description": "Prevent device screen from turning off during video playback",
+            "group": "Playback",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "pause_on_audio_focus_loss",
-            "label": "Pause On Audio Focus Loss",
-            "description": "",
+            "label": "Pause on Focus Loss",
+            "description": "Pause playback when system reports audio focus loss",
+            "group": "Playback",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "duck_on_transient_focus_loss",
-            "label": "Duck On Transient Focus Loss",
-            "description": "",
+            "label": "Duck on Phone Call",
+            "description": "Lower volume and rewind when a phone call arrives",
+            "group": "Playback",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "auto_play_countdown_sec",
-            "label": "Auto Play Countdown Sec",
-            "description": "",
+            "label": "Auto-Play Countdown",
+            "description": "Countdown duration before auto-playing next episode",
+            "group": "Playback",
             "valueType": "number",
             "defaultValue": 10
         },
         {
             "ns": "prefs",
             "key": "background_video_audio_enabled",
-            "label": "Background Video Audio Enabled",
-            "description": "",
+            "label": "Background Video Audio",
+            "description": "Keep video audio playing when app is put to background",
+            "group": "Playback",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "auto_enter_pip",
-            "label": "Auto Enter Pip",
-            "description": "",
+            "label": "Auto Picture-in-Picture",
+            "description": "Minimize video into a floating window when leaving the app during playback",
+            "group": "Playback",
             "valueType": "boolean",
             "defaultValue": true
         },
@@ -516,6 +668,7 @@
             "key": "pgs_subtitle_direct_play",
             "label": "Pgs Subtitle Direct Play",
             "description": "",
+            "group": "Playback",
             "valueType": "boolean",
             "defaultValue": false
         },
@@ -524,14 +677,16 @@
             "key": "user_data_sync_enabled",
             "label": "User Data Sync Enabled",
             "description": "",
+            "group": "Playback",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "android_tv_watch_next_enabled",
-            "label": "Android Tv Watch Next Enabled",
-            "description": "",
+            "label": "Watch Next Row (Android TV)",
+            "description": "Publish Continue / Next Up to Android TV home",
+            "group": "Playback",
             "valueType": "boolean",
             "defaultValue": true
         },
@@ -539,27 +694,34 @@
             "ns": "prefs",
             "key": "home_mode",
             "label": "Home Mode",
-            "description": "",
+            "description": "Set default home screen layout: video or music",
+            "group": "Home & discovery",
             "valueType": "enum",
             "defaultValue": "VIDEO",
             "options": [
                 "VIDEO",
                 "MUSIC"
+            ],
+            "optionLabels": [
+                "Video",
+                "Music"
             ]
         },
         {
             "ns": "prefs",
             "key": "home_hero_enabled",
-            "label": "Home Hero Enabled",
-            "description": "",
+            "label": "Show Hero Section",
+            "description": "Display featured content banner at top of home screen",
+            "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "home_backdrop_enabled",
-            "label": "Home Backdrop Enabled",
-            "description": "",
+            "label": "Home Backdrop",
+            "description": "Blur the hero artwork as an ambient background",
+            "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": true
         },
@@ -568,6 +730,7 @@
             "key": "home_enabled_section_types",
             "label": "Home Enabled Section Types",
             "description": "",
+            "group": "Home & discovery",
             "valueType": "string"
         },
         {
@@ -575,6 +738,7 @@
             "key": "home_enabled_section_types_version",
             "label": "Home Enabled Section Types Version",
             "description": "",
+            "group": "Home & discovery",
             "valueType": "number",
             "defaultValue": 0
         },
@@ -583,13 +747,15 @@
             "key": "home_section_order",
             "label": "Home Section Order",
             "description": "",
+            "group": "Home & discovery",
             "valueType": "string"
         },
         {
             "ns": "prefs",
             "key": "home_library_section_overrides",
-            "label": "Home Library Section Overrides",
-            "description": "",
+            "label": "Configure libraries",
+            "description": "Latest Media, Recently Added per library",
+            "group": "Home & discovery",
             "valueType": "string"
         },
         {
@@ -597,47 +763,58 @@
             "key": "home_hidden_library_section_ids",
             "label": "Home Hidden Library Section Ids",
             "description": "",
+            "group": "Home & discovery",
             "valueType": "string"
         },
         {
             "ns": "prefs",
             "key": "pinned_home_sections",
             "label": "Pinned Home Sections",
-            "description": "",
+            "description": "Pin collections, playlists, favorites, genres or studios to home",
+            "group": "Home & discovery",
             "valueType": "string"
         },
         {
             "ns": "prefs",
             "key": "home_discover_rows",
-            "label": "Home Discover Rows",
-            "description": "",
+            "label": "Discover Rows",
+            "description": "Build custom discover rows with mixed filters",
+            "group": "Home & discovery",
             "valueType": "string"
         },
         {
             "ns": "prefs",
             "key": "home_layout_presets",
             "label": "Home Layout Presets",
-            "description": "",
+            "description": "Save, share, import or reset your home screen layout",
+            "group": "Home & discovery",
             "valueType": "string"
         },
         {
             "ns": "prefs",
             "key": "continue_watching_click_behavior",
-            "label": "Continue Watching Click Behavior",
-            "description": "",
+            "label": "Continue Watching Tap",
+            "description": "Resume playback or open details when tapping a Continue Watching tile",
+            "group": "Home & discovery",
             "valueType": "enum",
             "defaultValue": "DETAILS",
             "options": [
                 "DETAILS",
                 "PLAY",
                 "ASK"
+            ],
+            "optionLabels": [
+                "Details",
+                "Play",
+                "Ask"
             ]
         },
         {
             "ns": "prefs",
             "key": "show_unwatched_badge",
             "label": "Show Unwatched Badge",
-            "description": "",
+            "description": "Overlay indicator badges on unwatched items",
+            "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": true
         },
@@ -645,7 +822,8 @@
             "ns": "prefs",
             "key": "hide_watched_items",
             "label": "Hide Watched Items",
-            "description": "",
+            "description": "Automatically filter out watched items from libraries",
+            "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": false
         },
@@ -653,7 +831,8 @@
             "ns": "prefs",
             "key": "show_watched_checkmark",
             "label": "Show Watched Checkmark",
-            "description": "",
+            "description": "Overlay checkmark badges on finished items",
+            "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": true
         },
@@ -661,54 +840,62 @@
             "ns": "prefs",
             "key": "show_external_ratings",
             "label": "Show External Ratings",
-            "description": "",
+            "description": "Display critic rating scores (IMDb/TMDB) on details pages",
+            "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "merge_continue_watching_next_up",
-            "label": "Merge Continue Watching Next Up",
-            "description": "",
+            "label": "Merge Continue & Next Up",
+            "description": "Combine Next Up items into the Continue Watching row",
+            "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "next_up_max_days",
-            "label": "Next Up Max Days",
-            "description": "",
+            "label": "Next Up Time Window",
+            "description": "Only show episodes watched within a time period",
+            "group": "Home & discovery",
             "valueType": "number",
-            "defaultValue": 0
+            "defaultValue": 0,
+            "min": 0.0
         },
         {
             "ns": "prefs",
             "key": "next_up_rewatching",
-            "label": "Next Up Rewatching",
-            "description": "",
+            "label": "Rewatching in Next Up",
+            "description": "Include series you are rewatching in Next Up",
+            "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "classic_rows",
-            "label": "Classic Rows",
-            "description": "",
+            "label": "Classic Home Rows",
+            "description": "Show the home rows exactly as Jellyfin did before version 12: Continue Watching lists in-progress items only, and the Latest rows group new episodes under their series. Fixes rows that show whole series or season posters after a server update.",
+            "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "next_up_excluded_series_ids",
-            "label": "Next Up Excluded Series Ids",
-            "description": "",
+            "label": "Hidden from Next Up",
+            "description": "View and restore series excluded from the Next Up row",
+            "group": "Home & discovery",
             "valueType": "string"
         },
         {
             "ns": "prefs",
             "key": "hidden_cw_item_ids",
-            "label": "Hidden Cw Item Ids",
-            "description": "",
+            "label": "Unhide All from Continue Watching",
+            "description": "Show all hidden items in the Continue Watching row",
+            "group": "Home & discovery",
             "valueType": "string"
         },
         {
@@ -716,29 +903,33 @@
             "key": "last_viewed_season_by_series",
             "label": "Last Viewed Season By Series",
             "description": "",
+            "group": "Home & discovery",
             "valueType": "string"
         },
         {
             "ns": "prefs",
             "key": "show_clock_on_home",
-            "label": "Show Clock On Home",
-            "description": "",
+            "label": "Show Clock on Home",
+            "description": "Display the current time in the home screen top bar",
+            "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "show_settings_in_home_search",
-            "label": "Show Settings In Home Search",
-            "description": "",
+            "label": "Settings in Home Search",
+            "description": "Show settings results in the home search bar",
+            "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "hide_top_header_on_scroll",
-            "label": "Hide Top Header On Scroll",
-            "description": "",
+            "label": "Hide Top Header on Scroll",
+            "description": "Auto-hide the home screen top header when scrolling down",
+            "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": false
         },
@@ -747,46 +938,52 @@
             "key": "home_ns_migrated",
             "label": "Home Ns Migrated",
             "description": "",
+            "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "video_seek_duration_ms",
-            "label": "Video Seek Duration Ms",
-            "description": "",
+            "label": "Seek Duration",
+            "description": "Double-tap seek step duration in player",
+            "group": "Video player",
             "valueType": "number",
             "defaultValue": 10000.0
         },
         {
             "ns": "prefs",
             "key": "video_controls_timeout_ms",
-            "label": "Video Controls Timeout Ms",
-            "description": "",
+            "label": "Controls Timeout",
+            "description": "Auto-hide on-screen player controls after delay",
+            "group": "Video player",
             "valueType": "number",
             "defaultValue": 5000.0
         },
         {
             "ns": "prefs",
             "key": "video_hide_osd_on_pause",
-            "label": "Video Hide Osd On Pause",
-            "description": "",
+            "label": "Hide OSD on Pause",
+            "description": "Don't show the control overlay when pausing",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "video_resume_on_headset_plug",
-            "label": "Video Resume On Headset Plug",
-            "description": "",
+            "label": "Resume When Headphones Reconnect",
+            "description": "Resume when headphones are plugged back in after the unplug auto-pause",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "video_default_orientation",
-            "label": "Video Default Orientation",
-            "description": "",
+            "label": "Screen Orientation",
+            "description": "Default screen orientation during video playback",
+            "group": "Video player",
             "valueType": "enum",
             "defaultValue": "SENSOR_LANDSCAPE",
             "options": [
@@ -795,21 +992,30 @@
                 "SENSOR",
                 "LOCKED_LANDSCAPE",
                 "LOCKED_PORTRAIT"
+            ],
+            "optionLabels": [
+                "Sensor Landscape",
+                "Sensor Portrait",
+                "Sensor",
+                "Locked Landscape",
+                "Locked Portrait"
             ]
         },
         {
             "ns": "prefs",
             "key": "video_default_aspect_ratio",
-            "label": "Video Default Aspect Ratio",
-            "description": "",
+            "label": "Default Aspect Ratio",
+            "description": "Set default video layout aspect ratio (e.g., Fill, Fit, Zoom)",
+            "group": "Video player",
             "valueType": "string",
             "defaultValue": "AUTO"
         },
         {
             "ns": "prefs",
             "key": "video_gesture_mode",
-            "label": "Video Gesture Mode",
-            "description": "",
+            "label": "Playback Gestures",
+            "description": "Choose tap and swipe gestures for brightness, volume, and seeking",
+            "group": "Video player",
             "valueType": "string"
         },
         {
@@ -817,57 +1023,70 @@
             "key": "video_gestures_enabled",
             "label": "Video Gestures Enabled",
             "description": "",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "video_gesture_indicator_side",
-            "label": "Video Gesture Indicator Side",
-            "description": "",
+            "label": "Gesture Indicator Side",
+            "description": "Show brightness/volume bar opposite or same side as the gesture",
+            "group": "Video player",
             "valueType": "enum",
             "defaultValue": "OPPOSITE",
             "options": [
                 "OPPOSITE",
                 "SAME"
+            ],
+            "optionLabels": [
+                "Opposite",
+                "Same"
             ]
         },
         {
             "ns": "prefs",
             "key": "video_double_tap_hold_seek_enabled",
-            "label": "Video Double Tap Hold Seek Enabled",
-            "description": "",
+            "label": "Double-Tap and Hold Seek",
+            "description": "Repeat the seek while holding after a double-tap",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "input_bindings",
-            "label": "Input Bindings",
-            "description": "",
+            "label": "Customize controls",
+            "description": "Actions for gestures, mouse, keyboard, and remote",
+            "group": "Video player",
             "valueType": "string"
         },
         {
             "ns": "prefs",
             "key": "video_pass_out_protection_hours",
-            "label": "Video Pass Out Protection Hours",
-            "description": "",
+            "label": "Pass-out Protection",
+            "description": "Pause playback after a set number of hours with no interaction",
+            "group": "Video player",
             "valueType": "number",
-            "defaultValue": 0
+            "defaultValue": 0,
+            "min": 0.0
         },
         {
             "ns": "prefs",
             "key": "video_skip_back_on_resume_ms",
-            "label": "Video Skip Back On Resume Ms",
-            "description": "",
+            "label": "Skip Back on Resume",
+            "description": "Jump back a few seconds when un-pausing playback",
+            "group": "Video player",
             "valueType": "number",
-            "defaultValue": 0.0
+            "defaultValue": 0.0,
+            "min": 0.0
         },
         {
             "ns": "prefs",
             "key": "video_hold_speed_enabled",
-            "label": "Video Hold Speed Enabled",
-            "description": "",
+            "label": "Hold-to-Seek Speed",
+            "description": "Playback speed while holding",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": true
         },
@@ -876,30 +1095,34 @@
             "key": "video_hold_speed_multiplier",
             "label": "Video Hold Speed Multiplier",
             "description": "",
+            "group": "Video player",
             "valueType": "number",
             "defaultValue": 2.0
         },
         {
             "ns": "prefs",
             "key": "video_default_speed",
-            "label": "Video Default Speed",
-            "description": "",
+            "label": "Default Playback Speed",
+            "description": "Default initial playback speed for videos",
+            "group": "Video player",
             "valueType": "number",
             "defaultValue": 1.0
         },
         {
             "ns": "prefs",
             "key": "video_autoplay_next",
-            "label": "Video Autoplay Next",
-            "description": "",
+            "label": "Auto-play Next Video",
+            "description": "Automatically start next episode in sequence",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "still_watching_mode",
-            "label": "Still Watching Mode",
-            "description": "",
+            "label": "Still Watching Prompt",
+            "description": "Confirm before continuing after several episodes or hours",
+            "group": "Video player",
             "valueType": "enum",
             "defaultValue": "OFF",
             "options": [
@@ -907,53 +1130,66 @@
                 "EPISODES",
                 "HOURS",
                 "BOTH"
+            ],
+            "optionLabels": [
+                "Off",
+                "Episodes",
+                "Hours",
+                "Both"
             ]
         },
         {
             "ns": "prefs",
             "key": "still_watching_episode_threshold",
-            "label": "Still Watching Episode Threshold",
-            "description": "",
+            "label": "Episodes Before Prompt",
+            "description": "Consecutive auto-played episodes before the Still Watching prompt appears",
+            "group": "Video player",
             "valueType": "number",
-            "defaultValue": 0
+            "defaultValue": 0,
+            "min": 0.0
         },
         {
             "ns": "prefs",
             "key": "trailer_autoplay",
-            "label": "Trailer Autoplay",
-            "description": "",
+            "label": "Autoplay Trailers",
+            "description": "Automatically play media trailers on details pages",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "cinema_mode_enabled",
-            "label": "Cinema Mode Enabled",
-            "description": "",
+            "label": "Cinema Mode",
+            "description": "Play pre-roll intros before the main feature",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "video_swipe_seek_max_ms",
-            "label": "Video Swipe Seek Max Ms",
-            "description": "",
+            "label": "Swipe Seek Range",
+            "description": "Limit maximum skip duration for swipe seek gestures",
+            "group": "Video player",
             "valueType": "number",
             "defaultValue": 120000.0
         },
         {
             "ns": "prefs",
             "key": "video_remember_brightness",
-            "label": "Video Remember Brightness",
-            "description": "",
+            "label": "Remember Brightness",
+            "description": "Persist custom brightness level across playback sessions",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "video_brightness_level",
-            "label": "Video Brightness Level",
-            "description": "",
+            "label": "Default Brightness Level",
+            "description": "Default screen brightness for video playback",
+            "group": "Video player",
             "valueType": "number",
             "defaultValue": 0.5
         },
@@ -962,6 +1198,7 @@
             "key": "video_remember_muted",
             "label": "Video Remember Muted",
             "description": "",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": true
         },
@@ -970,6 +1207,7 @@
             "key": "video_muted",
             "label": "Video Muted",
             "description": "",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": false
         },
@@ -978,6 +1216,7 @@
             "key": "video_auto_skip_intro",
             "label": "Video Auto Skip Intro",
             "description": "",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": false
         },
@@ -986,46 +1225,52 @@
             "key": "video_auto_skip_outro",
             "label": "Video Auto Skip Outro",
             "description": "",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "trickplay_enabled",
-            "label": "Trickplay Enabled",
-            "description": "",
+            "label": "Trickplay Thumbnails Preview",
+            "description": "Show tile previews when scrubbing seek bar",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "trickplay_on_seek_gesture",
-            "label": "Trickplay On Seek Gesture",
-            "description": "",
+            "label": "Trickplay on Gestures",
+            "description": "Show thumbnails during swipe seek",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "video_episode_browser_enabled",
-            "label": "Video Episode Browser Enabled",
-            "description": "",
+            "label": "In-Player Episode Browser",
+            "description": "Show inline list of episodes during playback",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "video_show_playback_metadata",
-            "label": "Video Show Playback Metadata",
-            "description": "",
+            "label": "Show Playback Metadata",
+            "description": "Display stream stats, bitrate, and active codec overlay",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "video_preload_buffer_size",
-            "label": "Video Preload Buffer Size",
-            "description": "",
+            "label": "Playback Preload Buffer",
+            "description": "Buffer size limit ahead of current video track",
+            "group": "Video player",
             "valueType": "enum",
             "defaultValue": "MEDIUM",
             "options": [
@@ -1033,21 +1278,29 @@
                 "MEDIUM",
                 "HIGH",
                 "UNLIMITED"
+            ],
+            "optionLabels": [
+                "Low",
+                "Medium",
+                "High",
+                "Unlimited"
             ]
         },
         {
             "ns": "prefs",
             "key": "video_cache_size_mb",
-            "label": "Video Cache Size Mb",
-            "description": "",
+            "label": "Video Cache Size",
+            "description": "Maximum disk space for cached video",
+            "group": "Video player",
             "valueType": "number",
             "defaultValue": 1024
         },
         {
             "ns": "prefs",
             "key": "show_clock_in_player",
-            "label": "Show Clock In Player",
-            "description": "",
+            "label": "Show Clock in Player",
+            "description": "Display the current wall-clock time in the video player top bar",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": false
         },
@@ -1055,23 +1308,26 @@
             "ns": "prefs",
             "key": "show_time_remaining",
             "label": "Show Time Remaining",
-            "description": "",
+            "description": "Display remaining time instead of elapsed time",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "tv_zoom_mode_percent",
-            "label": "Tv Zoom Mode Percent",
-            "description": "",
+            "label": "TV Zoom Mode",
+            "description": "Crop/zoom video to fill the screen",
+            "group": "Video player",
             "valueType": "number",
             "defaultValue": 0.0
         },
         {
             "ns": "prefs",
             "key": "incognito_mode_enabled",
-            "label": "Incognito Mode Enabled",
-            "description": "",
+            "label": "Incognito Mode",
+            "description": "Bypasses reporting watching progress/history to server",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": false
         },
@@ -1080,6 +1336,7 @@
             "key": "segment_behaviors",
             "label": "Segment Behaviors",
             "description": "",
+            "group": "Video player",
             "valueType": "string"
         },
         {
@@ -1087,6 +1344,7 @@
             "key": "skip_intro_enabled",
             "label": "Skip Intro Enabled",
             "description": "",
+            "group": "Video player",
             "valueType": "string"
         },
         {
@@ -1094,6 +1352,7 @@
             "key": "skip_outro_enabled",
             "label": "Skip Outro Enabled",
             "description": "",
+            "group": "Video player",
             "valueType": "string"
         },
         {
@@ -1101,6 +1360,7 @@
             "key": "auto_skip_intro",
             "label": "Auto Skip Intro",
             "description": "",
+            "group": "Video player",
             "valueType": "string"
         },
         {
@@ -1108,93 +1368,105 @@
             "key": "auto_skip_outro",
             "label": "Auto Skip Outro",
             "description": "",
+            "group": "Video player",
             "valueType": "string"
         },
         {
             "ns": "prefs",
             "key": "skip_segments_on_seek",
-            "label": "Skip Segments On Seek",
-            "description": "",
+            "label": "Skip Segments on Seek",
+            "description": "Auto-skip a segment a forward seek lands in",
+            "group": "Video player",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "idle_ambient_enabled",
-            "label": "Idle Ambient Enabled",
-            "description": "",
+            "label": "Show When Idle",
+            "description": "Display the ambient \"Ready to play\" screen after a period of inactivity",
+            "group": "Screensaver",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
             "key": "idle_ambient_timeout_min",
-            "label": "Idle Ambient Timeout Min",
-            "description": "",
+            "label": "Idle Timeout",
+            "description": "How long to wait before the idle screen appears",
+            "group": "Screensaver",
             "valueType": "number",
             "defaultValue": 5.0
         },
         {
             "ns": "prefs",
             "key": "discord_presence_enabled",
-            "label": "Discord Presence Enabled",
-            "description": "",
+            "label": "Show Playing Activity",
+            "description": "Show the playing title as your Discord activity, with a SyncPlay join button",
+            "group": "Screensaver",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "hooks_enabled",
-            "label": "Hooks Enabled",
-            "description": "",
+            "label": "Enable Hooks",
+            "description": "Run a shell command on playback events (hooks run commands you configure locally)",
+            "group": "Screensaver",
             "valueType": "boolean",
             "defaultValue": false
         },
         {
             "ns": "prefs",
             "key": "hooks_play_cmd",
-            "label": "Hooks Play Cmd",
-            "description": "",
+            "label": "On Play Started",
+            "description": "Command to run when playback starts",
+            "group": "Screensaver",
             "valueType": "string",
             "defaultValue": ""
         },
         {
             "ns": "prefs",
             "key": "hooks_stop_cmd",
-            "label": "Hooks Stop Cmd",
-            "description": "",
+            "label": "On Play Stopped",
+            "description": "Command to run when playback stops",
+            "group": "Screensaver",
             "valueType": "string",
             "defaultValue": ""
         },
         {
             "ns": "prefs",
             "key": "hooks_ended_cmd",
-            "label": "Hooks Ended Cmd",
-            "description": "",
+            "label": "On Media Ended",
+            "description": "Command to run when media finishes playing",
+            "group": "Screensaver",
             "valueType": "string",
             "defaultValue": ""
         },
         {
             "ns": "prefs",
             "key": "hooks_idle_cmd",
-            "label": "Hooks Idle Cmd",
-            "description": "",
+            "label": "On Idle Enter",
+            "description": "Command to run when the app becomes idle",
+            "group": "Screensaver",
             "valueType": "string",
             "defaultValue": ""
         },
         {
             "ns": "prefs",
             "key": "hooks_idle_ended_cmd",
-            "label": "Hooks Idle Ended Cmd",
-            "description": "",
+            "label": "On Idle Exit",
+            "description": "Command to run when the app leaves idle",
+            "group": "Screensaver",
             "valueType": "string",
             "defaultValue": ""
         },
         {
             "ns": "prefs",
             "key": "enabled_experimental_features",
-            "label": "Enabled Experimental Features",
-            "description": "",
+            "label": "Card Clipping",
+            "description": "Clip home-screen cards to their rounded shape",
+            "group": "Experimental",
             "valueType": "string"
         },
         {
@@ -1202,6 +1474,7 @@
             "key": "self_update_check_enabled",
             "label": "Self Update Check Enabled",
             "description": "",
+            "group": "Experimental",
             "valueType": "boolean",
             "defaultValue": true
         },
@@ -1210,6 +1483,7 @@
             "key": "self_update_download_enabled",
             "label": "Self Update Download Enabled",
             "description": "",
+            "group": "Experimental",
             "valueType": "boolean",
             "defaultValue": false
         },
@@ -1218,13 +1492,15 @@
             "key": "app_language",
             "label": "App Language",
             "description": "",
+            "group": "Experimental",
             "valueType": "string"
         },
         {
             "ns": "prefs",
             "key": "show_share_media_option",
-            "label": "Show Share Media Option",
-            "description": "",
+            "label": "Show Share Media",
+            "description": "Show share options button on detail pages",
+            "group": "Experimental",
             "valueType": "boolean",
             "defaultValue": true
         },
@@ -1232,7 +1508,8 @@
             "ns": "prefs",
             "key": "hide_search_history",
             "label": "Hide Search History",
-            "description": "",
+            "description": "Hide recent search history from the search screen",
+            "group": "Experimental",
             "valueType": "boolean",
             "defaultValue": false
         },
@@ -1241,6 +1518,7 @@
             "key": "prefer_audio_description",
             "label": "Prefer Audio Description",
             "description": "",
+            "group": "Experimental",
             "valueType": "boolean",
             "defaultValue": false
         },
@@ -1249,6 +1527,7 @@
             "key": "update_dismiss_period",
             "label": "Update Dismiss Period",
             "description": "",
+            "group": "Experimental",
             "valueType": "string"
         },
         {
@@ -1256,6 +1535,7 @@
             "key": "remember_volume_per_content_type",
             "label": "Remember Volume Per Content Type",
             "description": "Remember playback volume per content type (movie, episode, …).",
+            "group": "General",
             "valueType": "boolean",
             "defaultValue": true
         },
@@ -1264,6 +1544,7 @@
             "key": "volume_profiles",
             "label": "Volume Profiles",
             "description": "Remembered volume levels as a JSON map of content-type bucket to level (0..1).",
+            "group": "General",
             "valueType": "string"
         }
     ]

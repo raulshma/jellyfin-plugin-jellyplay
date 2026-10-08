@@ -66,6 +66,55 @@ public sealed class ClientSettingsCatalogTests
     }
 
     [Fact]
+    public void Ranges_are_number_only_and_pinned_to_the_audited_rows()
+    {
+        var bounded = ClientSettingsCatalog.KnownSettings
+            .Where(s => s.Min is not null || s.Max is not null)
+            .ToList();
+
+        Assert.All(bounded, descriptor =>
+            Assert.True(descriptor.ValueType == "number", descriptor.Id + ": range on a non-number row"));
+
+        // The audited clamps (downmix 0–12 dB, the rest floor-at-zero). A new
+        // bound must be evidence-backed in the client's spec declarations —
+        // extend this set in the same commit as the artifact regen.
+        Assert.Equal(
+            new HashSet<string> { "downmix_boost_db", "next_up_max_days", "video_pass_out_protection_hours", "video_skip_back_on_resume_ms", "still_watching_episode_threshold" },
+            bounded.Select(s => s.Key).ToHashSet());
+    }
+
+    [Fact]
+    public void Labels_descriptions_and_groups_are_populated()
+    {
+        Assert.All(ClientSettingsCatalog.KnownSettings, descriptor =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(descriptor.Label), descriptor.Id + ": empty label");
+            Assert.False(string.IsNullOrWhiteSpace(descriptor.Group), descriptor.Id + ": empty group");
+        });
+        // The label/description resolution draws from the client's
+        // settings-search resources; a miss degrades to a mechanical label
+        // and an empty description, so pin a resolved sample.
+        var downmix = ClientSettingsCatalog.Find("prefs", "downmix_boost_db");
+        Assert.NotNull(downmix);
+        Assert.Equal("Stereo Downmix Boost", downmix!.Label);
+        Assert.False(string.IsNullOrWhiteSpace(downmix.Description), downmix.Id + ": description degraded");
+    }
+
+    [Fact]
+    public void Enum_option_labels_mirror_the_options()
+    {
+        Assert.All(ClientSettingsCatalog.KnownSettings.Where(s => s.ValueType == "enum"), descriptor =>
+        {
+            Assert.NotNull(descriptor.OptionLabels);
+            Assert.True(descriptor.Options!.Count == descriptor.OptionLabels!.Count,
+                descriptor.Id + ": optionLabels/options count mismatch");
+        });
+        var theme = ClientSettingsCatalog.Find("prefs", "theme_mode");
+        Assert.NotNull(theme);
+        Assert.Equal(["System", "Light", "Dark", "Scheduled"], theme!.OptionLabels);
+    }
+
+    [Fact]
     public void Defaults_match_declared_type()
     {
         Assert.All(ClientSettingsCatalog.KnownSettings.Where(s => s.DefaultValue is not null), descriptor =>

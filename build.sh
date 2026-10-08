@@ -39,8 +39,43 @@ cp dist/publish/MailKit*.dll "$STAGE/" 2>/dev/null || true
 cp dist/publish/MimeKit*.dll "$STAGE/" 2>/dev/null || true
 cp dist/publish/BouncyCastle*.dll "$STAGE/" 2>/dev/null || true
 
+# Dashboard icon: Jellyfin 12 serves /Plugins/{guid}/{version}/Image from the
+# meta.json "imagePath" file, which must sit in the plugin folder next to
+# meta.json — no auto-discovery, so both the png and the manifest ship in the zip.
+# (Embedded-image resources only work for plugins compiled into the server.)
+cp images/plugin.png "$STAGE/plugin.png"
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+cat > "$STAGE/meta.json" <<EOF
+{
+  "category": "General",
+  "changelog": "",
+  "description": "Companion plugin for the JellyPlay client: settings/profile sync, admin defaults, events and messages, Seerr SSO bridge and proxy, newsletter backend, ratings aggregation, custom/seasonal home rows, anime markers, recommendations, book bookmarks and transcode insights.",
+  "guid": "d3f1a6c8-5b2e-4d7f-9a0c-6e8b1f4d2a7c",
+  "name": "JellyPlay",
+  "overview": "Companion plugin for the JellyPlay client",
+  "owner": "raulshma",
+  "targetAbi": "",
+  "timestamp": "$TIMESTAMP",
+  "version": "${VERSION}.0",
+  "status": "Active",
+  "autoUpdate": false,
+  "imagePath": "plugin.png",
+  "assemblies": []
+}
+EOF
+
 rm -f "dist/Jellyfin.Plugin.JellyPlay.zip"
-(cd "$STAGE" && zip -q -r ../Jellyfin.Plugin.JellyPlay.zip .)
+zip_stage() {
+  # Prefer Info-ZIP; fall back to Windows' bsdtar (-a infers zip) or PowerShell.
+  if command -v zip >/dev/null 2>&1; then
+    (cd "$STAGE" && zip -q -r "../Jellyfin.Plugin.JellyPlay.zip" .)
+  elif [ -x "/c/Windows/System32/tar.exe" ]; then
+    (cd "$STAGE" && /c/Windows/System32/tar.exe -a -cf "../Jellyfin.Plugin.JellyPlay.zip" .)
+  else
+    (cd "$STAGE" && pwsh -NoProfile -Command "Compress-Archive -Path (Get-Location).Path + '/*' -DestinationPath '../Jellyfin.Plugin.JellyPlay.zip' -Force")
+  fi
+}
+zip_stage
 rm -rf "$STAGE" dist/publish
 
 echo "Built dist/Jellyfin.Plugin.JellyPlay.zip (version $VERSION):"

@@ -94,7 +94,7 @@
 
                 <div class="verticalSection" style="margin-top:2em">
                     <h3 class="sectionTitle" data-i18n="SectionDefaults">Client defaults</h3>
-                    <p class="sectionDescription" data-i18n="DefaultsDescription">Tri-state defaults for the clients' synced settings. Pick a key from the client's own preference catalog (or Custom… for keys newer than this plugin's catalog) — the value editor follows the key's type. Suggested fills only what the user has not set; forced overrides the user. Save writes the map, Push applies it to user accounts (forced always, suggested only where the key is unset).</p>
+                    <p class="sectionDescription" data-i18n="DefaultsDescription">Tri-state defaults for the clients' synced settings. Type in the Key field to search the client's own preference catalog — each hit shows what the setting does, and the value editor follows the key's type (anything not in the catalog is kept as a custom key, for clients newer than this plugin's catalog). Suggested fills only what the user has not set; forced overrides the user. Save writes the map, Push applies it to user accounts (forced always, suggested only where the key is unset).</p>
                     <div id="jellyplayDefaultsList" class="jellyplay-rows"></div>
                     <p class="sectionDescription" id="jellyplayDefaultsEmpty" data-i18n="DefaultsEmpty" style="display:none">No defaults configured yet.</p>
                     <div style="margin-top:0.75em">
@@ -142,7 +142,11 @@
         </div>
         <!-- Bump v whenever index.js changes: the config page endpoints send no
              cache headers, so browsers would otherwise keep running stale JS. -->
-        <script type="text/javascript" src="configurationpage?name=JellyPlay.js&amp;v=7"></script>
+        <!-- Jellyfin sends no cache headers for configuration pages, so this
+             v= query is the ONLY cache-buster the page JS gets. BUMP IT on
+             every index.js change, or upgraded browsers keep running the old
+             script indefinitely. -->
+        <script type="text/javascript" src="configurationpage?name=JellyPlay.js&amp;v=8"></script>
     </div>
 </body>
 </html>

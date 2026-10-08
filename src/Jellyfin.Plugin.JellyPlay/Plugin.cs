@@ -30,6 +30,11 @@ public class JellyPlayPlugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
     public override string Name => "JellyPlay";
 
+    /// <summary>Shown on the dashboard; also re-persisted into meta.json on every load
+    /// (PluginManager syncs manifest fields from the instance), so it must match the
+    /// description shipped in the package meta.json.</summary>
+    public override string Description => "Companion plugin for the JellyPlay client: settings/profile sync, admin defaults, events and messages, Seerr SSO bridge and proxy, newsletter backend, ratings aggregation, custom/seasonal home rows, anime markers, recommendations, book bookmarks and transcode insights.";
+
     public override Guid Id => Guid.Parse(JellyPlayContract.PluginId);
 
     /// <summary>Plugin data directory (database, file caches, backups).</summary>

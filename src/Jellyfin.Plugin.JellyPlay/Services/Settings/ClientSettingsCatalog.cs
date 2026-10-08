@@ -29,8 +29,16 @@ public sealed record ClientSettingDescriptor
     /// <summary>Human-facing name for the dashboard.</summary>
     public required string Label { get; init; }
 
-    /// <summary>One-line explanation shown as field help.</summary>
+    /// <summary>One-line explanation shown as field help. Resolved by the
+    /// generator from the client's settings-search subtitle strings; empty
+    /// for rows the client declares no subtitle for.</summary>
     public string Description { get; init; } = string.Empty;
+
+    /// <summary>
+    /// The domain the client groups the setting under (Appearance, Playback,
+    /// …) — dashboard grouping metadata; not part of the wire key.
+    /// </summary>
+    public string Group { get; init; } = string.Empty;
 
     /// <summary>boolean | number | enum | string | json.</summary>
     public required string ValueType { get; init; }
@@ -44,6 +52,13 @@ public sealed record ClientSettingDescriptor
 
     /// <summary>Allowed values when <see cref="ValueType"/> is "enum".</summary>
     public IReadOnlyList<string>? Options { get; init; }
+
+    /// <summary>
+    /// Display labels for <see cref="Options"/>, index-aligned — enum
+    /// vocabularies are Kotlin constant names on the wire; these are what the
+    /// dashboard shows instead.
+    /// </summary>
+    public IReadOnlyList<string>? OptionLabels { get; init; }
 
     /// <summary>The composite "ns/key" identifier used everywhere on the wire.</summary>
     public string Id => Ns + "/" + Key;
@@ -249,11 +264,13 @@ public static class ClientSettingsCatalog
                 Key = entry.Key,
                 Label = entry.Label,
                 Description = entry.Description ?? string.Empty,
+                Group = entry.Group ?? string.Empty,
                 ValueType = entry.ValueType,
                 DefaultValue = entry.DefaultValue,
                 Min = entry.Min,
                 Max = entry.Max,
                 Options = entry.Options?.AsReadOnly(),
+                OptionLabels = entry.OptionLabels?.AsReadOnly(),
             })
             .ToList();
     }
@@ -266,9 +283,11 @@ public static class ClientSettingsCatalog
         string Key,
         string Label,
         string? Description,
+        string? Group,
         string ValueType,
         JsonElement? DefaultValue,
         double? Min,
         double? Max,
-        List<string>? Options);
+        List<string>? Options,
+        List<string>? OptionLabels);
 }

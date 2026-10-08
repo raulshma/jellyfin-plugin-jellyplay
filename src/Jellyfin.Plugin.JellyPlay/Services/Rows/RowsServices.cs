@@ -111,7 +111,7 @@ public sealed partial class CustomRowsService
         return resolved with { Title = row.Title };
     }
 
-    /// <summary>Letterboxd list pages are scrapeable HTML; each entry has a poster with title/year in the film caption.</summary>
+    /// <summary>Letterboxd list pages are scrapeable HTML with the lazy-poster data attributes below.</summary>
     private async Task<List<RowItem>?> FetchLetterboxdAsync(string listSlug)
     {
         // Leverage the shared fetch seam with this source's own breaker; the
@@ -130,10 +130,15 @@ public sealed partial class CustomRowsService
             missCache: true);
     }
 
+    /// <summary>
+    /// Letterboxd list pages carry each entry as a lazy-poster React stub:
+    /// <c>data-item-name="Title (year)"</c> on the posteritem component (the
+    /// old img-alt + /film/ anchor markup is gone — posters hydrate client
+    /// side, so the data attributes are the only server-rendered metadata).
+    /// </summary>
     internal static List<RowItem> ParseLetterboxd(string html)
     {
         var items = new List<RowItem>();
-        // poster container: <li class="posteritem" ... data-film-id="..." ...> ... alt="Film title (year)" ... href="/film/title/"
         foreach (var match in PosterItemRegex().Matches(html))
         {
             if (match is not System.Text.RegularExpressions.Match m)
@@ -150,7 +155,7 @@ public sealed partial class CustomRowsService
     }
 
     [System.Text.RegularExpressions.GeneratedRegex(
-        @"alt=""(?<name>[^""]+?)(?:\s\((?<year>\d{4})\))?""[\s\S]{0,200}?href=""/film/(?<slug>[^/""]+)/""",
+        @"data-item-name=""(?<name>[^""]+?)(?:\s\((?<year>\d{4})\))?""",
         System.Text.RegularExpressions.RegexOptions.Singleline)]
     private static partial System.Text.RegularExpressions.Regex PosterItemRegex();
 

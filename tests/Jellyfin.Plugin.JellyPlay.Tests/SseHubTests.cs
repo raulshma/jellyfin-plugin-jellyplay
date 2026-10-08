@@ -220,23 +220,30 @@ public class ScraperParseTests
     [Fact]
     public void Letterboxd_Parser_ExtractsTitleYear()
     {
+        // Current letterboxd markup: lazy-poster React stubs with data
+        // attributes (posters/anchors hydrate client side).
         const string html = """
-            <ul class="film-list">
-              <li class="posteritem">
-                <img alt="Seven Samurai (1954)" src="/x.jpg"><a href="/film/seven-samurai/"></a>
+            <ul class="poster-list -p125 -grid">
+              <li class="posteritem" data-owner-rating="10">
+                <div class="react-component" data-component-class="LazyPoster" data-item-name="Seven Samurai (1954)" data-item-slug="seven-samurai" data-item-link="/film/seven-samurai/"></div>
               </li>
               <li class="posteritem">
-                <img alt="Rashomon" src="/y.jpg"><a href="/film/rashomon/"></a>
+                <div class="react-component" data-component-class="LazyPoster" data-item-name="Rashomon" data-item-slug="rashomon" data-item-link="/film/rashomon/"></div>
+              </li>
+              <li class="posteritem">
+                <div class="react-component" data-component-class="LazyPoster" data-item-name="It&#039;s a Wonderful Life (1946)" data-item-slug="its-a-wonderful-life" data-item-link="/film/its-a-wonderful-life/"></div>
               </li>
             </ul>
             """;
 
         var items = Jellyfin.Plugin.JellyPlay.Services.Rows.CustomRowsService.ParseLetterboxd(html);
-        Assert.Equal(2, items.Count);
+        Assert.Equal(3, items.Count);
         Assert.Equal("Seven Samurai", items[0].Title);
         Assert.Equal("1954", items[0].Year);
         Assert.Equal("Rashomon", items[1].Title);
         Assert.Null(items[1].Year);
+        Assert.Equal("It's a Wonderful Life", items[2].Title);
+        Assert.Equal("1946", items[2].Year);
     }
 
     [Fact]

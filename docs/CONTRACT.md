@@ -46,7 +46,7 @@ GET    jellyplay/settings/resolved/{profile}?       → merged: forced-defaults 
                                                     + additive `modes`: { "<ns>/<key>": "unset"|"suggested"|"forced" }
 POST   jellyplay/settings/profile/{profile}         → batch into a device profile (captures a restore point first)
 GET    jellyplay/settings/stream                    → SSE (events: settings.changed, settings.reset)
-GET    jellyplay/settings/catalog                   → { catalogSchema, settings: [{ns, key, label, description, valueType, defaultValue, min, max, options}] }
+GET    jellyplay/settings/catalog                   → { catalogSchema, settings: [{ns, key, label, description, group, valueType, defaultValue, min, max, options, optionLabels}] }
 ```
 
 **Pagination** (additive, no bump): `GET settings` and `GET settings/changed`
@@ -96,8 +96,14 @@ client repo's `:shared:core:datastore:generateSettingsCatalog` Gradle task
 walks the client's `PreferenceSpec` declarations (the same rows the stores
 persist through) and writes the artifact embedded at
 `src/Jellyfin.Plugin.JellyPlay/Resources/jellyplay-settings-catalog.json`.
-The client's `checkSettingsCatalog` task (wired into `check`) fails when the
-committed artifact drifts from the declarations, so keys, types, enum
+Human-facing metadata is derived too: `label`/`description` resolve from the
+client's settings-search resource strings (the same text the in-app settings
+search shows), `group` carries the client's domain grouping, `optionLabels`
+mirror the enum `options` with display names (the wire values stay the raw
+constants), and `min`/`max` advertise audited numeric clamps (absent when the
+client declares none). The client's `checkSettingsCatalog` task (wired into
+`check`) fails when the committed artifact drifts from the declarations, so
+keys, types, enum
 vocabularies and defaults cannot silently diverge between client and plugin.
 The catalog is advisory: unknown keys stay legal on the sync surface (forward
 compatibility — a newer client against an older plugin), and secrets/identity
