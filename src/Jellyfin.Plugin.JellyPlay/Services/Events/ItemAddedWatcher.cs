@@ -29,7 +29,6 @@ public sealed class ItemAddedWatcher : IHostedService, IDisposable
 {
     private readonly ILibraryManager _libraryManager;
     private readonly EventService _events;
-    private readonly Func<EventsConfig> _config;
     private readonly Services.Admin.AdminUsers _adminUsers;
     private readonly ILogger<ItemAddedWatcher> _logger;
     private readonly TimeProvider _clock;
@@ -49,16 +48,15 @@ public sealed class ItemAddedWatcher : IHostedService, IDisposable
     {
         _libraryManager = libraryManager;
         _events = events;
-        _config = config;
         _adminUsers = adminUsers;
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
         _pipeline = pipeline ?? new NewMediaPipeline(
-            buffer,
             config,
             _clock,
             () => libraryManager.GetVirtualFolders(),
-            null);
+            null,
+            buffer);
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -74,12 +72,7 @@ public sealed class ItemAddedWatcher : IHostedService, IDisposable
     {
         _libraryManager.ItemAdded -= OnItemAdded;
         _flushTimer?.Change(Timeout.Infinite, Timeout.Infinite);
-        var adminUserIds = _adminUsers.AdminUserIds;
-        foreach (var group in _pipeline.FlushAll())
-        {
-            _events.PublishNewMedia(group, adminUserIds);
-        }
-
+        _pipeline.DrainAll(_events, _adminUsers.AdminUserIds);
         return Task.CompletedTask;
     }
 
@@ -96,12 +89,8 @@ public sealed class ItemAddedWatcher : IHostedService, IDisposable
             return;
         }
 
-        var config = _config();
-        if (!config.NewMediaEnabled)
-        {
-            return;
-        }
-
+        // No enabled check here — the pipeline owns the gate (intake and
+        // emission alike).
         switch (item)
         {
             case Movie movie:
@@ -142,25 +131,10 @@ public sealed class ItemAddedWatcher : IHostedService, IDisposable
     {
         try
         {
-            // Self-gating tick: with new-media disabled or nothing buffered
-            // there is no work — skip the admin query, the host virtual-folder
-            // walk and the buffer drain entirely (the folders refresh lazily
-            // on the first tick that has pending work).
-            if (!_config().NewMediaEnabled || _pipeline.PendingGroupCount == 0)
-            {
-                return;
-            }
-
-            // One snapshot per working tick: the admin audience for the whole
-            // batch and the virtual folders the per-item library match reads
-            // (both live in the pipeline; the adapter only triggers the
-            // refresh).
-            _pipeline.RefreshVirtualFolders();
-            var adminUserIds = _adminUsers.AdminUserIds;
-            foreach (var group in _pipeline.PopDue())
-            {
-                _events.PublishNewMedia(group, adminUserIds);
-            }
+            // The whole tick body (self-gating fast path, the per-tick folder
+            // snapshot, the drain under the batch's shared admin audience)
+            // lives in the pipeline.
+            _pipeline.DrainDue(_events, _adminUsers.AdminUserIds);
         }
         catch (Exception ex)
         {

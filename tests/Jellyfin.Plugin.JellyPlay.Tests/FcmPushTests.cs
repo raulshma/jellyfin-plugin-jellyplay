@@ -480,18 +480,15 @@ public sealed class FcmPayloadTests
 // Dispatcher routing: fcm only when configured, token shared per fan-out
 // ---------------------------------------------------------------------------
 
-public sealed class FcmDispatchTests : IDisposable
+public sealed class FcmDispatchTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-fcm-disp-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
     private readonly FakeServiceAccount _sa = new();
     private readonly FakeFcmTokenEndpoint _endpoint = new();
     private readonly PushConfig _config = new() { Enabled = true };
 
     public FcmDispatchTests()
+        : base("fcm-disp")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
     }
 
     public void Dispose()
@@ -594,31 +591,17 @@ public sealed class FcmDispatchTests : IDisposable
 // Registration API: fcm accepted only when configured (push-kind-unavailable)
 // ---------------------------------------------------------------------------
 
-public sealed class FcmRegistrationApiTests : IDisposable
+public sealed class FcmRegistrationApiTests : TempDatabaseFixture
 {
     private const string UserA = "33333333-3333-3333-3333-333333333333";
 
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-fcm-api-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
     private readonly PushConfig _pushConfig = new();
 
     public FcmRegistrationApiTests()
+        : base("fcm-api")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private DevicesController Controller(bool withPushConfig = true)
     {

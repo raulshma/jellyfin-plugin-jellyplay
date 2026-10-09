@@ -191,12 +191,11 @@ public sealed partial class AnimeMarkersService
     private readonly CircuitBreaker _fribbBreaker;
     private readonly ILogger<AnimeMarkersService> _logger;
     private readonly TimeProvider _clock;
-    private readonly Dictionary<string, FribbEntry> _fribbIndex = new(StringComparer.Ordinal);
     private readonly object _fribbLock = new();
     private Task? _fribbFetch;
     private DateTime _fribbLoadedUtc;
 
-    /// <summary>By-kind lookup over the latest fetched list (the flat index's kind-aware sibling). Guarded by <see cref="_fribbLock"/>.</summary>
+    /// <summary>The ONE Fribb lookup structure: by-kind alias index over the latest fetched list. Guarded by <see cref="_fribbLock"/>.</summary>
     private FribbAliasIndex? _fribbAliases;
 
     public AnimeMarkersService(ResilientFetcher fetcher, FileCacheStore cache, ILibraryManager libraryManager, Func<AnimeConfig> config, ILogger<AnimeMarkersService> logger, TimeProvider? clock = null)
@@ -214,13 +213,76 @@ public sealed partial class AnimeMarkersService
 
     public bool IsEnabled => _config().Enabled;
 
-    /// <summary>True when every marker source is circuit-open (the refresh task skips such series entirely).</summary>
+    /// <summary>True when every marker source is circuit-open (the warm run skips such series entirely).</summary>
     public bool AllFetchBreakersOpen
     {
         get
         {
             return _fillerBreaker.IsOpen() && _tenraiBreaker.IsOpen() && _fribbBreaker.IsOpen();
         }
+    }
+
+    /// <summary>Warm-run bounds: the per-run series cap and the jitter between warm calls (pacing the upstream sources).</summary>
+    public const int MaxWarmSeriesPerRun = 500;
+    public const int WarmSeriesDelayMs = 250;
+
+    /// <summary>One warm run's outcome counters.</summary>
+    public sealed record WarmOutcome(int Warmed, int Missed, int Skipped, int RunSize);
+
+    /// <summary>
+    /// The warm-run policy, testable through the service's interface (the
+    /// scheduled task only queries the library and passes the slice): the
+    /// per-run cap, the jitter pacing, the breaker-skip accounting and the
+    /// counters. <paramref name="series"/> is the (id, name) slice the caller
+    /// selected — ordering is the caller's contract (the task's: raw Guid
+    /// order, deterministic across runs).
+    /// </summary>
+    public async Task<WarmOutcome> WarmAsync(IReadOnlyList<(Guid Id, string Name)> series, IProgress<double>? progress = null, CancellationToken cancellationToken = default)
+    {
+        var run = series.Count > MaxWarmSeriesPerRun ? series.Take(MaxWarmSeriesPerRun).ToList() : series;
+
+        var warmed = 0;
+        var missed = 0;
+        var skipped = 0;
+        var done = 0;
+        foreach (var (id, name) in run)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsEnabled || AllFetchBreakersOpen)
+            {
+                skipped++;
+            }
+            else
+            {
+                try
+                {
+                    if (await GetSeriesMarkers(id.ToString(), providerSeriesId: null, cancellationToken) is not null)
+                    {
+                        warmed++;
+                    }
+                    else
+                    {
+                        missed++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Marker warm failed for {Series}", name);
+                    missed++;
+                }
+            }
+
+            done++;
+            progress?.Report(100.0 * done / Math.Max(1, run.Count));
+
+            // Jitter between warm calls so the run paces the upstream sources.
+            if (done < run.Count)
+            {
+                await Task.Delay(WarmSeriesDelayMs, cancellationToken);
+            }
+        }
+
+        return new WarmOutcome(warmed, missed, skipped, run.Count);
     }
 
     public async Task<SeriesMarkers?> GetSeriesMarkers(string seriesId, string? providerSeriesId, CancellationToken cancellationToken = default)
@@ -419,14 +481,6 @@ public sealed partial class AnimeMarkersService
         await EnsureFribbIndexAsync(cancellationToken);
         lock (_fribbLock)
         {
-            foreach (var key in ids.LookupKeys())
-            {
-                if (_fribbIndex.TryGetValue(key, out var hit))
-                {
-                    return hit;
-                }
-            }
-
             return _fribbAliases?.Find(ids);
         }
     }
@@ -478,7 +532,6 @@ public sealed partial class AnimeMarkersService
             }
 
             using var doc = JsonDocument.Parse(json);
-            var index = new Dictionary<string, FribbEntry>(StringComparer.Ordinal);
             var entries = new List<FribbEntry>();
             foreach (var entry in doc.RootElement.EnumerateArray())
             {
@@ -486,43 +539,20 @@ public sealed partial class AnimeMarkersService
                 var mal = GetString(entry, "mal_id");
                 var tvdb = GetString(entry, "tvdb_id");
                 var tmdb = GetString(entry, "tmdb_id") ?? GetString(entry, "tmdb_show_id");
-                var key = anilist ?? mal ?? tvdb ?? tmdb;
-                if (key is null)
+                if (anilist is null && mal is null && tvdb is null && tmdb is null)
                 {
                     continue;
                 }
 
-                var fribb = new FribbEntry(anilist, mal, tvdb, tmdb);
-                entries.Add(fribb);
-                index[key] = fribb;
-                // Alias every known id so the lookup works from whichever id
-                // the library carries (anilist/mal/tvdb/tmdb).
-                if (tvdb is not null)
-                {
-                    index[tvdb] = fribb;
-                }
-
-                if (mal is not null)
-                {
-                    index[mal] = fribb;
-                }
-
-                if (tmdb is not null)
-                {
-                    index[tmdb] = fribb;
-                }
+                entries.Add(new FribbEntry(anilist, mal, tvdb, tmdb));
             }
 
-            // Built in document order (first entry wins a duplicate id); the
-            // flat index above stays last-wins per alias.
+            // Built in document order: the first entry wins a duplicate id
+            // (the linear FirstOrDefault scan's semantics). One structure, one
+            // duplicate-resolution rule.
             var aliases = new FribbAliasIndex(entries);
             lock (_fribbLock)
             {
-                foreach (var (key, entry) in index)
-                {
-                    _fribbIndex[key] = entry;
-                }
-
                 _fribbAliases = aliases;
                 _fribbLoadedUtc = _clock.GetUtcNow().UtcDateTime;
                 _fribbFetch = null;

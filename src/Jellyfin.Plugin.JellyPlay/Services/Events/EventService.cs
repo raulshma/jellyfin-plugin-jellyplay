@@ -18,13 +18,12 @@ namespace Jellyfin.Plugin.JellyPlay.Services.Events;
 /// fan out to push-registered devices (same audiences as SSE;
 /// fire-and-forget, never blocking the publish).
 /// </summary>
-public sealed class EventService
+public sealed class EventService : INewMediaSink
 {
     private readonly SseHub _hub;
     private readonly Func<EventsConfig> _config;
     private readonly Func<IReadOnlyList<string>> _adminUserIds;
     private readonly NewMediaPipeline _pipeline;
-    private readonly PushDispatcher? _push;
     private readonly ILogger<EventService> _logger;
     private readonly TimeProvider _clock;
     private readonly NotificationFanout _fanout;
@@ -35,41 +34,28 @@ public sealed class EventService
         Func<IReadOnlyList<string>> adminUserIds,
         NewMediaPipeline pipeline,
         ILogger<EventService> logger,
-        PushDispatcher? push = null,
-        TimeProvider? clock = null,
-        NotificationFanout? fanout = null)
+        NotificationFanout fanout,
+        TimeProvider? clock = null)
     {
         _hub = hub;
         _config = config;
         _adminUserIds = adminUserIds;
         _pipeline = pipeline;
-        _push = push;
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
-        _fanout = fanout ?? new NotificationFanout(hub, push);
+        _fanout = fanout;
     }
 
     public int PublishNewMedia(EpisodeGroup group, IReadOnlyList<string>? adminUserIds = null)
     {
-        var config = _config();
-        if (!config.NewMediaEnabled)
-        {
-            return 0;
-        }
-
-        // Library allow-listing and dedup are the pipeline's seams (their one
-        // home): the pipeline's own recent-key store is the dedup truth.
-        if (!_pipeline.IsLibraryAllowed(group.LibraryId))
+        // The ONE emission gate (enabled + library allow-list + dedup) is the
+        // pipeline's — one seam call, the dedup-mutating check exactly once.
+        if (!_pipeline.ShouldEmit(group))
         {
             return 0;
         }
 
         var first = group.Episodes[0];
-        if (!_pipeline.ShouldEmit(NewMediaPipeline.GroupDedupKey(group), config.DedupThresholdSeconds))
-        {
-            return 0;
-        }
-
         var title = group.Episodes.Count == 1
             ? $"{group.SeriesName} — {first.Name}"
             : $"{group.SeriesName} — {group.Episodes.Count} new episodes";
@@ -83,24 +69,14 @@ public sealed class EventService
             group.LibraryId,
             _clock.GetUtcNow().ToUnixTimeMilliseconds()));
 
-        return DeliverNewMedia(config, payload, new PushMessage(
+        return DeliverNewMedia(_config(), payload, new PushMessage(
             PushKinds.NewMedia, title, "New media added", first.ItemId.ToString()), adminUserIds);
     }
 
     public int PublishNewMovie(Guid itemId, string title, string? libraryId)
     {
-        var config = _config();
-        if (!config.NewMediaEnabled)
-        {
-            return 0;
-        }
-
-        if (!_pipeline.IsLibraryAllowed(libraryId))
-        {
-            return 0;
-        }
-
-        if (!_pipeline.ShouldEmit(NewMediaPipeline.MovieDedupKey(itemId), config.DedupThresholdSeconds))
+        // The ONE emission gate (movie shape) is the pipeline's.
+        if (!_pipeline.ShouldEmitMovie(itemId, libraryId))
         {
             return 0;
         }
@@ -108,7 +84,7 @@ public sealed class EventService
         var payload = JsonSerializer.Serialize(new NewMediaEventPayload(
             "new-media", itemId.ToString(), null, null, title, 1, libraryId,
             _clock.GetUtcNow().ToUnixTimeMilliseconds()));
-        return DeliverNewMedia(config, payload, new PushMessage(PushKinds.NewMedia, title, "New media added"), adminUserIds: null);
+        return DeliverNewMedia(_config(), payload, new PushMessage(PushKinds.NewMedia, title, "New media added"), adminUserIds: null);
     }
 
     public int PublishBroadcast(string title, string body, string? url)

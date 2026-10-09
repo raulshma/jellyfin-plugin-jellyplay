@@ -27,8 +27,9 @@ public sealed class NewMediaAudienceTests
             hub,
             config,
             () => new List<string> { "admin-1" },
-            new NewMediaPipeline(new EpisodeGroupBuffer(), config),
-            NullLogger<EventService>.Instance);
+            new NewMediaPipeline(config),
+            NullLogger<EventService>.Instance,
+            new NotificationFanout(hub));
     }
 
     private static EpisodeGroup Group(Guid itemId)
@@ -95,8 +96,9 @@ public sealed class NewMediaAudienceTests
             hub,
             config,
             () => new List<string> { "admin-1" },
-            new NewMediaPipeline(new EpisodeGroupBuffer(), config),
-            NullLogger<EventService>.Instance);
+            new NewMediaPipeline(config),
+            NullLogger<EventService>.Instance,
+            new NotificationFanout(hub));
 
         Assert.Equal(0, service.PublishNewMedia(Group(Guid.NewGuid())));
     }
@@ -123,10 +125,10 @@ public sealed class NewMediaAudienceTests
     [Fact]
     public void ResolveAudienceTargets_NullForBroadcast_AdminSetForAdmins()
     {
-        Assert.Null(Audience.ResolveEventTargets("all", new[] { "admin-1" }));
-        Assert.Null(Audience.ResolveEventTargets(null, Array.Empty<string>()));
+        Assert.Null(Audience.ResolveAudience("all", new[] { "admin-1" }).UserIds);
+        Assert.Null(Audience.ResolveAudience((string?)null, Array.Empty<string>()).UserIds);
 
-        var targets = Audience.ResolveEventTargets("admins", new[] { "admin-1", "admin-2" });
+        var targets = Audience.ResolveAudience("admins", new[] { "admin-1", "admin-2" }).UserIds;
         Assert.NotNull(targets);
         Assert.Equal(2, targets!.Count);
         Assert.True(targets.Contains("admin-1"));

@@ -197,7 +197,7 @@ public sealed class SettingsService : IDisposable
             deviceId,
             maxWriteUpdatedAt: maxWriteUpdatedAt ?? (ServerNow + MaxClockSkewMilliseconds),
             op: SyncOpRecorder.OpPush,
-            historyTs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            historyTs: ServerNow,
             rejectsJsonBuilder: static rejected => SyncRejectsCodec.Encode(rejected));
 
         if (outcome.Applied.Count > 0)
@@ -453,7 +453,7 @@ public sealed class SettingsService : IDisposable
         }
 
         var bytes = JsonSerializer.SerializeToUtf8Bytes(payload);
-        _db.SetAdminDefaults(scope, bytes, _clock.GetTimestamp());
+        _db.SetAdminDefaults(scope, bytes, ServerNow);
     }
 
     /// <summary>

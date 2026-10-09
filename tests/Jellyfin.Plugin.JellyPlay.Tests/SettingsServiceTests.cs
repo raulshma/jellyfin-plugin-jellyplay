@@ -30,33 +30,19 @@ internal static class SettingsServiceFactory
             clock);
 }
 
-public sealed class SettingsServiceTests : IDisposable
+public sealed class SettingsServiceTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-svc-tests-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
     private readonly SnapshotService _snapshots;
     private readonly SettingsService _service;
     private Configuration.SyncConfig _syncConfig = new();
 
     public SettingsServiceTests()
+        : base("svc-tests")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
         _snapshots = new SnapshotService(_db, () => _syncConfig);
         _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => _syncConfig, NullLogger<SettingsService>.Instance, _snapshots);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private static Api.SettingsWriteDto Dto(string ns, string key, long at, string json = "true")
         => new() { Ns = ns, Key = key, SchemaVersion = 1, UpdatedAt = at, Value = JsonDocument.Parse(json).RootElement };
@@ -304,16 +290,11 @@ public sealed class SettingsServiceTests : IDisposable
     // Clock-skew clamp
     // ------------------------------------------------------------------
 
-    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
-    {
-        public override DateTimeOffset GetUtcNow() => now;
-    }
-
     [Fact]
     public void ApplyBatch_WriteTooFarAhead_IsRejectedClockSkew()
     {
         var at = DateTimeOffset.Parse("2026-01-01T00:00:00Z");
-        var service = SettingsServiceFactory.Create(_db, new SseHub(NullLogger<SseHub>.Instance), clock: new FixedTimeProvider(at));
+        var service = SettingsServiceFactory.Create(_db, new SseHub(NullLogger<SseHub>.Instance), clock: new FakeTimeProvider(at));
         var serverNow = at.ToUnixTimeMilliseconds();
 
         var farAhead = service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", serverNow + SettingsService.MaxClockSkewMilliseconds + 1) });
@@ -472,7 +453,7 @@ public sealed class SettingsServiceTests : IDisposable
         // this race — the restore must not either).
         var at = DateTimeOffset.Parse("2026-01-01T00:00:00Z");
         var serverNow = at.ToUnixTimeMilliseconds();
-        var service = SettingsServiceFactory.Create(_db, new SseHub(NullLogger<SseHub>.Instance), clock: new FixedTimeProvider(at));
+        var service = SettingsServiceFactory.Create(_db, new SseHub(NullLogger<SseHub>.Instance), clock: new FakeTimeProvider(at));
 
         service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1, "\"keep\"") });
         var snapshotId = _snapshots.Create("u1", "manual")!.Value;
@@ -498,7 +479,7 @@ public sealed class SettingsServiceTests : IDisposable
         // value must win, not silently restore nothing.
         var at = DateTimeOffset.Parse("2026-01-01T00:00:00Z");
         var serverNow = at.ToUnixTimeMilliseconds();
-        var service = SettingsServiceFactory.Create(_db, new SseHub(NullLogger<SseHub>.Instance), clock: new FixedTimeProvider(at));
+        var service = SettingsServiceFactory.Create(_db, new SseHub(NullLogger<SseHub>.Instance), clock: new FakeTimeProvider(at));
 
         service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1, "\"keep\"") });
         var snapshotId = _snapshots.Create("u1", "manual")!.Value;

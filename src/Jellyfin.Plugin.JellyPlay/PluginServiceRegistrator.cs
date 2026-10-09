@@ -131,16 +131,15 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
 
         // Events & messages — constructor-injected (hub, config Func, admin-ids
         // Func, logger, dispatcher) straight from this container. The
-        // grouping buffer comes first (the pipeline wraps it), then the
-        // pipeline (TimeProvider + virtual-folder Func seams, 10s tick
-        // preserved), then the services that leverage both seams.
-        serviceCollection.AddSingleton<EpisodeGroupBuffer>();
+        // pipeline owns the grouping buffer internally (TimeProvider +
+        // virtual-folder Func seams, 10s tick preserved); the services that
+        // leverage its seams follow.
         serviceCollection.AddSingleton(sp => new NewMediaPipeline(
-            sp.GetRequiredService<EpisodeGroupBuffer>(),
             sp.GetRequiredService<Func<Configuration.EventsConfig>>(),
             TimeProvider.System,
             () => sp.GetRequiredService<ILibraryManager>().GetVirtualFolders(),
             sp.GetRequiredService<ILogger<NewMediaPipeline>>()));
+        serviceCollection.AddSingleton<Services.Shared.NotificationFanout>();
         serviceCollection.AddSingleton<EventService>();
         serviceCollection.AddSingleton<MessageService>();
         serviceCollection.AddHostedService<ItemAddedWatcher>();

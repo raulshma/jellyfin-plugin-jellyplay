@@ -23,25 +23,14 @@ namespace Jellyfin.Plugin.JellyPlay.Tests;
 // ---------------------------------------------------------------------------
 
 /// <summary>The v4 → v5 migration creates the analytics tables without touching stored data, idempotently.</summary>
-public sealed class AnalyticsMigrationTests : IDisposable
+public sealed class AnalyticsMigrationTests : TempDirFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-analytics-mig-" + Guid.NewGuid().ToString("N"));
 
     public AnalyticsMigrationTests()
+        : base("analytics-mig")
     {
-        Directory.CreateDirectory(_tempDir);
     }
 
-    public void Dispose()
-    {
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private string DbPath => Path.Combine(_tempDir, "plugins", "JellyPlay", "jellyplay_plugin.db");
 
@@ -208,37 +197,23 @@ public sealed class PlaybackRecordingRulesTests
 // Recording: insert dedup + event-driven rows
 // ---------------------------------------------------------------------------
 
-public sealed class AnalyticsRecordingTests : IDisposable
+public sealed class AnalyticsRecordingTests : TempDatabaseFixture
 {
     private static readonly DateTimeOffset FixedNow = new(2026, 10, 6, 12, 0, 0, TimeSpan.Zero);
 
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-analytics-rec-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
 
     public AnalyticsRecordingTests()
+        : base("analytics-rec")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
-    private AnalyticsService Service(Func<AnalyticsConfig>? config = null, Func<DateTimeOffset>? clock = null)
+    private AnalyticsService Service(Func<AnalyticsConfig>? config = null, TimeProvider? clock = null)
         => new(
             _db,
             config ?? (() => new AnalyticsConfig { Enabled = true }),
             NullLogger<AnalyticsService>.Instance,
-            clock ?? (() => FixedNow));
+            clock ?? new FakeTimeProvider(FixedNow));
 
     private static PlaybackStopEventArgs Stop(BaseItem item, Guid userId, long? positionTicks, string playSessionId = "ps-1", string? playMethod = null)
         => new()
@@ -393,8 +368,8 @@ public sealed class AnalyticsRecordingTests : IDisposable
     [Fact]
     public async Task ProgressThenStop_RecordsWithTrackedStart_AndDedupesReplays()
     {
-        var clock = new FakeClock(FixedNow.AddMinutes(-30));
-        var service = Service(clock: () => clock.Now);
+        var clock = new FakeTimeProvider(FixedNow.AddMinutes(-30));
+        var service = Service(clock: clock);
         var item = Movie(runTimeTicks: 40 * TimeSpan.TicksPerMinute);
         var userId = Guid.NewGuid();
 
@@ -421,8 +396,8 @@ public sealed class AnalyticsRecordingTests : IDisposable
     [Fact]
     public async Task ProgressToAnotherItem_ClosesTheAbandonedSession()
     {
-        var clock = new FakeClock(FixedNow.AddMinutes(-30));
-        var service = Service(clock: () => clock.Now);
+        var clock = new FakeTimeProvider(FixedNow.AddMinutes(-30));
+        var service = Service(clock: clock);
         var userId = Guid.NewGuid();
         var first = Movie("First", 40 * TimeSpan.TicksPerMinute);
         var second = Movie("Second", 40 * TimeSpan.TicksPerMinute);
@@ -441,8 +416,8 @@ public sealed class AnalyticsRecordingTests : IDisposable
     [Fact]
     public async Task StaleSessions_CloseAtTheirLastSeenTime()
     {
-        var clock = new FakeClock(FixedNow.AddMinutes(-30));
-        var service = Service(clock: () => clock.Now);
+        var clock = new FakeTimeProvider(FixedNow.AddMinutes(-30));
+        var service = Service(clock: clock);
         var userId = Guid.NewGuid();
         var item = Movie(runTimeTicks: 40 * TimeSpan.TicksPerMinute);
 
@@ -488,45 +463,25 @@ public sealed class AnalyticsRecordingTests : IDisposable
         service.OnPlaybackProgress(Progress(Movie(), Guid.NewGuid(), positionTicks: 30 * TimeSpan.TicksPerMinute, playSessionId: "ps-x"));
     }
 
-    private sealed class FakeClock(DateTimeOffset start)
-    {
-        public DateTimeOffset Now { get; private set; } = start;
-
-        public void Advance(TimeSpan delta) => Now += delta;
-    }
 }
 
 // ---------------------------------------------------------------------------
 // Rollups, retention, disable purge
 // ---------------------------------------------------------------------------
 
-public sealed class AnalyticsMaintenanceTests : IDisposable
+public sealed class AnalyticsMaintenanceTests : TempDatabaseFixture
 {
     private static readonly DateTimeOffset FixedNow = new(2026, 10, 6, 12, 0, 0, TimeSpan.Zero);
 
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-analytics-mnt-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
 
     public AnalyticsMaintenanceTests()
+        : base("analytics-mnt")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private AnalyticsService Service(AnalyticsConfig config)
-        => new(_db, () => config, NullLogger<AnalyticsService>.Instance, () => FixedNow);
+        => new(_db, () => config, NullLogger<AnalyticsService>.Instance, new FakeTimeProvider(FixedNow));
 
     private static long DayMs(int daysAgo) => FixedNow.ToUnixTimeMilliseconds() - daysAgo * 86_400_000L;
 
@@ -632,39 +587,25 @@ public sealed class AnalyticsMaintenanceTests : IDisposable
 // Reporting: overview aggregation + session query
 // ---------------------------------------------------------------------------
 
-public sealed class AnalyticsReportingTests : IDisposable
+public sealed class AnalyticsReportingTests : TempDatabaseFixture
 {
     private static readonly DateTimeOffset FixedNow = new(2026, 10, 6, 12, 0, 0, TimeSpan.Zero);
     private static readonly string Today = FixedNow.UtcDateTime.ToString("yyyy-MM-dd");
     private static readonly string Yesterday = FixedNow.UtcDateTime.AddDays(-1).ToString("yyyy-MM-dd");
 
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-analytics-rep-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
 
     public AnalyticsReportingTests()
+        : base("analytics-rep")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private AnalyticsService Service(int retentionDays = 90)
         => new(
             _db,
             () => new AnalyticsConfig { Enabled = true, RawRetentionDays = retentionDays },
             NullLogger<AnalyticsService>.Instance,
-            () => FixedNow);
+            new FakeTimeProvider(FixedNow));
 
     private static long DayMs(int daysAgo) => FixedNow.ToUnixTimeMilliseconds() - daysAgo * 86_400_000L;
 
@@ -835,39 +776,25 @@ public sealed class AnalyticsReportingTests : IDisposable
 // Per-user reporting ("Your watching", GET jellyplay/analytics/me)
 // ---------------------------------------------------------------------------
 
-public sealed class AnalyticsMeTests : IDisposable
+public sealed class AnalyticsMeTests : TempDatabaseFixture
 {
     private static readonly DateTimeOffset FixedNow = new(2026, 10, 6, 12, 0, 0, TimeSpan.Zero);
     private static readonly string Today = FixedNow.UtcDateTime.ToString("yyyy-MM-dd");
     private static readonly string Yesterday = FixedNow.UtcDateTime.AddDays(-1).ToString("yyyy-MM-dd");
 
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-analytics-me-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
 
     public AnalyticsMeTests()
+        : base("analytics-me")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private AnalyticsService Service()
         => new(
             _db,
             () => new AnalyticsConfig { Enabled = true },
             NullLogger<AnalyticsService>.Instance,
-            () => FixedNow);
+            new FakeTimeProvider(FixedNow));
 
     private static long DayMs(int daysAgo) => FixedNow.ToUnixTimeMilliseconds() - daysAgo * 86_400_000L;
 

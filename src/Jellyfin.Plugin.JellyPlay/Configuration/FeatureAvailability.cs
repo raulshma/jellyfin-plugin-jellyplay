@@ -8,15 +8,6 @@ public static class ConfigurationExtensions
     /// <summary>Ratings module is on when any rating source is configured.</summary>
     public static bool Enabled(this RatingsConfig config)
         => !string.IsNullOrEmpty(config.MdbListApiKey) || !string.IsNullOrEmpty(config.TmdbApiKey);
-
-    /// <summary>
-    /// FCM transport is ready when both the project id and a service-account
-    /// key are set. Thin adapter over the one usability seam
-    /// (<see cref="Services.Push.PushEligibility.IsFcmUsable"/>) so the triple
-    /// check collapses to a single home.
-    /// </summary>
-    public static bool FcmConfigured(this PushConfig config)
-        => Services.Push.PushEligibility.IsFcmUsable(config);
 }
 
 /// <summary>

@@ -209,9 +209,6 @@ public sealed record SyncStatusBundle(
 /// <summary>One recorded operation together with its resolved per-key diff (the audit export's fold).</summary>
 public sealed record SyncHistoryWithKeys(SyncHistoryRow Row, IReadOnlyList<ChangeLogEntry> Keys);
 
-/// <summary>Per-user rollup of sync_history: most recent operation and distinct device count.</summary>
-public sealed record UserSyncSummary(string UserId, long LastSyncAt, int DeviceCount);
-
 /// <summary>
 /// The admin overview's merged row: one user's settings footprint joined
 /// with its sync rollup (null/zero when the user never recorded an
@@ -222,9 +219,6 @@ public sealed record UserSyncOverviewRow(string UserId, int Keys, long Bytes, lo
 
 /// <summary>Key/byte footprint of one settings namespace (all profiles folded).</summary>
 public sealed record NamespaceFootprint(string Ns, int Keys, long Bytes);
-
-/// <summary>Key/byte footprint of one user's whole settings store.</summary>
-public sealed record UserFootprint(string UserId, int Keys, long Bytes);
 
 /// <summary>
 /// One finished playback session (analytics v1). <see cref="StartedAt"/> is

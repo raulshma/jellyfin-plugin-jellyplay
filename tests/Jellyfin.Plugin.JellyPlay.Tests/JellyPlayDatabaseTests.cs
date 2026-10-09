@@ -8,30 +8,16 @@ using Xunit;
 
 namespace Jellyfin.Plugin.JellyPlay.Tests;
 
-public sealed class JellyPlayDatabaseTests : IDisposable
+public sealed class JellyPlayDatabaseTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-tests-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
 
     private static readonly JellyPlayDatabase.Quotas Quotas = new(1024, 4096, 5);
 
     public JellyPlayDatabaseTests()
+        : base("tests")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private static SettingWrite Write(string ns, string key, long updatedAt, string value = "\"v\"", string device = "d1")
         => new(ns, key, 1, updatedAt, device, System.Text.Encoding.UTF8.GetBytes(value));
@@ -300,11 +286,15 @@ public sealed class JellyPlayDatabaseTests : IDisposable
     [Fact]
     public void ChangeLog_Prune_RemovesOnlyOld()
     {
-        _db.UpsertSettings("user1", "", new[] { Write("ui", "a", 1) }, Quotas);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        _db.UpsertSettings("user1", "", new[] { Write("ui", "a", now) }, Quotas);
         Assert.True(_db.GetChangeLogHead("user1") > 0);
 
-        _db.PruneChangeLog(retentionDays: 30); // nothing old enough
-        Assert.True(_db.GetChangeLogHead("user1") >= 0);
+        // A cutoff 30 days back removes nothing here (the row is fresh) —
+        // pinned on the injected cutoff, not the wall clock.
+        var pruned = _db.PruneChangeLog(now - 30L * 86_400_000);
+        Assert.Equal(0, pruned);
+        Assert.True(_db.GetChangeLogHead("user1") > 0);
     }
 
     [Fact]
@@ -314,9 +304,9 @@ public sealed class JellyPlayDatabaseTests : IDisposable
         _db.UpsertSettings("user1", "", new[] { Write("ui", "a", 1, "\"v\"") }, Quotas);
         _db.UpsertSettings("user1", "", new[] { new SettingWrite("ui", "a", 1, 2, "d2", Array.Empty<byte>(), IsDelete: true) }, Quotas);
 
-        // Retention 0 = everything older than now is eligible — yet only the
+        // Cutoff = now = everything older is eligible — yet only the
         // 'put' row goes; the tombstone IS the anti-resurrection watermark.
-        var pruned = _db.PruneChangeLog(retentionDays: 0);
+        var pruned = _db.PruneChangeLog(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         Assert.Equal(1, pruned);
 
         // A stale offline put (older than the surviving tombstone) is still
@@ -395,7 +385,7 @@ public sealed class JellyPlayDatabaseTests : IDisposable
         Assert.Null(_db.GetSnapshot("u2", snapshots[0].Id));
 
         // Age-based prune: retention 0 removes everything.
-        Assert.Equal(6, _db.PruneSnapshots(retentionDays: 0));
+        Assert.Equal(6, _db.PruneSnapshots(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
         Assert.Empty(_db.GetSnapshots("u1"));
         Assert.Empty(_db.GetSnapshots("u2"));
     }

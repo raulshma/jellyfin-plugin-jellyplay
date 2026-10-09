@@ -24,32 +24,18 @@ namespace Jellyfin.Plugin.JellyPlay.Tests;
 /// stream (emission) and the per-user drill-down fold — plus the elevation
 /// pin over every new admin action's controller.
 /// </summary>
-public sealed class AdminPreviewTests : IDisposable
+public sealed class AdminPreviewTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-admin-preview-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
     private readonly SnapshotService _snapshots;
     private readonly SettingsService _service;
 
     public AdminPreviewTests()
+        : base("admin-preview")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
         _snapshots = new SnapshotService(_db, () => new Configuration.SyncConfig());
         _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => new Configuration.SyncConfig(), NullLogger<SettingsService>.Instance, _snapshots);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private static Api.SettingsWriteDto Dto(string ns, string key, long at, string json = "\"v\"")
         => new() { Ns = ns, Key = key, SchemaVersion = 1, UpdatedAt = at, Value = JsonDocument.Parse(json).RootElement };
@@ -97,18 +83,15 @@ public sealed class AdminPreviewTests : IDisposable
     }
 }
 
-public sealed class AdminPushDryRunTests : IDisposable
+public sealed class AdminPushDryRunTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-admin-dryrun-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
     private readonly SnapshotService _snapshots;
     private readonly SettingsService _service;
     private readonly AdminDefaultsService _admin;
 
     public AdminPushDryRunTests()
+        : base("admin-dryrun")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
         _snapshots = new SnapshotService(_db, () => new Configuration.SyncConfig());
         _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => new Configuration.SyncConfig(), NullLogger<SettingsService>.Instance, _snapshots);
         _admin = new AdminDefaultsService(
@@ -118,17 +101,6 @@ public sealed class AdminPushDryRunTests : IDisposable
             NullLogger<AdminDefaultsService>.Instance);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private static Api.SettingsWriteDto Dto(string ns, string key, long at, string json = "\"v\"")
         => new() { Ns = ns, Key = key, SchemaVersion = 1, UpdatedAt = at, Value = JsonDocument.Parse(json).RootElement };
@@ -199,30 +171,16 @@ public sealed class AdminPushDryRunTests : IDisposable
     }
 }
 
-public sealed class AuditExportTests : IDisposable
+public sealed class AuditExportTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-admin-audit-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
     private readonly SettingsService _service;
 
     public AuditExportTests()
+        : base("admin-audit")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
         _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => new Configuration.SyncConfig(), NullLogger<SettingsService>.Instance, new SnapshotService(_db, () => new Configuration.SyncConfig()));
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private static Api.SettingsWriteDto Dto(string ns, string key, long at)
         => new() { Ns = ns, Key = key, SchemaVersion = 1, UpdatedAt = at, Value = JsonDocument.Parse("\"x\"").RootElement };
@@ -310,32 +268,18 @@ public sealed class AuditExportTests : IDisposable
     }
 }
 
-public sealed class AdminLiveMonitorTests : IDisposable
+public sealed class AdminLiveMonitorTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-admin-live-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
     private readonly SseHub _hub;
     private readonly SettingsService _service;
 
     public AdminLiveMonitorTests()
+        : base("admin-live")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
         _hub = new SseHub(NullLogger<SseHub>.Instance);
         _service = new SettingsService(_db, _hub, () => new Configuration.SyncConfig(), NullLogger<SettingsService>.Instance, new SnapshotService(_db, () => new Configuration.SyncConfig()));
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private static Api.SettingsWriteDto Dto(string ns, string key, long at)
         => new() { Ns = ns, Key = key, SchemaVersion = 1, UpdatedAt = at, Value = JsonDocument.Parse("\"x\"").RootElement };
@@ -422,28 +366,14 @@ public sealed class AdminLiveMonitorTests : IDisposable
     }
 }
 
-public sealed class AdminDrilldownTests : IDisposable
+public sealed class AdminDrilldownTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-admin-drill-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
 
     public AdminDrilldownTests()
+        : base("admin-drill")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     [Fact]
     public void Drilldown_FoldsStatusDevicesAndNames()

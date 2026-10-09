@@ -16,10 +16,8 @@ namespace Jellyfin.Plugin.JellyPlay.Services.Push;
 /// Locality: caps JSON parsing + membership, push-eligibility (registered +
 /// not revoked), the sync-nudge target query (push-eligible + silent-push
 /// cap, caps parsed once per row) and FCM usability (project id +
-/// service-account key) live here. The historical homes
-/// (<see cref="Devices.DeviceRegistryService.ParseCaps"/>,
-/// <see cref="DeviceCaps"/>, <c>FcmConfigured</c>) stay as thin adapters
-/// delegating here, so no caller breaks.
+/// service-account key) live here — every caller spells these rules through
+/// this module.
 /// </summary>
 public static class PushEligibility
 {
@@ -62,9 +60,8 @@ public static class PushEligibility
 
     /// <summary>
     /// The ONE FCM-readiness seam: the fcm push kind is usable only when both
-    /// the project id and a service-account key are set. Replaces the triple
-    /// <c>FcmConfigured()</c> check (registry gate, token provider, admin
-    /// overview) so the readiness rule has a single home.
+    /// the project id and a service-account key are set — the registry gate,
+    /// the token provider and the admin overview all resolve through here.
     /// </summary>
     public static bool IsFcmUsable(PushConfig config)
         => !string.IsNullOrWhiteSpace(config.FcmProjectId)

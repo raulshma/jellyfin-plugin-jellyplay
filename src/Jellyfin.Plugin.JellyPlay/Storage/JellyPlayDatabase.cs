@@ -45,6 +45,10 @@ public sealed partial class JellyPlayDatabase : IDisposable
     private const string SyncHistoryTable = "sync_history";
     private const string SnapshotsTable = "user_snapshots";
 
+    /// <summary>Canonical sync-history read surface, shared by every history select (a schema change touches this once).</summary>
+    private const string SyncHistoryColumns =
+        "Id, UserId, DeviceId, Ts, Op, KeysApplied, KeysRejected, Bytes, RejectsJson, FromSeq, ToSeq";
+
     /// <summary>
     /// Stepwise migrations, each moving <c>user_version</c> to its version.
     /// Version 1 is the create-if-not-exists baseline above; never edit it —
@@ -594,6 +598,29 @@ public sealed partial class JellyPlayDatabase : IDisposable
         row.GetString(6),
         row.GetInt64(7),
         row.GetInt64(8));
+
+    /// <summary>
+    /// The batched bounded delete every retention prune shares: one prepared
+    /// statement re-executed in 5000-row batches under the caller's held
+    /// write lock (the batching bounds per-statement transaction/log size,
+    /// not lock scope). The cutoff is always the caller's — retention tests
+    /// pin it instead of racing the wall clock.
+    /// </summary>
+    private static int BatchedDelete(SqliteConnection connection, string table, string where, long cutoff)
+    {
+        using var statement = connection.Prepare(
+            $"delete from {table} where rowid in (select rowid from {table} where {where} limit 5000)");
+        statement.Bind("@Cutoff", cutoff);
+        var total = 0;
+        int removed;
+        do
+        {
+            removed = statement.ExecuteNonQuery();
+            total += removed;
+        }
+        while (removed > 0);
+        return total;
+    }
 
     private SqliteConnection CreateConnection()
     {

@@ -17,16 +17,6 @@ using Xunit;
 
 namespace Jellyfin.Plugin.JellyPlay.Tests;
 
-/// <summary>Pins TimeProvider so breaker windows advance only when the test advances them.</summary>
-public sealed class FakeTimeProvider : TimeProvider
-{
-    private DateTimeOffset _utcNow = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
-
-    public void Advance(TimeSpan by) => _utcNow += by;
-
-    public override DateTimeOffset GetUtcNow() => _utcNow;
-}
-
 public sealed class CaptureLogger : ILogger<ResilientFetcher>
 {
     public List<(LogLevel Level, Exception? Exception, string Message)> Entries { get; } = new();
@@ -529,5 +519,50 @@ public class AnimeMarkersServiceTests : FetcherTestBase
 
         // Fribb + one scrape: the miss marker absorbed the second request.
         Assert.Equal(2, handler.RequestedUrls.Count);
+    }
+
+    [Fact]
+    public async Task WarmAsync_Disabled_SkipsEverySeries_AndNeverLeavesTheMachine()
+    {
+        var handler = new FakeHttpMessageHandler(_ => throw new InvalidOperationException("a disabled warm run must not fetch"));
+        var service = new AnimeMarkersService(
+            NewFetcher(handler),
+            Cache,
+            libraryManager: null!,
+            () => new AnimeConfig { Enabled = false },
+            NullLogger<AnimeMarkersService>.Instance);
+
+        var outcome = await service.WarmAsync(new[] { (Guid.NewGuid(), "A"), (Guid.NewGuid(), "B") });
+
+        Assert.Equal((0, 2, 2), (outcome.Warmed, outcome.Skipped, outcome.RunSize));
+        Assert.Equal(0, handler.RequestedUrls.Count);
+    }
+
+    [Fact]
+    public async Task WarmAsync_Enabled_ResolutionFailuresAreCounted_NeverThrown()
+    {
+        const string html = """
+            <table class="episode-table">
+              <tr><td><a>1</a></td><td class="episode-table-type">Canon</td></tr>
+            </table>
+            """;
+        var handler = new FakeHttpMessageHandler(request => FribbOrFiller(request, html));
+        // Real-guid series resolve through the library, which this harness has
+        // no host for — every warm fails. The run's contract: failures are
+        // counted (missed), never thrown, and progress still completes.
+        var service = new AnimeMarkersService(
+            NewFetcher(handler),
+            Cache,
+            libraryManager: null!,
+            () => new AnimeConfig { Enabled = true, EnableFillerList = true, EnableTenrai = false, RefreshIntervalHours = 1 },
+            NullLogger<AnimeMarkersService>.Instance);
+
+        var progress = new List<double>();
+        var outcome = await service.WarmAsync(
+            new List<(Guid, string)> { (Guid.NewGuid(), "A"), (Guid.NewGuid(), "B") },
+            new Progress<double>(progress.Add));
+
+        Assert.Equal((2, 2), (outcome.Missed, outcome.RunSize));
+        Assert.Equal(100.0, progress.Last()); // the run's final report lands on the last series
     }
 }

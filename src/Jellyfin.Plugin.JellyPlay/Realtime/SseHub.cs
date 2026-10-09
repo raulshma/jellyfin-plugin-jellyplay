@@ -153,10 +153,6 @@ public sealed class SseHub
         return PublishWhere(stream, subscriber => string.Equals(subscriber.UserId, userId, StringComparison.Ordinal), eventName, jsonData, eventId, replayTargets);
     }
 
-    /// <summary>Publish to a set of users.</summary>
-    public int PublishToUsers(string stream, IReadOnlyCollection<string> userIds, string eventName, string jsonData)
-        => Publish(stream, userIds, eventName, jsonData);
-
     private int PublishWhere(
         string stream,
         Func<Subscriber, bool> predicate,

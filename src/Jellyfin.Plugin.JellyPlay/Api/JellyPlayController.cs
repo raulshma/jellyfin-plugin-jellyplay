@@ -17,27 +17,17 @@ namespace Jellyfin.Plugin.JellyPlay.Api;
 [Route(JellyPlayContract.RoutePrefix)]
 public class JellyPlayController : JellyPlayControllerBase
 {
+    /// <summary>
+    /// Every feature key, derived from <see cref="JellyPlayContract.Features"/>
+    /// by reflection (declaration order) — a new const flows into the capability
+    /// probe automatically; the list can never silently drift from the contract.
+    /// </summary>
     private static readonly string[] AllFeatures =
-    [
-        JellyPlayContract.Features.SettingsSync,
-        JellyPlayContract.Features.DeviceProfiles,
-        JellyPlayContract.Features.AdminDefaults,
-        JellyPlayContract.Features.ConfigBackup,
-        JellyPlayContract.Features.Events,
-        JellyPlayContract.Features.Messages,
-        JellyPlayContract.Features.SeerrBridge,
-        JellyPlayContract.Features.Newsletter,
-        JellyPlayContract.Features.Ratings,
-        JellyPlayContract.Features.CustomRows,
-        JellyPlayContract.Features.SeasonalRows,
-        JellyPlayContract.Features.AnimeMarkers,
-        JellyPlayContract.Features.Recommendations,
-        JellyPlayContract.Features.UserRatings,
-        JellyPlayContract.Features.Bookmarks,
-        JellyPlayContract.Features.Transcodes,
-        JellyPlayContract.Features.Push,
-        JellyPlayContract.Features.Analytics
-    ];
+        typeof(JellyPlayContract.Features)
+            .GetFields()
+            .OrderBy(field => field.MetadataToken)
+            .Select(field => (string)field.GetRawConstantValue()!)
+            .ToArray();
 
     /// <summary>The plugin's wire version — assembly metadata, immutable once loaded; resolved once, not per request.</summary>
     private static readonly string PluginVersion

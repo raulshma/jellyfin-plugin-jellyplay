@@ -14,25 +14,14 @@ using Xunit;
 namespace Jellyfin.Plugin.JellyPlay.Tests;
 
 /// <summary>Task A1: the v2 → v3 migration creates sync_history without touching stored settings.</summary>
-public sealed class SyncHistoryMigrationTests : IDisposable
+public sealed class SyncHistoryMigrationTests : TempDirFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-synchist-mig-" + Guid.NewGuid().ToString("N"));
 
     public SyncHistoryMigrationTests()
+        : base("synchist-mig")
     {
-        Directory.CreateDirectory(_tempDir);
     }
 
-    public void Dispose()
-    {
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private string DbPath => Path.Combine(_tempDir, "plugins", "JellyPlay", "jellyplay_plugin.db");
 
@@ -125,30 +114,16 @@ public sealed class SyncHistoryMigrationTests : IDisposable
 /// Task A2: pushes, pulls and resets are recorded into sync_history; the
 /// rejects payload is capped; recording never fails the observed operation.
 /// </summary>
-public sealed class SyncRecordingTests : IDisposable
+public sealed class SyncRecordingTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-syncrec-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
     private readonly SettingsService _service;
 
     public SyncRecordingTests()
+        : base("syncrec")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
         _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => new Configuration.SyncConfig(), NullLogger<SettingsService>.Instance, new SnapshotService(_db, () => new Configuration.SyncConfig()));
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private static Api.SettingsWriteDto Dto(string ns, string key, long at, string json = "\"x\"")
         => new() { Ns = ns, Key = key, SchemaVersion = 1, UpdatedAt = at, Value = JsonDocument.Parse(json).RootElement };
@@ -270,25 +245,14 @@ public sealed class SyncRecordingTests : IDisposable
 }
 
 /// <summary>Schema v6: sync_history gains the FromSeq/ToSeq diff range; data preserved, idempotent.</summary>
-public sealed class SyncDiffMigrationTests : IDisposable
+public sealed class SyncDiffMigrationTests : TempDirFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-syncdiff-mig-" + Guid.NewGuid().ToString("N"));
 
     public SyncDiffMigrationTests()
+        : base("syncdiff-mig")
     {
-        Directory.CreateDirectory(_tempDir);
     }
 
-    public void Dispose()
-    {
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private string DbPath => Path.Combine(_tempDir, "plugins", "JellyPlay", "jellyplay_plugin.db");
 
@@ -392,30 +356,16 @@ public sealed class SyncDiffMigrationTests : IDisposable
 /// range (push = head before/after the batch, pull = the since cursor through
 /// the served head, reset = zero-width at the head after).
 /// </summary>
-public sealed class SyncDiffCaptureTests : IDisposable
+public sealed class SyncDiffCaptureTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-syncdiff-cap-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
     private readonly SettingsService _service;
 
     public SyncDiffCaptureTests()
+        : base("syncdiff-cap")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
         _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => new Configuration.SyncConfig(), NullLogger<SettingsService>.Instance, new SnapshotService(_db, () => new Configuration.SyncConfig()));
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private static Api.SettingsWriteDto Dto(string ns, string key, long at)
         => new() { Ns = ns, Key = key, SchemaVersion = 1, UpdatedAt = at, Value = JsonDocument.Parse("\"x\"").RootElement };
@@ -484,30 +434,16 @@ public sealed class SyncDiffCaptureTests : IDisposable
 }
 
 /// <summary>Task: the per-key diff endpoint semantics (range correctness, user isolation, reset-empty, limit clamp).</summary>
-public sealed class SyncHistoryKeysTests : IDisposable
+public sealed class SyncHistoryKeysTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-synckeys-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
     private readonly SettingsService _service;
 
     public SyncHistoryKeysTests()
+        : base("synckeys")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
         _service = new SettingsService(_db, new SseHub(NullLogger<SseHub>.Instance), () => new Configuration.SyncConfig(), NullLogger<SettingsService>.Instance, new SnapshotService(_db, () => new Configuration.SyncConfig()));
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private SyncInsightsService Service => new(_db, () => new Configuration.SyncConfig());
 
@@ -609,31 +545,17 @@ public sealed class SyncHistoryKeysTests : IDisposable
 }
 
 /// <summary>Task A3/A4: status aggregation, history query semantics, admin folding, retention prune.</summary>
-public sealed class SyncInsightsTests : IDisposable
+public sealed class SyncInsightsTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-syncins-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
     private Configuration.SyncConfig _config = new();
 
     private SyncInsightsService Service => new(_db, () => _config);
 
     public SyncInsightsTests()
+        : base("syncins")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private static SettingWrite Write(string ns, string key, long updatedAt, string value = "\"v\"")
         => new(ns, key, 1, updatedAt, "d1", Encoding.UTF8.GetBytes(value));
@@ -780,7 +702,7 @@ public sealed class SyncInsightsTests : IDisposable
         _db.InsertSyncHistory("u1", "fresh", "pull", 1, 0, 0, null, now - TimeSpan.FromDays(1).Ticks / TimeSpan.TicksPerMillisecond);
         _db.InsertSyncHistory("u2", "old", "reset", 1, 0, 0, null, now - TimeSpan.FromDays(50).Ticks / TimeSpan.TicksPerMillisecond);
 
-        var pruned = _db.PruneSyncHistory(retentionDays: 30);
+        var pruned = _db.PruneSyncHistory(now - TimeSpan.FromDays(30).Ticks / TimeSpan.TicksPerMillisecond);
 
         Assert.Equal(2, pruned);
         var remaining = _db.GetSyncHistory("u1", 0, 50).ToList();
@@ -788,8 +710,8 @@ public sealed class SyncInsightsTests : IDisposable
         Assert.Equal("fresh", remaining[0].DeviceId);
         Assert.Empty(_db.GetSyncHistory("u2", 0, 50));
 
-        // A zero-day retention wipes everything.
-        Assert.Equal(1, _db.PruneSyncHistory(retentionDays: 0));
+        // A now-cutoff wipes everything left.
+        Assert.Equal(1, _db.PruneSyncHistory(now));
         Assert.Empty(_db.GetSyncHistory("u1", 0, 50));
     }
 }

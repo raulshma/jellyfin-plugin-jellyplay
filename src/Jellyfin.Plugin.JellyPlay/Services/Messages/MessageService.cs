@@ -19,22 +19,19 @@ namespace Jellyfin.Plugin.JellyPlay.Services.Messages;
 public sealed class MessageService
 {
     private readonly JellyPlayDatabase _db;
-    private readonly PushDispatcher? _push;
     private readonly Func<IReadOnlyList<string>>? _adminUserIds;
     private readonly ILogger<MessageService> _logger;
     private readonly TimeProvider _clock;
-    private readonly NotificationFanout? _fanout;
+    private readonly NotificationFanout _fanout;
 
     public MessageService(
         JellyPlayDatabase db,
         ILogger<MessageService> logger,
-        PushDispatcher? push = null,
+        NotificationFanout fanout,
         Func<IReadOnlyList<string>>? adminUserIds = null,
-        TimeProvider? clock = null,
-        NotificationFanout? fanout = null)
+        TimeProvider? clock = null)
     {
         _db = db;
-        _push = push;
         _adminUserIds = adminUserIds;
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
@@ -66,14 +63,7 @@ public sealed class MessageService
             // (push-only) — one BroadcastTargets drives the push audience.
             var targets = Audience.ResolveAudience(request.Audience, _adminUserIds?.Invoke() ?? Array.Empty<string>());
             var push = new PushMessage(PushKinds.Message, request.Title, request.Body);
-            if (_fanout is not null)
-            {
-                _fanout.Publish("events", "message", string.Empty, push, targets, skipSse: true);
-            }
-            else
-            {
-                _push?.DispatchToUsers(push, targets);
-            }
+            _fanout.Publish("events", "message", string.Empty, push, targets, skipSse: true);
         }
 
         return row;

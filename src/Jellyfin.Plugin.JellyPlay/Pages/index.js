@@ -26,86 +26,14 @@
         TestRecipient: 'Newsletter.TestRecipient'
     };
 
-    var strings = {};
-
-    // ── api plumbing ──
-
-    function authHeaders(extra) {
-        var token = window.ApiClient.accessToken();
-        var auth = 'MediaBrowser Client="JellyPlay Dashboard", Device="Dashboard", DeviceId="jellyplay-dashboard", Version="1.0", Token="' + token + '"';
-        var headers = { 'Authorization': auth, 'X-Emby-Authorization': auth };
-        for (var key in (extra || {})) { headers[key] = extra[key]; }
-        return headers;
-    }
-
-    // Pulls a readable message out of an error body — the defaults endpoint
-    // answers 400 with { error, message, problems: [...] }. The problems
-    // ride on the thrown Error (`error.problems`) so callers can anchor them
-    // back to the offending editor rows.
-    function extractErrorDetail(text, status) {
-        try {
-            var parsed = JSON.parse(text);
-            if (parsed && Array.isArray(parsed.problems) && parsed.problems.length > 0) {
-                var error = new Error(parsed.problems.join(' '));
-                error.problems = parsed.problems;
-                return error;
-            }
-            if (parsed && typeof parsed.message === 'string' && parsed.message) {
-                return new Error(parsed.message);
-            }
-        } catch (ignored) { }
-        return new Error(String(status));
-    }
-
-    function apiGet(path) {
-        return fetch(window.ApiClient.getUrl(path), { headers: authHeaders() }).then(function (response) {
-            if (!response.ok) {
-                return response.text().then(function (text) {
-                    throw extractErrorDetail(text, response.status);
-                });
-            }
-            return response.json();
-        });
-    }
-
-    function apiPost(path, body) {
-        return fetch(window.ApiClient.getUrl(path), {
-            method: 'POST',
-            headers: authHeaders({ 'Content-Type': 'application/json' }),
-            body: body === undefined ? undefined : JSON.stringify(body)
-        }).then(function (response) {
-            if (!response.ok) {
-                return response.text().then(function (text) {
-                    throw extractErrorDetail(text, response.status);
-                });
-            }
-            return response.status === 204 ? null : response.json();
-        });
-    }
-
-    function fmt(key, fallback) {
-        var text = strings[key] || fallback;
-        for (var i = 1; i < arguments.length; i++) {
-            text = String(text).replace('{' + (i - 1) + '}', String(arguments[i]));
-        }
-        return text;
-    }
-
-    // fmt's argument convention substitutes the fallback into {0}; use this
-    // variant when the message itself carries {n} placeholders:
-    // alertFmt(key, fallbackWithPlaceholders, value0, value1, ...).
-    function alertFmt() {
-        var args = Array.prototype.slice.call(arguments);
-        var text = strings[args[0]] || args[1];
-        for (var i = 2; i < args.length; i++) {
-            text = String(text).replace('{' + (i - 2) + '}', String(args[i]));
-        }
-        window.Dashboard.alert(text);
-    }
-
-    function alertText(key, fallback) {
-        window.Dashboard.alert(fmt.apply(null, arguments));
-    }
+    var strings = window.JellyPlayCommon.strings;
+    var fmt = window.JellyPlayCommon.fmt;
+    var alertFmt = window.JellyPlayCommon.alertFmt;
+    var alertText = window.JellyPlayCommon.alertText;
+    var apiGet = window.JellyPlayCommon.apiGet;
+    var apiPost = window.JellyPlayCommon.apiPost;
+    var authHeaders = window.JellyPlayCommon.authHeaders;
+    var applyStrings = window.JellyPlayCommon.applyStrings;
 
     // Every config write round-trips the WHOLE config object, so concurrent
     // saves would silently drop each other's section (last write wins).
@@ -118,19 +46,7 @@
         return configWriteChain;
     }
 
-    // ── i18n ──
-
-    function applyStrings() {
-        return apiGet('jellyplay/dashboard-strings?lang=' + encodeURIComponent(navigator.language || '')).then(function (table) {
-            strings = table || {};
-            Array.prototype.forEach.call(document.querySelectorAll('[data-i18n]'), function (element) {
-                var value = strings[element.getAttribute('data-i18n')];
-                if (typeof value === 'string' && value.length > 0) { element.textContent = value; }
-            });
-        }).catch(function () {
-            // The static en markup stands on its own; localization is cosmetic.
-        });
-    }
+    // ── i18n ── (applyStrings comes from jellyplay-common.js)
 
     // ── scalar config form ──
 

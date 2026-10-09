@@ -217,20 +217,11 @@ public sealed class DeviceRegistryService
 
     /// <summary>
     /// Parses a device row's caps JSON array; malformed payloads degrade to
-    /// empty. Thin adapter over <see cref="PushEligibility.ParseCaps"/> — the
-    /// caps locality lives there; this stays so the public API never breaks.
+    /// empty. Delegates to <see cref="PushEligibility.ParseCaps"/> — the caps
+    /// locality lives there, spelled by every caller alike.
     /// </summary>
-    public static IReadOnlyList<string> ParseCaps(string? capsJson)
+    private static IReadOnlyList<string> ParseCaps(string? capsJson)
         => PushEligibility.ParseCaps(capsJson);
-
-    /// <summary>
-    /// Whether the device's registered caps JSON includes the capability.
-    /// Thin adapter over <see cref="PushEligibility.CapsInclude"/> — one
-    /// caps-membership seam behind the registry, the dispatch and the sync
-    /// insights projection.
-    /// </summary>
-    public static bool CapsInclude(string? capsJson, string cap)
-        => PushEligibility.CapsInclude(capsJson, cap);
 
     internal static string? SerializeCaps(IReadOnlyList<string>? caps)
         => caps is null || caps.Count == 0

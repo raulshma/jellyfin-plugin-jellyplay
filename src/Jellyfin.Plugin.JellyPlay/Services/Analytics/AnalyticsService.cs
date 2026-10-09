@@ -51,7 +51,7 @@ public sealed class AnalyticsService : IDisposable
 
     private readonly JellyPlayDatabase _db;
     private readonly Func<AnalyticsConfig> _config;
-    private readonly Func<DateTimeOffset> _clock;
+    private readonly TimeProvider _clock;
     private readonly ILogger<AnalyticsService> _logger;
     private readonly object _openLock = new();
     private readonly Dictionary<string, OpenPlayback> _open = new(StringComparer.Ordinal);
@@ -69,12 +69,12 @@ public sealed class AnalyticsService : IDisposable
         JellyPlayDatabase db,
         Func<AnalyticsConfig> config,
         ILogger<AnalyticsService> logger,
-        Func<DateTimeOffset>? clock = null)
+        TimeProvider? clock = null)
     {
         _db = db;
         _config = config;
         _logger = logger;
-        _clock = clock ?? (() => DateTimeOffset.UtcNow);
+        _clock = clock ?? TimeProvider.System;
         _writeLoop = Task.Run(WriteLoopAsync);
     }
 
@@ -145,7 +145,7 @@ public sealed class AnalyticsService : IDisposable
 
     private void RecordStopped(PlaybackStopEventArgs args)
     {
-        var now = _clock().ToUnixTimeMilliseconds();
+        var now = _clock.GetUtcNow().ToUnixTimeMilliseconds();
         var (itemId, itemName, itemType, seriesName, runTimeTicks) = ResolveItem(args.Item);
         if (itemId is null)
         {
@@ -188,7 +188,7 @@ public sealed class AnalyticsService : IDisposable
 
     private void TrackProgress(PlaybackProgressEventArgs args)
     {
-        var now = _clock().ToUnixTimeMilliseconds();
+        var now = _clock.GetUtcNow().ToUnixTimeMilliseconds();
         var (itemId, itemName, itemType, seriesName, runTimeTicks) = ResolveItem(args.Item);
         if (itemId is null)
         {
@@ -515,7 +515,7 @@ public sealed class AnalyticsService : IDisposable
     public AnalyticsOverviewResponse GetOverview(int days, Func<Guid, string?> resolveUserName)
     {
         var clampedDays = Paged.Clamp(days, DefaultOverviewDays, MaxOverviewDays);
-        var todayUtc = _clock().UtcDateTime.Date;
+        var todayUtc = _clock.GetUtcNow().UtcDateTime.Date;
         var fromDayDate = todayUtc.AddDays(-(clampedDays - 1));
         var fromMs = ToUnixMs(fromDayDate);
         var toMs = ToUnixMs(todayUtc.AddDays(1));
@@ -550,7 +550,7 @@ public sealed class AnalyticsService : IDisposable
     public AnalyticsMeResponse GetMyOverview(string userId, int days)
     {
         var clampedDays = Paged.Clamp(days, DefaultOverviewDays, MaxOverviewDays);
-        var todayUtc = _clock().UtcDateTime.Date;
+        var todayUtc = _clock.GetUtcNow().UtcDateTime.Date;
         var fromDayDate = todayUtc.AddDays(-(clampedDays - 1));
         var fromMs = ToUnixMs(fromDayDate);
         var toMs = ToUnixMs(todayUtc.AddDays(1));
@@ -594,7 +594,7 @@ public sealed class AnalyticsService : IDisposable
             return new AnalyticsMaintenanceResult(DisabledPurged: true, DaysRolled: 0, RawPruned: purgedSessions);
         }
 
-        var now = _clock().ToUnixTimeMilliseconds();
+        var now = _clock.GetUtcNow().ToUnixTimeMilliseconds();
         var retentionDays = Math.Max(0, config.RawRetentionDays);
 
         long pruneCutoff;
@@ -611,7 +611,7 @@ public sealed class AnalyticsService : IDisposable
             daysRolled = _db.RecomputePlaybackRollups(now - windowDays * MsPerDay);
             // Never prune inside the recompute window (start of its oldest
             // day), so a recomputed day always rebuilds from complete raw data.
-            var recomputeFloor = ToUnixMs(_clock().UtcDateTime.Date.AddDays(-windowDays));
+            var recomputeFloor = ToUnixMs(_clock.GetUtcNow().UtcDateTime.Date.AddDays(-windowDays));
             pruneCutoff = Math.Min(now - retentionDays * MsPerDay, recomputeFloor);
         }
 

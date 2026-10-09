@@ -10,16 +10,32 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Jellyfin.Plugin.JellyPlay.Services.Events;
 
 /// <summary>
-/// The deep new-media pipeline behind <see cref="ItemAddedWatcher"/>: episode
-/// grouping, library allow-listing, per-key dedup and virtual-folder
-/// resolution live here, so the watcher stays a thin adapter
-/// (OnItemAdded → Add, FlushDue → PopDue → EventService).
+/// Where the pipeline hands an emission over: <see cref="EventService"/>
+/// implements this (payload shaping + the SSE + push fan-out). The pipeline
+/// decides WHEN; the sink decides HOW.
+/// </summary>
+public interface INewMediaSink
+{
+    int PublishNewMedia(EpisodeGroup group, IReadOnlyList<string>? adminUserIds = null);
+
+    int PublishNewMovie(Guid itemId, string title, string? libraryId);
+}
+
+/// <summary>
+/// The deep new-media pipeline behind <see cref="ItemAddedWatcher"/> and
+/// <see cref="EventService"/>: episode grouping, the ONE emission gate
+/// (enabled + library allow-list + dedup, decided exactly once per emission),
+/// and the drain orchestration live here. The watcher is a thin adapter
+/// (host event subscription + timer); <see cref="EventService"/> only shapes
+/// payloads and fans out.
 ///
-/// Locality: <see cref="EpisodeGroupBuffer"/> keeps the pure grouping;
-/// this module adds the TimeProvider + VirtualFolderProvider Func seams, the
-/// allow-list gate and the ShouldEmit dedup (moved from
-/// <see cref="EventService"/> / the watcher byte-for-byte). The flush tick
-/// stays <see cref="DefaultTick"/> (10s) unless the caller passes another.
+/// Locality: the emit decision used to ping-pong (dedup state here, the
+/// decision to consult it in EventService, the enabled flag checked in three
+/// layers); it is now one seam per emission kind — <see cref="ShouldEmit"/>
+/// and <see cref="ShouldEmitMovie"/> — so a gating-rule change touches one
+/// module. The dedup-mutating check runs EXACTLY once per emission: the
+/// drain paths never pre-gate groups, they only fast-path on
+/// <see cref="HasWork"/>.
 /// </summary>
 public sealed class NewMediaPipeline
 {
@@ -48,13 +64,13 @@ public sealed class NewMediaPipeline
     private long _lastSweepMs;
 
     public NewMediaPipeline(
-        EpisodeGroupBuffer buffer,
         Func<EventsConfig> config,
         TimeProvider? clock = null,
         Func<IReadOnlyList<MediaBrowser.Model.Entities.VirtualFolderInfo>>? virtualFolders = null,
-        ILogger<NewMediaPipeline>? logger = null)
+        ILogger<NewMediaPipeline>? logger = null,
+        EpisodeGroupBuffer? buffer = null)
     {
-        _buffer = buffer;
+        _buffer = buffer ?? new EpisodeGroupBuffer();
         _config = config;
         _clock = clock ?? TimeProvider.System;
         _virtualFoldersProvider = virtualFolders;
@@ -130,11 +146,11 @@ public sealed class NewMediaPipeline
     }
 
     /// <summary>
-    /// The library allow-list gate (moved from EventService byte-for-byte):
-    /// empty allow-list or null library id passes; otherwise the parsed guid
-    /// must be listed (unparsable ids check against Guid.Empty, as before).
+    /// The library allow-list gate: empty allow-list or null library id
+    /// passes; otherwise the parsed guid must be listed (unparsable ids check
+    /// against Guid.Empty, as before).
     /// </summary>
-    public bool IsLibraryAllowed(string? libraryId)
+    internal bool IsLibraryAllowed(string? libraryId)
     {
         var allowed = _config().NewMediaEnabledLibraries;
         if (allowed.Count == 0 || libraryId is null)
@@ -146,11 +162,74 @@ public sealed class NewMediaPipeline
     }
 
     /// <summary>Dedup key for a flushed episode group (first episode drives the key, as before).</summary>
-    public static string GroupDedupKey(EpisodeGroup group)
+    private static string GroupDedupKey(EpisodeGroup group)
         => $"new-media:{group.SeriesId}:{group.SeasonIndex}:{group.Episodes[0].ItemId}";
 
     /// <summary>Dedup key for a movie item.</summary>
-    public static string MovieDedupKey(Guid itemId) => $"new-media:{itemId}";
+    private static string MovieDedupKey(Guid itemId) => $"new-media:{itemId}";
+
+    /// <summary>
+    /// The ONE emission gate for a flushed episode group: enabled, library
+    /// allow-list and dedup in one call — the dedup-mutating check runs here
+    /// and only here, so the drain loop and EventService can never
+    /// double-check (a second check would suppress).
+    /// </summary>
+    public bool ShouldEmit(EpisodeGroup group)
+    {
+        var config = _config();
+        if (!config.NewMediaEnabled || !IsLibraryAllowed(group.LibraryId))
+        {
+            return false;
+        }
+
+        return ShouldEmit(GroupDedupKey(group), config.DedupThresholdSeconds);
+    }
+
+    /// <summary>The ONE emission gate for a movie item (the same three rules, movie shape).</summary>
+    public bool ShouldEmitMovie(Guid itemId, string? libraryId)
+    {
+        var config = _config();
+        if (!config.NewMediaEnabled || !IsLibraryAllowed(libraryId))
+        {
+            return false;
+        }
+
+        return ShouldEmit(MovieDedupKey(itemId), config.DedupThresholdSeconds);
+    }
+
+    /// <summary>Whether a flush tick could have work: enabled AND something buffered (the drain's fast path).</summary>
+    public bool HasWork => _config().NewMediaEnabled && _buffer.PendingGroupCount > 0;
+
+    /// <summary>
+    /// Releases every due group to the sink (the flush tick's whole body):
+    /// the self-gating fast path (disabled or nothing buffered skips the
+    /// folder refresh and the drain), the per-tick virtual-folder snapshot,
+    /// and the batch's shared admin audience. The sink's
+    /// <c>PublishNewMedia</c> applies the emission gate (<see cref="ShouldEmit"/>)
+    /// — this path never pre-gates groups.
+    /// </summary>
+    public void DrainDue(INewMediaSink sink, IReadOnlyList<string> adminUserIds)
+    {
+        if (!HasWork)
+        {
+            return;
+        }
+
+        RefreshVirtualFolders();
+        foreach (var group in PopDue())
+        {
+            sink.PublishNewMedia(group, adminUserIds);
+        }
+    }
+
+    /// <summary>Releases every buffered group to the sink (the shutdown drain), under the same no-pre-gate rule.</summary>
+    public void DrainAll(INewMediaSink sink, IReadOnlyList<string> adminUserIds)
+    {
+        foreach (var group in FlushAll())
+        {
+            sink.PublishNewMedia(group, adminUserIds);
+        }
+    }
 
     /// <summary>
     /// Whether the logical key may emit now (moved from EventService

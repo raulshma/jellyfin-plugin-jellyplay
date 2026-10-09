@@ -28,13 +28,15 @@ public sealed class AdminDefaultsService
     private readonly JellyPlayDatabase _db;
     private readonly SnapshotService _snapshots;
     private readonly ILogger<AdminDefaultsService> _logger;
+    private readonly TimeProvider _clock;
 
-    public AdminDefaultsService(SettingsService settings, JellyPlayDatabase db, SnapshotService snapshots, ILogger<AdminDefaultsService> logger)
+    public AdminDefaultsService(SettingsService settings, JellyPlayDatabase db, SnapshotService snapshots, ILogger<AdminDefaultsService> logger, TimeProvider? clock = null)
     {
         _settings = settings;
         _db = db;
         _snapshots = snapshots;
         _logger = logger;
+        _clock = clock ?? TimeProvider.System;
     }
 
     /// <summary>Per-key would-rejects are capped at this many per dry run (counts stay authoritative).</summary>
@@ -188,7 +190,7 @@ public sealed class AdminDefaultsService
                 entry.Ns,
                 entry.Key,
                 hasExisting ? current.SchemaVersion : 1,
-                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                _clock.GetUtcNow().ToUnixTimeMilliseconds(),
                 "admin-push",
                 JsonSerializer.SerializeToUtf8Bytes(entry.Value)));
         }

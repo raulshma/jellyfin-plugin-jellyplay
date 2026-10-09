@@ -22,8 +22,7 @@ namespace Jellyfin.Plugin.JellyPlay.Services.Shared;
 /// interface every SSE + push pairing leverages — one Null|Set seam (null =
 /// broadcast-all, empty = nobody) instead of each caller re-implementing the
 /// null-vs-empty locality. <see cref="ResolveAudience"/> is the unified
-/// resolution behind the two historical helpers; those helpers stay as thin
-/// adapters so existing callers keep compiling.
+/// resolution every audience-bearing surface calls.
 /// </summary>
 public static class Audience
 {
@@ -112,21 +111,6 @@ public static class Audience
         => ResolveAudience(audience.Type, audience.UserIds, adminUserIds);
 
     /// <summary>
-    /// Push/SSE targets for a message audience: "admins" → the admin id set,
-    /// "users" → the explicit ids (empty list delivers to nobody), anything
-    /// else → null = every user. The type match is case-insensitive — the same
-    /// rule the event path applies — so one spelling works on every
-    /// audience-bearing surface. Pure so it is unit-testable without the host.
-    /// Thin adapter over <see cref="ResolveAudience"/>; kept so existing
-    /// callers keep compiling with identical semantics.
-    /// </summary>
-    public static IReadOnlyCollection<string>? ResolveTargets(
-        string? audienceType,
-        IReadOnlyList<string> explicitUserIds,
-        IReadOnlyList<string> adminUserIds)
-        => ResolveAudience(audienceType, explicitUserIds, adminUserIds).UserIds;
-
-    /// <summary>
     /// Whether one user sees content addressed to an audience: admins-gated
     /// content needs an admin, users-gated content needs membership in the
     /// explicit set, anything else ("all", corrupt, absent) is visible. The
@@ -147,26 +131,4 @@ public static class Audience
             _ => true
         };
 
-    /// <summary>
-    /// Targets for the event pipeline's simpler audience tag: "admins" → the
-    /// admin id set, anything else ("all") → null = broadcast to every
-    /// subscriber. Pure so it is unit-testable without the host. Resolves via
-    /// the <see cref="BroadcastTargets"/> seam (IsBroadcast/IsNobody checks —
-    /// never a fragile interface cast), then materializes a set.
-    /// </summary>
-    public static IReadOnlySet<string>? ResolveEventTargets(string? audience, IReadOnlyList<string> adminUserIds)
-    {
-        var resolved = ResolveAudience(audience, adminUserIds);
-        if (resolved.IsBroadcast)
-        {
-            return null;
-        }
-
-        if (resolved.IsNobody)
-        {
-            return new HashSet<string>(StringComparer.Ordinal);
-        }
-
-        return new HashSet<string>(resolved.UserIds!, StringComparer.Ordinal);
-    }
 }

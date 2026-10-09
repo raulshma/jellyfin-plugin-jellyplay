@@ -29,11 +29,13 @@ public sealed class SyncInsightsService
 
     private readonly JellyPlayDatabase _db;
     private readonly Func<SyncConfig> _config;
+    private readonly TimeProvider _clock;
 
-    public SyncInsightsService(JellyPlayDatabase db, Func<SyncConfig> config)
+    public SyncInsightsService(JellyPlayDatabase db, Func<SyncConfig> config, TimeProvider? clock = null)
     {
         _db = db;
         _config = config;
+        _clock = clock ?? TimeProvider.System;
     }
 
     /// <summary>Caller's sync status: change-log head, footprint vs quotas, namespaces, per-device fold.</summary>
@@ -140,7 +142,7 @@ public sealed class SyncInsightsService
                 row.Keys.Select(entry => new SyncHistoryKeyDto(entry.Ns, entry.Key, entry.UpdatedAt)).ToList()))
             .ToList();
 
-        return new AuditExportResponse(userId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), history);
+        return new AuditExportResponse(userId, _clock.GetUtcNow().ToUnixTimeMilliseconds(), history);
     }
 
     /// <summary>
@@ -161,7 +163,7 @@ public sealed class SyncInsightsService
                 row.AppVersion,
                 row.LastSeen,
                 row.Model,
-                DeviceRegistryService.ParseCaps(row.CapsJson),
+                Services.Push.PushEligibility.ParseCaps(row.CapsJson),
                 row.Revoked))
             .ToList();
         return new AdminUserDrilldownResponse(userId, AdminUsers.DisplayName(userId, userName), status, devices);

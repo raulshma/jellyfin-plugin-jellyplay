@@ -43,15 +43,12 @@ public class RateLimiterTests
     }
 }
 
-public class DatabaseIntegrityTests : IDisposable
+public class DatabaseIntegrityTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-integrity-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
 
     public DatabaseIntegrityTests()
+        : base("integrity")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
     }
 
     public void Dispose()

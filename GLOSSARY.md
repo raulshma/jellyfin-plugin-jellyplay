@@ -66,6 +66,18 @@ push). Seerr webhook activity is published as a broadcast too.
 **Audience** — who receives an event or message: `all`, `admins`, or explicit
 user ids.
 
+**New-media pipeline** — the module owning everything between the host's
+ItemAdded event and the emission: episode grouping, the library allow-list,
+dedup, and the ONE emission gate (`ShouldEmit`, enabled + library + dedup
+decided exactly once per emission). The watcher is a thin adapter (host
+subscription + timer); EventService only shapes payloads and fans out.
+
+**Client commons** — the dashboard pages' one client-side module
+(`jellyplay-common.js`, served as `configurationpage?name=JellyPlayCommon.js`):
+auth headers, the wire error-body contract, the fetch wrappers and the i18n
+pass. Pages carry page logic only; a page that re-declares the plumbing fails
+the JS tripwire tests.
+
 ## Seerr bridge
 
 **Seerr bridge** — the plugin-side proxy to a Jellyseerr/Overseerr instance.

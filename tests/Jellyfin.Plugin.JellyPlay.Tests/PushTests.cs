@@ -81,25 +81,14 @@ internal sealed class PushRecording
 // ---------------------------------------------------------------------------
 
 /// <summary>Push wave: the v3 → v4 migration adds push columns without touching stored data, idempotently.</summary>
-public sealed class PushMigrationTests : IDisposable
+public sealed class PushMigrationTests : TempDirFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-push-mig-" + Guid.NewGuid().ToString("N"));
 
     public PushMigrationTests()
+        : base("push-mig")
     {
-        Directory.CreateDirectory(_tempDir);
     }
 
-    public void Dispose()
-    {
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private string DbPath => Path.Combine(_tempDir, "plugins", "JellyPlay", "jellyplay_plugin.db");
 
@@ -193,28 +182,14 @@ public sealed class PushMigrationTests : IDisposable
 // Device-row push persistence + audience queries
 // ---------------------------------------------------------------------------
 
-public sealed class PushDeviceStoreTests : IDisposable
+public sealed class PushDeviceStoreTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-push-store-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
 
     public PushDeviceStoreTests()
+        : base("push-store")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private static DeviceWrite Device(string id, string user, string? kind = "generic", string? endpoint = "https://push.example/hook")
         => new(id, user, "Name " + id, "android", "1.0", 100, kind, endpoint, 90);
@@ -275,31 +250,17 @@ public sealed class PushDeviceStoreTests : IDisposable
 // ---------------------------------------------------------------------------
 
 /// <summary>Registration contract: persist/replace/preserve, invalid → 400, endpoints never leak across users.</summary>
-public sealed class DeviceRegistrationApiTests : IDisposable
+public sealed class DeviceRegistrationApiTests : TempDatabaseFixture
 {
     private const string UserA = "11111111-1111-1111-1111-111111111111";
     private const string UserB = "22222222-2222-2222-2222-222222222222";
 
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-push-api-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
 
     public DeviceRegistrationApiTests()
+        : base("push-api")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private DevicesController Controller(string userId, string deviceId)
     {
@@ -526,28 +487,14 @@ public sealed class PushPayloadTests
 // Dispatcher fan-out with a fake sender
 // ---------------------------------------------------------------------------
 
-public sealed class PushDispatcherTests : IDisposable
+public sealed class PushDispatcherTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-push-disp-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
 
     public PushDispatcherTests()
+        : base("push-disp")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private PushDispatcher Dispatcher(bool enabled, PushSender sender)
         => new(_db, () => new PushConfig { Enabled = enabled }, NullLogger<PushDispatcher>.Instance, sender);
@@ -720,28 +667,14 @@ public sealed class PushDispatcherTests : IDisposable
 /// old clients render unknown kinds as visible notifications, so the cap is
 /// the safety gate.
 /// </summary>
-public sealed class SyncNudgeDispatcherTests : IDisposable
+public sealed class SyncNudgeDispatcherTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-nudge-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
 
     public SyncNudgeDispatcherTests()
+        : base("nudge")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     [Fact]
     public async Task Nudge_GoesOnlyToSilentPushCapableDevices()
@@ -806,31 +739,17 @@ public sealed class SyncNudgeDispatcherTests : IDisposable
 // ---------------------------------------------------------------------------
 
 /// <summary>New-media push rides the exact SSE audience resolution; messages target the message audience.</summary>
-public sealed class PushAudienceTests : IDisposable
+public sealed class PushAudienceTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-push-aud-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
     private readonly PushRecording _recording = new();
 
     public PushAudienceTests()
+        : base("push-aud")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
         _db.UpsertDevice(new DeviceWrite("admin-dev", "admin-1", "A", "android", "1", 1, "generic", "https://push.example/admin", 1));
         _db.UpsertDevice(new DeviceWrite("regular-dev", "regular", "R", "android", "1", 1, "generic", "https://push.example/regular", 1));
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private static EpisodeGroup Group(Guid itemId)
         => new(Guid.NewGuid(), Guid.NewGuid(), "Show", 1, new[] { new EpisodeRef(itemId, "E1") }, null);
@@ -841,15 +760,15 @@ public sealed class PushAudienceTests : IDisposable
     [Fact]
     public void ResolveMessageAudience_AdminUsersAll()
     {
-        var admins = Audience.ResolveTargets("admins", new List<string>(), new[] { "a1", "a2" });
+        var admins = Audience.ResolveAudience("admins", new List<string>(), new[] { "a1", "a2" }).UserIds;
         Assert.NotNull(admins);
         Assert.Equal(new[] { "a1", "a2" }, admins!.OrderBy(x => x));
 
-        var users = Audience.ResolveTargets("users", new List<string> { "u9" }, new[] { "a1" });
+        var users = Audience.ResolveAudience("users", new List<string> { "u9" }, new[] { "a1" }).UserIds;
         Assert.Equal(new[] { "u9" }, users);
 
-        Assert.Empty(Audience.ResolveTargets("users", new List<string>(), new[] { "a1" })!); // empty = nobody
-        Assert.Null(Audience.ResolveTargets("all", new List<string>(), Array.Empty<string>()));
+        Assert.Empty(Audience.ResolveAudience("users", new List<string>(), new[] { "a1" }).UserIds!); // empty = nobody
+        Assert.Null(Audience.ResolveAudience("all", new List<string>(), Array.Empty<string>()).UserIds);
     }
 
     [Fact]
@@ -857,15 +776,16 @@ public sealed class PushAudienceTests : IDisposable
     {
         var admins = new List<string> { "admin-1" };
         Func<EventsConfig> config = () => new EventsConfig { NewMediaEnabled = true, NewMediaAudience = "admins" };
+        var hub = new SseHub(NullLogger<SseHub>.Instance);
         var events = new EventService(
-            new SseHub(NullLogger<SseHub>.Instance),
+            hub,
             config,
             () => admins,
-            new NewMediaPipeline(new EpisodeGroupBuffer(), config),
+            new NewMediaPipeline(config),
             NullLogger<EventService>.Instance,
-            Dispatcher());
+            new NotificationFanout(hub, Dispatcher()));
 
-        var sseTargets = Audience.ResolveEventTargets("admins", admins);
+        var sseTargets = Audience.ResolveAudience("admins", admins).UserIds;
         events.PublishNewMedia(Group(Guid.NewGuid()));
         await _recording.WaitAsync(1);
 
@@ -883,13 +803,14 @@ public sealed class PushAudienceTests : IDisposable
     public async Task NewMediaAllAudience_PushesEveryRegisteredUser()
     {
         Func<EventsConfig> config = () => new EventsConfig { NewMediaEnabled = true, NewMediaAudience = "all" };
+        var hub = new SseHub(NullLogger<SseHub>.Instance);
         var events = new EventService(
-            new SseHub(NullLogger<SseHub>.Instance),
+            hub,
             config,
             () => new List<string> { "admin-1" },
-            new NewMediaPipeline(new EpisodeGroupBuffer(), config),
+            new NewMediaPipeline(config),
             NullLogger<EventService>.Instance,
-            Dispatcher());
+            new NotificationFanout(hub, Dispatcher()));
 
         events.PublishNewMovie(Guid.NewGuid(), "A Movie", null);
         await _recording.WaitAsync(2);
@@ -903,13 +824,14 @@ public sealed class PushAudienceTests : IDisposable
     public async Task Broadcast_PushesAllUsers_FireAndForget()
     {
         Func<EventsConfig> config = () => new EventsConfig();
+        var hub = new SseHub(NullLogger<SseHub>.Instance);
         var events = new EventService(
-            new SseHub(NullLogger<SseHub>.Instance),
+            hub,
             config,
             () => new List<string> { "admin-1" },
-            new NewMediaPipeline(new EpisodeGroupBuffer(), config),
+            new NewMediaPipeline(config),
             NullLogger<EventService>.Instance,
-            Dispatcher());
+            new NotificationFanout(hub, Dispatcher()));
 
         events.PublishBroadcast("Maintenance", "Restart tonight", null); // fire-and-forget
         await _recording.WaitAsync(2);
@@ -926,7 +848,7 @@ public sealed class PushAudienceTests : IDisposable
         var service = new MessageService(
             _db,
             NullLogger<MessageService>.Instance,
-            Dispatcher(),
+            new NotificationFanout(new SseHub(NullLogger<SseHub>.Instance), Dispatcher()),
             () => new List<string> { "admin-1" });
 
         var created = service.Upsert(new MessageAdminRequest
@@ -957,13 +879,14 @@ public sealed class PushAudienceTests : IDisposable
     public async Task DisabledPush_IssuesNoRequests()
     {
         Func<EventsConfig> config = () => new EventsConfig { NewMediaEnabled = true, NewMediaAudience = "all" };
+        var hub = new SseHub(NullLogger<SseHub>.Instance);
         var events = new EventService(
-            new SseHub(NullLogger<SseHub>.Instance),
+            hub,
             config,
             () => new List<string> { "admin-1" },
-            new NewMediaPipeline(new EpisodeGroupBuffer(), config),
+            new NewMediaPipeline(config),
             NullLogger<EventService>.Instance,
-            Dispatcher(enabled: false));
+            new NotificationFanout(hub, Dispatcher(enabled: false)));
 
         Assert.Equal(0, events.PublishNewMedia(Group(Guid.NewGuid()))); // empty SSE hub delivers 0; push must stay silent too
         events.PublishBroadcast("t", "b", null);
@@ -971,7 +894,7 @@ public sealed class PushAudienceTests : IDisposable
         var service = new MessageService(
             _db,
             NullLogger<MessageService>.Instance,
-            Dispatcher(enabled: false),
+            new NotificationFanout(new SseHub(NullLogger<SseHub>.Instance), Dispatcher(enabled: false)),
             () => new List<string>());
         service.Upsert(new MessageAdminRequest { Title = "t", Body = "b", Audience = new AudiencePayload { Type = "all" } });
 
@@ -990,30 +913,16 @@ public sealed class PushAudienceTests : IDisposable
 /// storage records; the service-side projection (AdminMessageDto) must keep
 /// that wire byte-identical — pinned by serializing both through the same gate.
 /// </summary>
-public sealed class AdminMessageWireTests : IDisposable
+public sealed class AdminMessageWireTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-admin-msg-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
     private readonly MessageService _service;
 
     public AdminMessageWireTests()
+        : base("admin-msg")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
-        _service = new MessageService(_db, NullLogger<MessageService>.Instance);
+        _service = new MessageService(_db, NullLogger<MessageService>.Instance, new NotificationFanout(new SseHub(NullLogger<SseHub>.Instance)));
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private static MessageRow Row(string id, long? startsAt = null, long? endsAt = null, int orderIndex = 3)
         => new(id, "Title " + id, "Body " + id, "accent", "https://link.example/" + id, "Open",
@@ -1104,28 +1013,14 @@ internal sealed class RecordingHttpHandler : HttpMessageHandler
 }
 
 /// <summary>The DI constructors wire the transport to IHttpClientFactory ("jellyplay-push") — no hidden static clients remain.</summary>
-public sealed class PushHttpFactoryTests : IDisposable
+public sealed class PushHttpFactoryTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-push-http-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
 
     public PushHttpFactoryTests()
+        : base("push-http")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     [Fact]
     public async Task Dispatcher_DiConstructor_SendsThroughTheFactoryClient()

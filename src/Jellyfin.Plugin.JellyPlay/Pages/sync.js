@@ -1,96 +1,17 @@
 (function () {
     'use strict';
 
-    // ── api plumbing (same conventions as the main config page) ──
-
-    function authHeaders(extra) {
-        var token = window.ApiClient.accessToken();
-        var auth = 'MediaBrowser Client="JellyPlay Dashboard", Device="Dashboard", DeviceId="jellyplay-dashboard", Version="1.0", Token="' + token + '"';
-        var headers = { 'Authorization': auth, 'X-Emby-Authorization': auth };
-        for (var key in (extra || {})) { headers[key] = extra[key]; }
-        return headers;
-    }
-
-    function extractErrorDetail(text, status) {
-        try {
-            var parsed = JSON.parse(text);
-            if (parsed && typeof parsed.error === 'string' && parsed.error) {
-                return parsed.error;
-            }
-            if (parsed && typeof parsed.message === 'string' && parsed.message) {
-                return parsed.message;
-            }
-        } catch (ignored) { }
-        return String(status);
-    }
-
-    function apiGet(path) {
-        return fetch(window.ApiClient.getUrl(path), { headers: authHeaders() }).then(function (response) {
-            if (!response.ok) {
-                return response.text().then(function (text) {
-                    throw new Error(extractErrorDetail(text, response.status));
-                });
-            }
-            return response.json();
-        });
-    }
-
-    function apiPost(path, body) {
-        return fetch(window.ApiClient.getUrl(path), {
-            method: 'POST',
-            headers: authHeaders({ 'Content-Type': 'application/json' }),
-            body: body === undefined ? undefined : JSON.stringify(body)
-        }).then(function (response) {
-            if (!response.ok) {
-                return response.text().then(function (text) {
-                    throw new Error(extractErrorDetail(text, response.status));
-                });
-            }
-            return response.status === 204 ? null : response.json();
-        });
-    }
-
-    function apiDelete(path) {
-        return fetch(window.ApiClient.getUrl(path), { method: 'DELETE', headers: authHeaders() }).then(function (response) {
-            if (!response.ok && response.status !== 404) {
-                return response.text().then(function (text) {
-                    throw new Error(extractErrorDetail(text, response.status));
-                });
-            }
-            return null;
-        });
-    }
-
-    // ── i18n ──
-
-    var strings = {};
-
-    function fmt(key, fallback) {
-        var text = strings[key] || fallback;
-        // arguments[0]=key, arguments[1]=fallback — placeholders start at {0}
-        // with arguments[2], and every occurrence of each placeholder goes.
-        for (var i = 2; i < arguments.length; i++) {
-            text = String(text).split('{' + (i - 2) + '}').join(String(arguments[i]));
-        }
-        return text;
-    }
-
-    function alertFmt(key, fallback) {
-        var args = Array.prototype.slice.call(arguments);
-        window.Dashboard.alert(fmt.apply(null, args));
-    }
-
-    function applyStrings() {
-        return apiGet('jellyplay/dashboard-strings?lang=' + encodeURIComponent(navigator.language || '')).then(function (table) {
-            strings = table || {};
-            Array.prototype.forEach.call(document.querySelectorAll('[data-i18n]'), function (element) {
-                var value = strings[element.getAttribute('data-i18n')];
-                if (typeof value === 'string' && value.length > 0) { element.textContent = value; }
-            });
-        }).catch(function () {
-            // The static en markup stands on its own; localization is cosmetic.
-        });
-    }
+    // Page logic only — the api/i18n surface is jellyplay-common.js
+    // (window.JellyPlayCommon): auth, fetch wrappers, error extraction, fmt.
+    var common = window.JellyPlayCommon;
+    var strings = common.strings;
+    var fmt = common.fmt;
+    var alertFmt = common.alertFmt;
+    var apiGet = common.apiGet;
+    var apiPost = common.apiPost;
+    var apiDelete = common.apiDelete;
+    var authHeaders = common.authHeaders;
+    var applyStrings = common.applyStrings;
 
     // ── shared styles (the row/table scaffolding this page needs) ──
 

@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using Jellyfin.Plugin.JellyPlay.Realtime;
 using Jellyfin.Plugin.JellyPlay.Services.Devices;
+using Jellyfin.Plugin.JellyPlay.Services.Push;
 using Jellyfin.Plugin.JellyPlay.Services.Settings;
 using Jellyfin.Plugin.JellyPlay.Storage;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -17,32 +18,18 @@ namespace Jellyfin.Plugin.JellyPlay.Tests;
 /// through the tombstone pipeline — and the DELETE route's caps gate (legacy
 /// capless devices plain-unregister; capped ones revoke + wipe).
 /// </summary>
-public sealed class DeviceRegistryTests : IDisposable
+public sealed class DeviceRegistryTests : TempDatabaseFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-registry-" + Guid.NewGuid().ToString("N"));
-    private readonly JellyPlayDatabase _db;
     private readonly DeviceRegistryService _devices;
     private readonly SettingsService _settings;
 
     public DeviceRegistryTests()
+        : base("registry")
     {
-        Directory.CreateDirectory(_tempDir);
-        _db = new JellyPlayDatabase(_tempDir);
         _settings = SettingsServiceFactory.Create(_db, new SseHub(NullLogger<SseHub>.Instance));
         _devices = new DeviceRegistryService(_db, () => new Configuration.PushConfig(), _settings);
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     [Fact]
     public void Register_SelfReportedModelAndCaps_Persist_AndRoundTripThroughTheDto()
@@ -192,9 +179,9 @@ public sealed class DeviceRegistryTests : IDisposable
     [Fact]
     public void ParseCaps_MalformedPayloads_DegradeToEmpty()
     {
-        Assert.Empty(DeviceRegistryService.ParseCaps(null));
-        Assert.Empty(DeviceRegistryService.ParseCaps(string.Empty));
-        Assert.Empty(DeviceRegistryService.ParseCaps("not-json"));
-        Assert.Equal(new[] { "silent-push" }, DeviceRegistryService.ParseCaps("[\"silent-push\"]"));
+        Assert.Empty(PushEligibility.ParseCaps(null));
+        Assert.Empty(PushEligibility.ParseCaps(string.Empty));
+        Assert.Empty(PushEligibility.ParseCaps("not-json"));
+        Assert.Equal(new[] { "silent-push" }, PushEligibility.ParseCaps("[\"silent-push\"]"));
     }
 }

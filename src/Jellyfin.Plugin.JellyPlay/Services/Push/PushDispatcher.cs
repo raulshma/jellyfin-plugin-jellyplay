@@ -33,18 +33,6 @@ public static class PushKinds
     public const string SyncNudge = "sync-nudge";
 }
 
-/// <summary>
-/// Device capability strings (registry v7, self-reported at registration) the
-/// dispatcher gates on. Thin compat adapter over <see cref="PushEligibility"/> —
-/// the eligibility locality lives there; this stays so existing callers keep
-/// compiling with identical values.
-/// </summary>
-public static class DeviceCaps
-{
-    /// <summary>The cap that opts a device into sync-nudge delivery.</summary>
-    public const string SilentPush = PushEligibility.SilentPushCap;
-}
-
 /// <summary>One push notification fanned out to every push-registered device of the target users.</summary>
 public sealed record PushMessage(string Kind, string Title, string Body, string? ItemId = null);
 

@@ -95,25 +95,14 @@ public sealed class SseKeepaliveTests
 }
 
 /// <summary>Hardening: stepwise schema migrations via PRAGMA user_version, plus integrity quarantine.</summary>
-public sealed class DatabaseMigrationTests : IDisposable
+public sealed class DatabaseMigrationTests : TempDirFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-migration-" + Guid.NewGuid().ToString("N"));
 
     public DatabaseMigrationTests()
+        : base("migration")
     {
-        Directory.CreateDirectory(_tempDir);
     }
 
-    public void Dispose()
-    {
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private string DbPath => Path.Combine(_tempDir, "plugins", "JellyPlay", "jellyplay_plugin.db");
 
@@ -232,27 +221,16 @@ public sealed class DatabaseMigrationTests : IDisposable
 }
 
 /// <summary>Hardening: the file cache is size-capped with oldest-first eviction.</summary>
-public sealed class FileCacheSweepTests : IDisposable
+public sealed class FileCacheSweepTests : TempDirFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-cache-" + Guid.NewGuid().ToString("N"));
     private readonly FileCacheStore _store;
 
     public FileCacheSweepTests()
+        : base("cache")
     {
-        Directory.CreateDirectory(_tempDir);
         _store = new FileCacheStore(NullLogger<FileCacheStore>.Instance, _tempDir, () => 256);
     }
 
-    public void Dispose()
-    {
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private string Entry(string name, int bytes, DateTimeOffset written)
     {
@@ -406,25 +384,14 @@ public sealed class WebhookSecurityTests
 }
 
 /// <summary>Hardening: Seerr cookies are AES-GCM encrypted at rest with a plugin-held key.</summary>
-public sealed class SecretBoxTests : IDisposable
+public sealed class SecretBoxTests : TempDirFixture
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "jellyplay-secretbox-" + Guid.NewGuid().ToString("N"));
 
     public SecretBoxTests()
+        : base("secretbox")
     {
-        Directory.CreateDirectory(_tempDir);
     }
 
-    public void Dispose()
-    {
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 
     private static SecretBox Box() => new(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
 

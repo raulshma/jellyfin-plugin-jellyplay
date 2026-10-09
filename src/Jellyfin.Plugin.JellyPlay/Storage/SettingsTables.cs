@@ -63,11 +63,13 @@ public sealed partial class JellyPlayDatabase
 
     /// <summary>
     /// Applies a batch with per-key last-write-wins (see <see cref="ApplyWriteLoop"/>
-    /// for the LWW/tombstone/quota rules). The bare store API: no clock-skew
-    /// ceiling, no device-revocation refusal — those are the service-facing
-    /// composite's concerns.
+    /// for the LWW/tombstone/quota rules). The bare store seam: no clock-skew
+    /// ceiling, no device-revocation refusal, no history record — those are
+    /// the service-facing composite's (<see cref="ApplyBatchWithHistory"/>)
+    /// concerns. Production writes ride the composite; this is the test
+    /// suite's seeding path, so it stays out of the public interface.
     /// </summary>
-    public UpsertResult UpsertSettings(
+    internal UpsertResult UpsertSettings(
         string userId,
         string profile,
         IReadOnlyList<SettingWrite> writes,
@@ -89,6 +91,54 @@ public sealed partial class JellyPlayDatabase
         long HeadAfter,
         IReadOnlyList<AppliedSetting> Applied,
         IReadOnlyList<RejectedSetting> Rejected);
+
+    /// <summary>The history row a recorded composite files for its mutation: the counts plus the no-record escape.</summary>
+    private readonly record struct HistoryRecord(int KeysApplied, int KeysRejected, long Bytes, string? RejectsJson, bool Record = true);
+
+    /// <summary>
+    /// The ONE head-bracket skeleton every recorded composite shares: head
+    /// read → mutation → head read → best-effort history record, on the
+    /// caller's held connection inside its transaction (the caller commits).
+    /// The try/catch — observability never fails the mutation it observes —
+    /// lives here once, not in every composite.
+    /// </summary>
+    private (long HeadBefore, long HeadAfter) RunWithHistoryBracket(
+        SqliteConnection connection,
+        string userId,
+        string deviceId,
+        string op,
+        long historyTs,
+        Func<HistoryRecord> mutate)
+    {
+        var headBefore = GetChangeLogHead(connection, userId);
+        var record = mutate();
+        var headAfter = GetChangeLogHead(connection, userId);
+        if (record.Record)
+        {
+            try
+            {
+                InsertSyncHistory(
+                    connection,
+                    userId,
+                    deviceId,
+                    op,
+                    record.KeysApplied,
+                    record.KeysRejected,
+                    record.Bytes,
+                    record.RejectsJson,
+                    historyTs,
+                    headBefore,
+                    headAfter);
+            }
+            catch (Exception ex)
+            {
+                // Observability is best-effort by contract: never fail the mutation.
+                _logger?.LogWarning(ex, "JellyPlay sync-history recording failed (user {UserId}, op {Op}) — ignoring", userId, op);
+            }
+        }
+
+        return (headBefore, headAfter);
+    }
 
     /// <summary>
     /// The service-facing batch composite: the device-revocation refusal, the
@@ -120,34 +170,17 @@ public sealed partial class JellyPlayDatabase
         {
             using (var transaction = connection.BeginTransaction())
             {
-                headBefore = GetChangeLogHead(connection, userId);
-                (applied, rejected) = ApplyWriteLoop(connection, userId, profile, writes, quotas, maxWriteUpdatedAt, revokedDeviceId: deviceId);
-                headAfter = GetChangeLogHead(connection, userId);
-
-                try
+                applied = new List<AppliedSetting>();
+                rejected = new List<RejectedSetting>();
+                (headBefore, headAfter) = RunWithHistoryBracket(connection, userId, deviceId, op, historyTs, () =>
                 {
+                    (applied, rejected) = ApplyWriteLoop(connection, userId, profile, writes, quotas, maxWriteUpdatedAt, revokedDeviceId: deviceId);
                     var appliedSet = applied.Select(a => (a.Ns, a.Key)).ToHashSet();
                     var appliedBytes = writes
                         .Where(write => appliedSet.Contains((write.Ns, write.Key)))
                         .Sum(write => (long)write.Value.Length);
-                    InsertSyncHistory(
-                        connection,
-                        userId,
-                        deviceId,
-                        op,
-                        applied.Count,
-                        rejected.Count,
-                        appliedBytes,
-                        rejectsJsonBuilder?.Invoke(rejected),
-                        historyTs,
-                        headBefore,
-                        headAfter);
-                }
-                catch (Exception ex)
-                {
-                    // Observability is best-effort by contract: never fail the batch.
-                    _logger?.LogWarning(ex, "JellyPlay sync-history recording failed (user {UserId}, op {Op}) — ignoring", userId, op);
-                }
+                    return new HistoryRecord(applied.Count, rejected.Count, appliedBytes, rejectsJsonBuilder?.Invoke(rejected));
+                });
 
                 transaction.Commit();
             }
@@ -538,24 +571,16 @@ public sealed partial class JellyPlayDatabase
     {
         long headBefore;
         long headAfter;
-        int deleted;
+        int deleted = 0;
         using (_lock.Write())
         using (var connection = CreateConnection())
         using (var transaction = connection.BeginTransaction())
         {
-            headBefore = GetChangeLogHead(connection, userId);
-            deleted = TombstoneRows(connection, userId, tombstoneAt, profile: profile, ns: ns);
-            headAfter = GetChangeLogHead(connection, userId);
-
-            try
+            (headBefore, headAfter) = RunWithHistoryBracket(connection, userId, deviceId, op, historyTs, () =>
             {
-                InsertSyncHistory(connection, userId, deviceId, op, deleted, 0, 0, null, historyTs, headBefore, headAfter);
-            }
-            catch (Exception ex)
-            {
-                // Observability is best-effort by contract: never fail the reset.
-                _logger?.LogWarning(ex, "JellyPlay sync-history recording failed (user {UserId}, op {Op}) — ignoring", userId, op);
-            }
+                deleted = TombstoneRows(connection, userId, tombstoneAt, profile: profile, ns: ns);
+                return new HistoryRecord(deleted, 0, 0, null);
+            });
 
             transaction.Commit();
         }
@@ -572,27 +597,16 @@ public sealed partial class JellyPlayDatabase
     {
         long headBefore;
         long headAfter;
-        int deleted;
+        int deleted = 0;
         using (_lock.Write())
         using (var connection = CreateConnection())
         using (var transaction = connection.BeginTransaction())
         {
-            headBefore = GetChangeLogHead(connection, userId);
-            deleted = TombstoneRows(connection, userId, tombstoneAt, deviceId: deviceId);
-            headAfter = GetChangeLogHead(connection, userId);
-
-            if (deleted > 0)
+            (headBefore, headAfter) = RunWithHistoryBracket(connection, userId, deviceId, op, historyTs, () =>
             {
-                try
-                {
-                    InsertSyncHistory(connection, userId, deviceId, op, deleted, 0, 0, null, historyTs, headBefore, headAfter);
-                }
-                catch (Exception ex)
-                {
-                    // Observability is best-effort by contract: never fail the wipe.
-                    _logger?.LogWarning(ex, "JellyPlay sync-history recording failed (user {UserId}, op {Op}) — ignoring", userId, op);
-                }
-            }
+                deleted = TombstoneRows(connection, userId, tombstoneAt, deviceId: deviceId);
+                return new HistoryRecord(deleted, 0, 0, null, Record: deleted > 0);
+            });
 
             transaction.Commit();
         }
@@ -821,14 +835,19 @@ public sealed partial class JellyPlayDatabase
         }
     }
 
-    public int PruneSnapshots(int retentionDays)
+    /// <summary>
+    /// Retention prune for restore-point snapshots: rows created before
+    /// <paramref name="cutoffMs"/> (unix ms) are deleted. The cutoff is the
+    /// caller's, like every retention prune — tests pin it instead of racing
+    /// the wall clock.
+    /// </summary>
+    public int PruneSnapshots(long cutoffMs)
     {
-        var cutoff = DateTimeOffset.UtcNow.AddDays(-retentionDays).ToUnixTimeMilliseconds();
         using (_lock.Write())
         using (var connection = CreateConnection())
         using (var statement = connection.Prepare($"delete from {SnapshotsTable} where CreatedAt < @Cutoff"))
         {
-            statement.Bind("@Cutoff", cutoff);
+            statement.Bind("@Cutoff", cutoffMs);
             return statement.ExecuteNonQuery();
         }
     }
@@ -880,7 +899,7 @@ public sealed partial class JellyPlayDatabase
         {
             IReadOnlyList<SyncHistoryRow> rows;
             using (var statement = connection.Prepare(
-                       $@"select Id, UserId, DeviceId, Ts, Op, KeysApplied, KeysRejected, Bytes, RejectsJson, FromSeq, ToSeq
+                       $@"select {SyncHistoryColumns}
                           from {SyncHistoryTable}
                           where UserId = @UserId and Ts > @SinceTs
                           order by Id desc
@@ -909,33 +928,19 @@ public sealed partial class JellyPlayDatabase
     }
 
     /// <summary>
-    /// Retention prune for the change log. Tombstones (op='del') are EXEMPT:
-    /// they are the anti-resurrection watermark for their key (the absent-row
-    /// LWW check reads the latest entry — put OR del), so pruning one would
-    /// let a stale offline put resurrect a long-deleted key. Tombstone rows
-    /// are tiny; they are kept forever, only 'put' rows age out. The delete
-    /// runs in batches (the write lock is held throughout — the batching is
-    /// about per-statement transaction/log size, not lock scope).
+    /// Retention prune for the change log: 'put' rows older than
+    /// <paramref name="cutoffMs"/> (unix ms) age out in batches. Tombstones
+    /// (op='del') are EXEMPT — they are the anti-resurrection watermark for
+    /// their key (the absent-row LWW check reads the latest entry — put OR
+    /// del), so pruning one would let a stale offline put resurrect a
+    /// long-deleted key. Tombstone rows are tiny; they are kept forever.
     /// </summary>
-    public int PruneChangeLog(int retentionDays)
+    public int PruneChangeLog(long cutoffMs)
     {
-        var cutoff = DateTimeOffset.UtcNow.AddDays(-retentionDays).ToUnixTimeMilliseconds();
-        var total = 0;
         using (_lock.Write())
         using (var connection = CreateConnection())
-        using (var statement = connection.Prepare(
-                   $@"delete from {ChangeLogTable} where rowid in (
-                          select rowid from {ChangeLogTable} where UpdatedAt < @Cutoff and Op != 'del' limit 5000)"))
         {
-            statement.Bind("@Cutoff", cutoff);
-            int removed;
-            do
-            {
-                removed = statement.ExecuteNonQuery();
-                total += removed;
-            }
-            while (removed > 0);
-            return total;
+            return BatchedDelete(connection, ChangeLogTable, "UpdatedAt < @Cutoff and Op != 'del'", cutoffMs);
         }
     }
 
@@ -1005,7 +1010,7 @@ public sealed partial class JellyPlayDatabase
         using (_lock.Read())
         using (var connection = CreateConnection())
         using (var statement = connection.Prepare(
-                   $@"select Id, UserId, DeviceId, Ts, Op, KeysApplied, KeysRejected, Bytes, RejectsJson, FromSeq, ToSeq
+                   $@"select {SyncHistoryColumns}
                       from {SyncHistoryTable}
                       where UserId = @UserId and Ts > @SinceTs
                       order by Id desc
@@ -1024,7 +1029,7 @@ public sealed partial class JellyPlayDatabase
         using (_lock.Read())
         using (var connection = CreateConnection())
         using (var statement = connection.Prepare(
-                   $@"select Id, UserId, DeviceId, Ts, Op, KeysApplied, KeysRejected, Bytes, RejectsJson, FromSeq, ToSeq
+                   $@"select {SyncHistoryColumns}
                       from {SyncHistoryTable}
                       where Id = @Id and UserId = @UserId"))
         {
@@ -1053,7 +1058,7 @@ public sealed partial class JellyPlayDatabase
         {
             SyncHistoryRow? row = null;
             using (var statement = connection.Prepare(
-                       $@"select Id, UserId, DeviceId, Ts, Op, KeysApplied, KeysRejected, Bytes, RejectsJson, FromSeq, ToSeq
+                       $@"select {SyncHistoryColumns}
                           from {SyncHistoryTable}
                           where Id = @Id and UserId = @UserId"))
             {
@@ -1123,19 +1128,6 @@ public sealed partial class JellyPlayDatabase
         }
     }
 
-    /// <summary>Per-user rollup over the whole history: most recent operation time and distinct device count.</summary>
-    public IReadOnlyList<UserSyncSummary> GetSyncSummariesByUser()
-    {
-        using (_lock.Read())
-        using (var connection = CreateConnection())
-        using (var statement = connection.Prepare(
-                   $"select UserId, max(Ts), count(distinct DeviceId) from {SyncHistoryTable} group by UserId order by UserId"))
-        {
-            return statement.Select(row => new UserSyncSummary(
-                row.GetString(0), row.GetInt64(1), (int)row.GetInt64(2))).ToList();
-        }
-    }
-
     /// <summary>
     /// The admin overview's composite: every user's settings footprint LEFT
     /// JOINed with its sync-history rollup in ONE connection — the overview
@@ -1167,30 +1159,16 @@ public sealed partial class JellyPlayDatabase
     }
 
     /// <summary>
-    /// Retention prune for the recorded sync operations; batched like
-    /// <see cref="PruneChangeLog"/> (one bounded transaction per batch under
-    /// the one write-lock hold) so a large history ages out without one
-    /// unbounded delete.
+    /// Retention prune for the recorded sync operations: rows stamped before
+    /// <paramref name="cutoffMs"/> (unix ms) age out in batches (see
+    /// <c>BatchedDelete</c>).
     /// </summary>
-    public int PruneSyncHistory(int retentionDays)
+    public int PruneSyncHistory(long cutoffMs)
     {
-        var cutoff = DateTimeOffset.UtcNow.AddDays(-retentionDays).ToUnixTimeMilliseconds();
-        var total = 0;
         using (_lock.Write())
         using (var connection = CreateConnection())
-        using (var statement = connection.Prepare(
-                   $@"delete from {SyncHistoryTable} where rowid in (
-                          select rowid from {SyncHistoryTable} where Ts < @Cutoff limit 5000)"))
         {
-            statement.Bind("@Cutoff", cutoff);
-            int removed;
-            do
-            {
-                removed = statement.ExecuteNonQuery();
-                total += removed;
-            }
-            while (removed > 0);
-            return total;
+            return BatchedDelete(connection, SyncHistoryTable, "Ts < @Cutoff", cutoffMs);
         }
     }
 
@@ -1225,20 +1203,7 @@ public sealed partial class JellyPlayDatabase
                    $"select Ns, count(*), coalesce(sum(length(Value)), 0) from {SettingsTable} where UserId = @UserId group by Ns order by Ns");
         statement.Bind("@UserId", userId);
         return statement.Select(row => new NamespaceFootprint(
-            row.GetString(0), (int)row.GetInt64(1), row.GetInt64(2))).ToList();
-    }
-
-    /// <summary>Key/byte totals for every user with settings rows, ordered by user id.</summary>
-    public IReadOnlyList<UserFootprint> GetUserFootprints()
-    {
-        using (_lock.Read())
-        using (var connection = CreateConnection())
-        using (var statement = connection.Prepare(
-                   $"select UserId, count(*), coalesce(sum(length(Value)), 0) from {SettingsTable} group by UserId order by UserId"))
-        {
-            return statement.Select(row => new UserFootprint(
                 row.GetString(0), (int)row.GetInt64(1), row.GetInt64(2))).ToList();
-        }
     }
 
     // ------------------------------------------------------------------

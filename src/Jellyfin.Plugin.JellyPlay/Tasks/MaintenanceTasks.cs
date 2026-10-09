@@ -16,15 +16,19 @@ namespace Jellyfin.Plugin.JellyPlay.Tasks;
 /// </summary>
 public sealed class ChangeLogPruneTask : IScheduledTask
 {
+    private const long MsPerDay = 86_400_000;
+
     private readonly JellyPlayDatabase _db;
     private readonly Func<Configuration.SyncConfig> _config;
     private readonly ILogger<ChangeLogPruneTask> _logger;
+    private readonly TimeProvider _clock;
 
-    public ChangeLogPruneTask(JellyPlayDatabase db, Func<Configuration.SyncConfig> config, ILogger<ChangeLogPruneTask> logger)
+    public ChangeLogPruneTask(JellyPlayDatabase db, Func<Configuration.SyncConfig> config, ILogger<ChangeLogPruneTask> logger, TimeProvider? clock = null)
     {
         _db = db;
         _config = config;
         _logger = logger;
+        _clock = clock ?? TimeProvider.System;
     }
 
     public string Name => "JellyPlay: prune settings change log, sync history and snapshots";
@@ -38,11 +42,12 @@ public sealed class ChangeLogPruneTask : IScheduledTask
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
         var config = _config();
-        var changeLogRows = await Task.Run(() => _db.PruneChangeLog(config.ChangeLogRetentionDays), cancellationToken);
+        var now = _clock.GetUtcNow().ToUnixTimeMilliseconds();
+        var changeLogRows = await Task.Run(() => _db.PruneChangeLog(now - config.ChangeLogRetentionDays * MsPerDay), cancellationToken);
         progress.Report(33);
-        var historyRows = await Task.Run(() => _db.PruneSyncHistory(config.HistoryRetentionDays), cancellationToken);
+        var historyRows = await Task.Run(() => _db.PruneSyncHistory(now - config.HistoryRetentionDays * MsPerDay), cancellationToken);
         progress.Report(66);
-        var snapshotRows = await Task.Run(() => _db.PruneSnapshots(config.SnapshotRetentionDays), cancellationToken);
+        var snapshotRows = await Task.Run(() => _db.PruneSnapshots(now - config.SnapshotRetentionDays * MsPerDay), cancellationToken);
         _logger.LogInformation(
             "JellyPlay prune finished: {ChangeLogRows} change-log rows, {HistoryRows} sync-history rows and {SnapshotRows} snapshots removed (retention {ChangeLogDays}/{HistoryDays}/{SnapshotDays} days)",
             changeLogRows, historyRows, snapshotRows, config.ChangeLogRetentionDays, config.HistoryRetentionDays, config.SnapshotRetentionDays);
@@ -54,17 +59,17 @@ public sealed class ChangeLogPruneTask : IScheduledTask
 }
 
 /// <summary>
-/// Refreshes the Fribb anime id-mapping index (and warms the marker caches for
-/// library series). Capped per run with ordered, jittered iteration so a fresh
-/// install doesn't stampede AnimeFillerList/Tenrai; series whose sources are
-/// circuit-open are skipped. (The cap/delay are consts — the config object is a
-/// shared surface.)
+/// Refreshes the Fribb anime id-mapping index and warms the marker caches for
+/// library series. Thin adapter: the warm-run policy (cap, pacing, breaker-skip
+/// accounting) lives in <see cref="AnimeMarkersService.WarmAsync"/>, testable
+/// through the service's interface. The slice ordering contract: raw Guid
+/// order (structural comparison, no ToString allocation) — deterministic, the
+/// same series selected on every run. The host query's OrderBy maps to library
+/// columns, not Guids, so Limit cannot be pushed down without changing the
+/// slice; the cap is applied service-side.
 /// </summary>
 public sealed class AnimeMarkersRefreshTask : IScheduledTask
 {
-    private const int MaxSeriesPerRun = 500;
-    private const int PerSeriesDelayMs = 250;
-
     private readonly AnimeMarkersService _markers;
     private readonly ILibraryManager _libraryManager;
     private readonly ILogger<AnimeMarkersRefreshTask> _logger;
@@ -86,66 +91,18 @@ public sealed class AnimeMarkersRefreshTask : IScheduledTask
 
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
-        // Deterministic slice of the library series so runs are reproducible.
-        // Ordering contract: raw Guid order (structural comparison, no
-        // ToString allocation). The host query's OrderBy maps to library
-        // columns, not Guids, so Limit cannot be pushed down without changing
-        // the slice. Raw Guid order is a DIFFERENT total order than the
-        // canonical-string order this used to sort by (they disagree only for
-        // ids whose first component has its high bit set), but equally
-        // deterministic: the same 500 series are selected on every run.
         var series = _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery(null)
         {
             IncludeItemTypes = new[] { Jellyfin.Data.Enums.BaseItemKind.Series }
         })
         .OrderBy(item => item.Id)
-        .Take(MaxSeriesPerRun)
+        .Select(item => (item.Id, item.Name ?? string.Empty))
         .ToList();
 
-        var warmed = 0;
-        var missed = 0;
-        var skipped = 0;
-        var done = 0;
-        foreach (var item in series)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!_markers.IsEnabled || _markers.AllFetchBreakersOpen)
-            {
-                skipped++;
-            }
-            else
-            {
-                try
-                {
-                    if (await _markers.GetSeriesMarkers(item.Id.ToString(), providerSeriesId: null) is not null)
-                    {
-                        warmed++;
-                    }
-                    else
-                    {
-                        missed++;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogDebug(ex, "Marker warm failed for {Series}", item.Name);
-                    missed++;
-                }
-            }
-
-            done++;
-            progress.Report(100.0 * done / Math.Max(1, series.Count));
-
-            // Jitter between warm calls so the run paces the upstream sources.
-            if (done < series.Count)
-            {
-                await Task.Delay(PerSeriesDelayMs, cancellationToken);
-            }
-        }
-
+        var outcome = await _markers.WarmAsync(series, progress, cancellationToken);
         _logger.LogInformation(
             "JellyPlay anime markers warm finished: {Warmed} warmed, {Missed} without markers, {Skipped} skipped (disabled/breakers open), {RunSize} series in run (cap {MaxSeriesPerRun})",
-            warmed, missed, skipped, series.Count, MaxSeriesPerRun);
+            outcome.Warmed, outcome.Missed, outcome.Skipped, outcome.RunSize, AnimeMarkersService.MaxWarmSeriesPerRun);
         progress.Report(100);
     }
 
