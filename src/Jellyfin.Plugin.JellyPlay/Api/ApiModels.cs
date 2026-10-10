@@ -317,6 +317,14 @@ public sealed record SnapshotDto(long Id, long CreatedAt, string Origin, int Key
 
 public sealed record SnapshotCreateResponse(long Id);
 
+/// <summary>
+/// One restore point's full row content: the stored rows grouped per profile
+/// exactly like the export bundle's <c>profiles</c> half, values verbatim
+/// (no modes map — a snapshot stores rows only). Served by
+/// GET jellyplay/settings/snapshots/{id}.
+/// </summary>
+public sealed record SnapshotContentDto(long Id, long CreatedAt, string Origin, IReadOnlyList<SettingsExportProfile> Profiles);
+
 // ---------------------------------------------------------------------------
 // Settings export / import (GET jellyplay/settings/export, POST …/import)
 // ---------------------------------------------------------------------------

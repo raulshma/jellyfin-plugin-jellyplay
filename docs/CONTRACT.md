@@ -250,9 +250,18 @@ age retention is `Sync:SnapshotRetentionDays` (default 30, daily prune).
 
 ```
 GET  jellyplay/settings/snapshots                 → [{id, createdAt, origin, keys, bytes}]  (newest-first)
+GET  jellyplay/settings/snapshots/{id}            → { id, createdAt, origin,
+                                                       profiles: [{profile, settings: [{ns, key, schemaVersion, updatedAt, deviceId, value}]}] }
+                                                  |  404 (not found / not owned / corrupt payload)
 POST jellyplay/settings/snapshots                 → { id }  (manual capture)
 POST jellyplay/settings/snapshots/{id}/restore    → { head, applied: […], rejected: […] }  |  404 (not owned)
 ```
+
+The `{id}` read (additive, no bump) returns the snapshot's stored rows for a
+restore-preview UI — grouped per profile exactly like the export bundle's
+`profiles` half, values verbatim; no modes map (a snapshot stores rows only).
+Pure read: nothing is written, no history entry. Owner-scoped like the
+restore route — 404 when the id belongs to another user.
 
 Restore = a diff-first tombstone pass — only the keys present now but absent
 from the snapshot are tombstoned (re-tombstoning keys the re-apply would

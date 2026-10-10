@@ -142,6 +142,10 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<Services.Shared.NotificationFanout>();
         serviceCollection.AddSingleton<EventService>();
         serviceCollection.AddSingleton<MessageService>();
+        // ItemAddedWatcher takes EpisodeGroupBuffer via constructor injection;
+        // without this registration hosted-service activation fails and the
+        // whole server refuses to start.
+        serviceCollection.AddSingleton<Services.Events.EpisodeGroupBuffer>();
         serviceCollection.AddHostedService<ItemAddedWatcher>();
         serviceCollection.AddScoped<IEventConsumer<global::MediaBrowser.Controller.Events.Session.SessionStartedEventArgs>, SessionStartedEvent>();
         serviceCollection.AddScoped<IEventConsumer<global::MediaBrowser.Controller.Library.PlaybackStartEventArgs>, PlaybackStartedEvent>();

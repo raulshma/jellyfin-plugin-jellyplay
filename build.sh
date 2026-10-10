@@ -10,7 +10,14 @@ if [ -z "$VERSION" ]; then
 fi
 
 STAMPED="src/Jellyfin.Plugin.JellyPlay/Jellyfin.Plugin.JellyPlay.csproj"
-sed -i.bak "s|<Version>.*</Version>|<Version>${VERSION}</Version>|; s|<AssemblyVersion>.*</AssemblyVersion>|<AssemblyVersion>${VERSION}.0</AssemblyVersion>|; s|<FileVersion>.*</FileVersion>|<FileVersion>${VERSION}.0</FileVersion>|" "$STAMPED"
+# AssemblyVersion/FileVersion must be exactly 4 segments: append .0 only when
+# VERSION already carries all four (e.g. 0.11.3.1), otherwise pad (0.11.3 → 0.11.3.0).
+if [ "$(echo "$VERSION" | awk -F. '{print NF}')" -ge 4 ]; then
+  ASM_VERSION="$VERSION"
+else
+  ASM_VERSION="${VERSION}.0"
+fi
+sed -i.bak "s|<Version>.*</Version>|<Version>${VERSION}</Version>|; s|<AssemblyVersion>.*</AssemblyVersion>|<AssemblyVersion>${ASM_VERSION}</AssemblyVersion>|; s|<FileVersion>.*</FileVersion>|<FileVersion>${ASM_VERSION}</FileVersion>|" "$STAMPED"
 rm -f "${STAMPED}.bak"
 
 dotnet publish "$STAMPED" -c Release -o dist/publish
@@ -57,7 +64,7 @@ cat > "$STAGE/meta.json" <<EOF
   "owner": "raulshma",
   "targetAbi": "",
   "timestamp": "$TIMESTAMP",
-  "version": "${VERSION}.0",
+  "version": "${ASM_VERSION}",
   "status": "Active",
   "autoUpdate": false,
   "imagePath": "plugin.png",

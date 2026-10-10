@@ -505,6 +505,38 @@ public sealed class SettingsServiceTests : TempDatabaseFixture
     }
 
     [Fact]
+    public void GetSnapshotContent_ReturnsRowsGroupedPerProfile_LikeTheExport()
+    {
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1, "\"one\""), Dto("ui", "b", 1, "\"two\"") });
+        _service.ApplyBatch("u1", "tv", "d1", new[] { Dto("ui", "layout", 1, "{\"x\":1}") });
+        var snapshotId = _snapshots.Create("u1", "manual")!.Value;
+
+        var content = _service.GetSnapshotContent("u1", snapshotId);
+
+        Assert.NotNull(content);
+        Assert.Equal(snapshotId, content!.Id);
+        Assert.Equal("manual", content.Origin);
+        Assert.True(content.CreatedAt > 0);
+        var baseProfile = content.Profiles.Single(profile => profile.Profile == "");
+        Assert.Equal(2, baseProfile.Settings.Count);
+        Assert.Equal("\"one\"", baseProfile.Settings.Single(entry => entry.Key == "a").Value.Json);
+        var tvProfile = content.Profiles.Single(profile => profile.Profile == "tv");
+        Assert.Equal("d1", tvProfile.Settings.Single().DeviceId);
+        Assert.Equal("{\"x\":1}", tvProfile.Settings.Single().Value.Json);
+    }
+
+    [Fact]
+    public void GetSnapshotContent_ForeignOrUnknownId_IsNull()
+    {
+        _service.ApplyBatch("u1", "", "d1", new[] { Dto("ui", "a", 1) });
+        var snapshotId = _snapshots.Create("u1", "manual")!.Value;
+
+        Assert.Null(_service.GetSnapshotContent("u1", 999));
+        // Owner-scoped like the restore route: another user's id reads as 404 (null here).
+        Assert.Null(_service.GetSnapshotContent("u2", snapshotId));
+    }
+
+    [Fact]
     public void RestoreSnapshot_TombstonesPerProfile_DelRowsCarryTheirOwnProfile()
     {
         // A snapshot spanning the base profile AND a device profile.

@@ -138,6 +138,22 @@ public class SettingsController : JellyPlayControllerBase
             row.Keys,
             row.Bytes)));
 
+    /// <summary>
+    /// One of the caller's restore points with its full row content — the
+    /// stored rows grouped per profile exactly like the export bundle, values
+    /// verbatim (the restore-preview read; pure, nothing is written). The
+    /// same loader and owner-scoping the restore route answers through: 404
+    /// when the id is not the caller's own (or the payload is corrupt).
+    /// </summary>
+    [HttpGet("snapshots/{id}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public IActionResult GetSnapshotContent([FromRoute, Required] long id)
+    {
+        var content = _settings.GetSnapshotContent(User.GetUserIdString(), id);
+        return content is null ? NotFound() : JellyPlayResponses.Camel(content);
+    }
+
     /// <summary>Captures a manual restore point of the caller's whole settings store (full-store copy — rate-limited like the batch routes).</summary>
     [HttpPost("snapshots")]
     [RateLimit(Services.Admin.RateLimiterKind.Settings, "settings")]

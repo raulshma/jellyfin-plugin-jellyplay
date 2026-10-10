@@ -302,6 +302,57 @@ public sealed class SettingsService : IDisposable
     public SettingsBatchResponse? RestoreSnapshot(string userId, long id)
         => _snapshots.Restore(userId, id, ApplyRawWrites, () => _db.GetAllSettingsRows(userId), ServerNow);
 
+    /// <summary>
+    /// One of the caller's snapshots as its full row content, grouped per
+    /// profile exactly like the export bundle (so the client reuses the same
+    /// parsing mindset). Thin fold over the snapshot seam's decoded entries
+    /// (<see cref="SnapshotService.Get"/> — the same loader and
+    /// owner-scoping the restore answers through): base64 payload values
+    /// decode back to verbatim JSON; no modes map — a snapshot stores rows
+    /// only. Pure read: nothing is written, no history entry. Returns null
+    /// when the id is not the caller's own (or the payload is corrupt).
+    /// </summary>
+    public SnapshotContentDto? GetSnapshotContent(string userId, long id)
+    {
+        var stored = _snapshots.Get(userId, id);
+        if (stored is null)
+        {
+            return null;
+        }
+
+        return new SnapshotContentDto(
+            stored.Value.Row.Id,
+            stored.Value.Row.CreatedAt,
+            stored.Value.Row.Origin,
+            stored.Value.Entries
+                .GroupBy(entry => entry.Profile)
+                .Select(group => new SettingsExportProfile
+                {
+                    Profile = group.Key,
+                    Settings = group.Select(ToSnapshotEntry).ToList()
+                })
+                .ToList());
+    }
+
+    /// <summary>
+    /// One stored snapshot entry back to its wire shape — the mirror of the
+    /// capture fold: base64 decode, UTF-8 text, verbatim gate write. An empty
+    /// blob is the stored-null shape.
+    /// </summary>
+    private static SettingsEntryDto ToSnapshotEntry(SnapshotEntry entry)
+        => new()
+        {
+            Ns = entry.Ns,
+            Key = entry.Key,
+            SchemaVersion = entry.SchemaVersion,
+            UpdatedAt = entry.UpdatedAt,
+            DeviceId = entry.DeviceId,
+            Profile = entry.Profile,
+            Value = entry.ValueBase64.Length == 0
+                ? RawJson.Null
+                : new RawJson(Encoding.UTF8.GetString(Convert.FromBase64String(entry.ValueBase64)))
+        };
+
     // ------------------------------------------------------------------
     // Export / import
     // ------------------------------------------------------------------
