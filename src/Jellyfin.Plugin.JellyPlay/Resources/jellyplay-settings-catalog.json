@@ -1341,6 +1341,14 @@
         },
         {
             "ns": "prefs",
+            "key": "segment_skip_delays_ms",
+            "label": "Segment Skip Delays Ms",
+            "description": "",
+            "group": "Video player",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
             "key": "skip_intro_enabled",
             "label": "Skip Intro Enabled",
             "description": "",
