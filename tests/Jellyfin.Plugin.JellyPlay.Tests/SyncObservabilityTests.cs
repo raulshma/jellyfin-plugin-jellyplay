@@ -210,7 +210,7 @@ public sealed class SyncRecordingTests : TempDatabaseFixture
 
         _service.ResetNamespace("u1", "", "ui", "device-r");
 
-        var entry = Assert.Single(_db.GetSyncHistory("u1", 0, 50).Where(row => row.Op == "reset"));
+        var entry = Assert.Single(_db.GetSyncHistory("u1", 0, 50), row => row.Op == "reset");
         Assert.Equal("device-r", entry.DeviceId);
         Assert.Equal(2, entry.KeysApplied);
         Assert.Equal(0, entry.KeysRejected);
@@ -518,8 +518,8 @@ public sealed class SyncHistoryKeysTests : TempDatabaseFixture
         var (first, _) = PushTwice();
 
         // The range holds exactly 2 rows: clamp bounds are visible from both sides.
-        Assert.Equal(1, Service.GetHistoryKeys("u1", first.Id, 1)!.Keys.Count);
-        Assert.Equal(1, Service.GetHistoryKeys("u1", first.Id, -5)!.Keys.Count); // below 1 → 1
+        Assert.Single(Service.GetHistoryKeys("u1", first.Id, 1)!.Keys);
+        Assert.Single(Service.GetHistoryKeys("u1", first.Id, -5)!.Keys); // below 1 → 1
         Assert.Equal(2, Service.GetHistoryKeys("u1", first.Id, 2)!.Keys.Count);
 
         // A wider range shows newest-first truncation and the default/cap behavior.
@@ -649,8 +649,8 @@ public sealed class SyncInsightsTests : TempDatabaseFixture
         }
 
         Assert.Equal(SyncInsightsService.MaxHistoryLimit, Service.GetHistory("u1", null, 100_000).Entries.Count);
-        Assert.Equal(1, Service.GetHistory("u1", null, 1).Entries.Count);
-        Assert.Equal(1, Service.GetHistory("u1", null, -5).Entries.Count);
+        Assert.Single(Service.GetHistory("u1", null, 1).Entries);
+        Assert.Single(Service.GetHistory("u1", null, -5).Entries);
         Assert.Equal(SyncInsightsService.DefaultHistoryLimit, Service.GetHistory("u1", null, 0).Entries.Count);
     }
 

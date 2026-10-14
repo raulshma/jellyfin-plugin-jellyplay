@@ -51,12 +51,6 @@ public class DatabaseIntegrityTests : TempDatabaseFixture
     {
     }
 
-    public void Dispose()
-    {
-        _db.Dispose();
-        try { Directory.Delete(_tempDir, recursive: true); } catch (IOException) { }
-    }
-
     [Fact]
     public void IntegrityCheck_ReportsOk_OnHealthyDatabase()
     {

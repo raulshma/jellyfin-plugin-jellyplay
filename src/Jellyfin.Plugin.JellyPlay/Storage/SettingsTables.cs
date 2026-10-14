@@ -826,7 +826,7 @@ public sealed partial class JellyPlayDatabase
                              row.GetString(3),
                              (int)row.GetInt64(4),
                              row.GetInt64(5)),
-                         Payload: (byte[])row.GetValue(6))))
+                         Payload: row.GetBlob(6))))
             {
                 return (row.Row, row.Payload);
             }
@@ -1218,7 +1218,7 @@ public sealed partial class JellyPlayDatabase
         {
             statement.Bind("@Scope", scope);
             foreach (var row in statement.Select(row => new AdminDefaultsRow(
-                         row.GetString(0), (byte[])row.GetValue(1), row.GetInt64(2))))
+                         row.GetString(0), row.GetBlob(1), row.GetInt64(2))))
             {
                 return row;
             }

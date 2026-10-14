@@ -766,8 +766,8 @@ public sealed class AnalyticsReportingTests : TempDatabaseFixture
         }
 
         Assert.Equal(AnalyticsService.MaxSessionLimit, Service().GetSessions(null, null, 100_000).Sessions.Count);
-        Assert.Equal(1, Service().GetSessions(null, null, 1).Sessions.Count);
-        Assert.Equal(1, Service().GetSessions(null, null, -5).Sessions.Count);
+        Assert.Single(Service().GetSessions(null, null, 1).Sessions);
+        Assert.Single(Service().GetSessions(null, null, -5).Sessions);
         Assert.Equal(AnalyticsService.DefaultSessionLimit, Service().GetSessions(null, null, 0).Sessions.Count);
     }
 }

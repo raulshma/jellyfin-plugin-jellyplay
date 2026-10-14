@@ -459,7 +459,7 @@ public sealed partial class JellyPlayDatabase
         using (var connection = CreateConnection())
         using (var statement = connection.Prepare($"select Scope, Payload, UpdatedAt from {AdminDefaultsTable}"))
         {
-            return statement.Select(row => new AdminDefaultsRow(row.GetString(0), (byte[])row.GetValue(1), row.GetInt64(2))).ToList();
+            return statement.Select(row => new AdminDefaultsRow(row.GetString(0), row.GetBlob(1), row.GetInt64(2))).ToList();
         }
     }
 

@@ -234,7 +234,7 @@ public class ResilientFetcherTests : FetcherTestBase
         // fault) stays an ordinary failure: breaker record + log + null.
         Assert.Null(result);
         Assert.True(breaker.IsOpen());
-        Assert.Equal(1, handler.RequestedUrls.Count);
+        Assert.Single(handler.RequestedUrls);
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Exception is OperationCanceledException);
     }
 
@@ -246,11 +246,11 @@ public class ResilientFetcherTests : FetcherTestBase
         var fetcher = NewFetcher(handler);
 
         Assert.Null(await fetcher.GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync, breaker));
-        Assert.Equal(1, handler.RequestedUrls.Count);
+        Assert.Single(handler.RequestedUrls);
 
         // Inside the open window: "no data" without touching the dead upstream.
         Assert.Null(await fetcher.GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync, breaker));
-        Assert.Equal(1, handler.RequestedUrls.Count);
+        Assert.Single(handler.RequestedUrls);
 
         // After the window elapses the trial call goes out again.
         Clock.Advance(TimeSpan.FromMinutes(11));
@@ -303,7 +303,7 @@ public class ResilientFetcherTests : FetcherTestBase
         Assert.Null(await fetcher.GetOrFetchAsync("k", TimeSpan.FromHours(1), NoData, missCache: true));
 
         // One HTTP call: the second request short-circuited on the miss marker.
-        Assert.Equal(1, handler.RequestedUrls.Count);
+        Assert.Single(handler.RequestedUrls);
     }
 
     [Fact]
@@ -332,7 +332,7 @@ public class ResilientFetcherTests : FetcherTestBase
 
         Assert.Equal("shared", results[0]?.Value);
         Assert.Equal("shared", results[1]?.Value);
-        Assert.Equal(1, handler.RequestedUrls.Count); // two cold callers, one upstream hit
+        Assert.Single(handler.RequestedUrls); // two cold callers, one upstream hit
     }
 
     [Fact]
@@ -344,7 +344,7 @@ public class ResilientFetcherTests : FetcherTestBase
         // A faulted flight must not stick: the failure is shaped as null and
         // the slot clears, so the next cold caller retries the source.
         Assert.Null(await fetcher.GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync));
-        Assert.Equal(1, handler.RequestedUrls.Count);
+        Assert.Single(handler.RequestedUrls);
 
         handler.Responder = _ => Text("recovered");
         var recovered = await fetcher.GetOrFetchAsync("k", TimeSpan.FromHours(1), FetchBodyAsync);
@@ -387,7 +387,7 @@ public class MdbListServiceTests : FetcherTestBase
 
         // Second call is served from the file cache — one HTTP request total.
         await service.GetRatings("tt0111161");
-        Assert.Equal(1, handler.RequestedUrls.Count);
+        Assert.Single(handler.RequestedUrls);
     }
 
     [Fact]
@@ -445,7 +445,7 @@ public class CustomRowsServiceTests : FetcherTestBase
 
         // Second resolve is served from the cache — one HTTP request total.
         await service.ResolveAsync(row);
-        Assert.Equal(1, handler.RequestedUrls.Count);
+        Assert.Single(handler.RequestedUrls);
     }
 
     [Fact]
@@ -462,10 +462,10 @@ public class CustomRowsServiceTests : FetcherTestBase
 
         // Miss-cached: the first failure memoizes a miss marker, so the
         // retries never leave the machine — one upstream hit total.
-        Assert.Equal(1, handler.RequestedUrls.Count);
+        Assert.Single(handler.RequestedUrls);
 
         Assert.Null(await service.ResolveAsync(row));
-        Assert.Equal(1, handler.RequestedUrls.Count); // miss marker holds — the fourth resolve never leaves the machine
+        Assert.Single(handler.RequestedUrls); // miss marker holds — the fourth resolve never leaves the machine
     }
 }
 
@@ -535,7 +535,7 @@ public class AnimeMarkersServiceTests : FetcherTestBase
         var outcome = await service.WarmAsync(new[] { (Guid.NewGuid(), "A"), (Guid.NewGuid(), "B") });
 
         Assert.Equal((0, 2, 2), (outcome.Warmed, outcome.Skipped, outcome.RunSize));
-        Assert.Equal(0, handler.RequestedUrls.Count);
+        Assert.Empty(handler.RequestedUrls);
     }
 
     [Fact]

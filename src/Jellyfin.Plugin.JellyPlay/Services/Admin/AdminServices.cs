@@ -189,7 +189,7 @@ public sealed class AdminDefaultsService
             writes.Add(new SettingWrite(
                 entry.Ns,
                 entry.Key,
-                hasExisting ? current.SchemaVersion : 1,
+                hasExisting && current is not null ? current.SchemaVersion : 1,
                 _clock.GetUtcNow().ToUnixTimeMilliseconds(),
                 "admin-push",
                 JsonSerializer.SerializeToUtf8Bytes(entry.Value)));

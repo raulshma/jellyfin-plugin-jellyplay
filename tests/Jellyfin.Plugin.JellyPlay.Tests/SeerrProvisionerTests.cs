@@ -108,10 +108,10 @@ public sealed class SeerrProvisionerTests
 
         var payload = JObject.Parse(put.Body!);
         // Server-owned fields ride through untouched...
-        Assert.Equal(true, payload["apiKeysEnabled"]!.Value<bool>());
+        Assert.True(payload["apiKeysEnabled"]!.Value<bool>());
         Assert.Equal("en", payload["mainLanguage"]!.ToString());
         // ...and the four webhook fields are patched on top.
-        Assert.Equal(true, payload["webhookEnabled"]!.Value<bool>());
+        Assert.True(payload["webhookEnabled"]!.Value<bool>());
         Assert.Equal("https://jelly.example/jellyfin/jellyplay/seerr/webhook", payload["webhookIp"]!.ToString());
         Assert.Equal(4, payload["webhookTypes"]!.Value<int>()); // REQUEST_PENDING + REQUEST_APPROVED
         // Seerr keeps the payload template as a JSON-encoded string field.
@@ -153,7 +153,7 @@ public sealed class SeerrProvisionerTests
     [InlineData("", "key", true)] // no server URL
     [InlineData("http://seerr:5055", "", true)] // no API key
     [InlineData("http://seerr:5055", "key", false)] // auto-provision off
-    public void Provision_Unconfigured_YieldsFalseWithoutHttp(string serverUrl, string apiKey, bool autoProvision)
+    public async Task Provision_Unconfigured_YieldsFalseWithoutHttp(string serverUrl, string apiKey, bool autoProvision)
     {
         var transport = new FakeSeerrTransport();
         var provisioner = new SeerrWebhookProvisioner(
@@ -161,7 +161,7 @@ public sealed class SeerrProvisionerTests
             () => new SeerrConfig { ServerUrl = serverUrl, ApiKey = apiKey, AutoProvisionWebhook = autoProvision },
             NullLogger<SeerrWebhookProvisioner>.Instance);
 
-        Assert.False(provisioner.ProvisionAsync("https://jelly.example").GetAwaiter().GetResult());
+        Assert.False(await provisioner.ProvisionAsync("https://jelly.example"));
         Assert.Empty(transport.Requests);
     }
 }

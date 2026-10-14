@@ -546,7 +546,7 @@ public sealed partial class JellyPlayDatabase : IDisposable
         (int)row.GetInt64(4),
         row.GetInt64(5),
         row.GetString(6),
-        (byte[])row.GetValue(7));
+        row.GetBlob(7));
 
     private static SyncHistoryRow ReadSyncHistoryRow(SqliteRow row) => new(
         row.GetInt64(0),
@@ -818,6 +818,22 @@ internal sealed class SqliteRow
     public bool IsDBNull(int ordinal) => _reader.IsDBNull(ordinal);
 
     public object? GetValue(int ordinal) => _reader.IsDBNull(ordinal) ? null : _reader.GetValue(ordinal);
+
+    /// <summary>
+    /// Non-null BLOB read: columns are NOT NULL per schema, but a corrupt row
+    /// must not smuggle null into non-nullable records (mirrors
+    /// <see cref="GetString"/>'s empty-string fallback).
+    /// </summary>
+    public byte[] GetBlob(int ordinal)
+    {
+        var value = _reader.IsDBNull(ordinal) ? null : _reader.GetValue(ordinal);
+        return value switch
+        {
+            byte[] bytes => bytes,
+            string text => System.Text.Encoding.UTF8.GetBytes(text),
+            _ => [],
+        };
+    }
 }
 
 internal static class LockExtensions

@@ -491,17 +491,10 @@ public sealed class FcmDispatchTests : TempDatabaseFixture
     {
     }
 
-    public void Dispose()
+    public override void Dispose()
     {
-        _db.Dispose();
         _sa.Dispose();
-        try
-        {
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
+        base.Dispose();
     }
 
     private PushDispatcher Dispatcher(HeaderRecording recording)

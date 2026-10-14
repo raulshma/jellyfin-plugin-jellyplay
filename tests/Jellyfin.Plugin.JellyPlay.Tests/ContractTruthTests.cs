@@ -131,7 +131,7 @@ public sealed class NewMediaAudienceTests
         var targets = Audience.ResolveAudience("admins", new[] { "admin-1", "admin-2" }).UserIds;
         Assert.NotNull(targets);
         Assert.Equal(2, targets!.Count);
-        Assert.True(targets.Contains("admin-1"));
+        Assert.Contains("admin-1", targets!);
     }
 }
 
@@ -406,7 +406,7 @@ public sealed class AnimeOverrideResolutionTests
         using var stream = new System.IO.MemoryStream();
         serializer.Serialize(stream, config);
         stream.Position = 0;
-        var round = (PluginConfiguration)serializer.Deserialize(stream);
+        var round = Assert.IsType<PluginConfiguration>(serializer.Deserialize(stream));
 
         Assert.Equal(2 * 1024 * 1024, round.Sync.NamespaceQuotaBytes["prefs"]);
         Assert.Equal(4096, round.Sync.NamespaceQuotaBytes["custom"]);
