@@ -82,7 +82,7 @@ public sealed class HeroEndpointTests
             ItemId = "copy",
             Headline = "Night shift",
             Subhead = "Staff pick",
-            Weight = 1
+            Weight = 12
         });
 
         var candidates = Candidates(hero);
