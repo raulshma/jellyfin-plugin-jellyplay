@@ -154,6 +154,7 @@ public sealed class SettingsService : IDisposable
         // value without the flag is a stored value like any other (serialized
         // "null" bytes, the pre-v7 behavior), not a delete: the null tolerance
         // was non-additive and is gone.
+        var normalizedDeviceId = ClaimsExtensions.NormalizeDeviceId(deviceId);
         var raw = new List<SettingWrite>(writes.Count);
         foreach (var write in writes)
         {
@@ -165,7 +166,7 @@ public sealed class SettingsService : IDisposable
             var bytes = write.Value.ValueKind is JsonValueKind.Undefined || write.Deleted
                 ? Array.Empty<byte>()
                 : JsonSerializer.SerializeToUtf8Bytes(write.Value);
-            raw.Add(new SettingWrite(write.Ns, write.Key, write.SchemaVersion, write.UpdatedAt, ClaimsExtensions.NormalizeDeviceId(deviceId), bytes, write.Deleted));
+            raw.Add(new SettingWrite(write.Ns, write.Key, write.SchemaVersion, write.UpdatedAt, normalizedDeviceId, bytes, write.Deleted));
         }
 
         return ApplyRawWrites(userId, profile, deviceId, raw);
@@ -427,10 +428,11 @@ public sealed class SettingsService : IDisposable
     /// </summary>
     public SettingsSnapshotResponse ResolveProfile(string userId, string profile)
     {
-        var baseRows = _db.GetSettings(userId, JellyPlayDatabase.BaseProfile);
-        var overlayRows = profile == JellyPlayDatabase.BaseProfile
-            ? new List<SettingRow>()
-            : _db.GetSettings(userId, profile);
+        // One store composite (single connection/read-lock) instead of five
+        // sequential round-trips on every client boot.
+        var bundle = _db.GetResolveBundle(userId, profile);
+        var baseRows = bundle.BaseRows;
+        var overlayRows = bundle.OverlayRows;
 
         // Insertion-ordered merge (an overlay write replaces in place, keeping
         // the base entry's position): the entry order the resolved snapshot
@@ -447,8 +449,9 @@ public sealed class SettingsService : IDisposable
             merged[(row.Ns, row.Key)] = ToEntry(row);
         }
 
-        var defaults = GetDefaultsMerged(
-            userId,
+        var defaults = MergeDefaultsFromRows(
+            bundle.GlobalDefaults,
+            bundle.UserDefaults,
             merged.Keys.Select(id => DefaultsEnvelope.Join(id.Item1, id.Item2)).ToHashSet(StringComparer.Ordinal));
         var modes = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -468,7 +471,7 @@ public sealed class SettingsService : IDisposable
 
         var response = new SettingsSnapshotResponse
         {
-            Head = _db.GetChangeLogHead(userId),
+            Head = bundle.Head,
             Profile = profile,
             Settings = merged.Values.ToList()
         };
@@ -532,6 +535,17 @@ public sealed class SettingsService : IDisposable
     /// </summary>
     private List<ResolvedDefault> GetDefaultsMerged(string userId, IReadOnlySet<string> existingKeys)
         => DefaultsEnvelope.MergeForRead(GetAdminDefaultsRaw(GlobalDefaultsScope), GetAdminDefaultsRaw(userId), existingKeys);
+
+    /// <summary>
+    /// Row-backed variant of <see cref="GetDefaultsMerged"/> for the resolve
+    /// composite: identical merge over the already-fetched default rows (no
+    /// re-reads, no re-queries).
+    /// </summary>
+    private static List<ResolvedDefault> MergeDefaultsFromRows(AdminDefaultsRow? globalRow, AdminDefaultsRow? userRow, IReadOnlySet<string> existingKeys)
+        => DefaultsEnvelope.MergeForRead(
+            globalRow is null ? null : JsonSerializer.Deserialize<JsonElement>(globalRow.Payload),
+            userRow is null ? null : JsonSerializer.Deserialize<JsonElement>(userRow.Payload),
+            existingKeys);
 
     /// <summary>
     /// One default as a resolved-snapshot entry: the parsed default's raw text

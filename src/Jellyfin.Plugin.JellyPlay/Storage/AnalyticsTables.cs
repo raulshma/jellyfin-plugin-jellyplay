@@ -61,6 +61,77 @@ public sealed partial class JellyPlayDatabase
     }
 
     /// <summary>
+    /// Batched finished-session insert: one write lock, one connection, one
+    /// transaction and one reused prepared statement for the whole list (the
+    /// row-by-row seam above re-acquires all three per row). Same SQL and same
+    /// minute-bucket dedup per row; results align with <paramref name="sessions"/>
+    /// (new row id, or 0 when that row deduped away).
+    /// </summary>
+    public IReadOnlyList<long> InsertPlaybackSessionsBatch(IReadOnlyList<PlaybackSessionRow> sessions)
+    {
+        if (sessions.Count == 0)
+        {
+            return Array.Empty<long>();
+        }
+
+        var ids = new List<long>(sessions.Count);
+        using (_lock.Write())
+        using (var connection = CreateConnection())
+        using (var transaction = connection.BeginTransaction())
+        using (var statement = connection.Prepare(
+                   $@"insert into {PlaybackSessionsTable}
+                      (UserId, ItemId, ItemName, ItemType, SeriesName, PlayMethod, VideoCodec, AudioCodec, Bitrate, TranscodeReasonsJson, PositionTicks, DurationTicks, StartedAt, EndedAt, ClientName, DeviceName)
+                      values (@UserId, @ItemId, @ItemName, @ItemType, @SeriesName, @PlayMethod, @VideoCodec, @AudioCodec, @Bitrate, @TranscodeReasonsJson, @PositionTicks, @DurationTicks, @StartedAt, @EndedAt, @ClientName, @DeviceName)
+                      on conflict(UserId, ItemId, StartedAt) do nothing;
+                      select case when changes() = 0 then 0 else last_insert_rowid() end;"))
+        {
+            // Bound once, re-assigned per row: re-preparing per key paid the
+            // parse overhead once per row on the path this replaces.
+            statement.Bind("@UserId", string.Empty);
+            statement.Bind("@ItemId", string.Empty);
+            statement.Bind("@ItemName", string.Empty);
+            statement.Bind("@ItemType", string.Empty);
+            BindNullable(statement, "@SeriesName", null);
+            statement.Bind("@PlayMethod", string.Empty);
+            BindNullable(statement, "@VideoCodec", null);
+            BindNullable(statement, "@AudioCodec", null);
+            BindNullable(statement, "@Bitrate", null);
+            BindNullable(statement, "@TranscodeReasonsJson", null);
+            statement.Bind("@PositionTicks", 0L);
+            BindNullable(statement, "@DurationTicks", null);
+            statement.Bind("@StartedAt", 0L);
+            statement.Bind("@EndedAt", 0L);
+            BindNullable(statement, "@ClientName", null);
+            BindNullable(statement, "@DeviceName", null);
+
+            foreach (var session in sessions)
+            {
+                statement.Parameters["@UserId"].Value = session.UserId;
+                statement.Parameters["@ItemId"].Value = session.ItemId;
+                statement.Parameters["@ItemName"].Value = session.ItemName;
+                statement.Parameters["@ItemType"].Value = session.ItemType;
+                statement.Parameters["@SeriesName"].Value = (object?)session.SeriesName ?? System.DBNull.Value;
+                statement.Parameters["@PlayMethod"].Value = session.PlayMethod;
+                statement.Parameters["@VideoCodec"].Value = (object?)session.VideoCodec ?? System.DBNull.Value;
+                statement.Parameters["@AudioCodec"].Value = (object?)session.AudioCodec ?? System.DBNull.Value;
+                statement.Parameters["@Bitrate"].Value = (object?)session.Bitrate ?? System.DBNull.Value;
+                statement.Parameters["@TranscodeReasonsJson"].Value = (object?)session.TranscodeReasonsJson ?? System.DBNull.Value;
+                statement.Parameters["@PositionTicks"].Value = session.PositionTicks;
+                statement.Parameters["@DurationTicks"].Value = (object?)session.DurationTicks ?? System.DBNull.Value;
+                statement.Parameters["@StartedAt"].Value = session.StartedAt - (session.StartedAt % MinuteBucketMs);
+                statement.Parameters["@EndedAt"].Value = session.EndedAt;
+                statement.Parameters["@ClientName"].Value = (object?)session.ClientName ?? System.DBNull.Value;
+                statement.Parameters["@DeviceName"].Value = (object?)session.DeviceName ?? System.DBNull.Value;
+                ids.Add((long)(statement.ExecuteScalar() ?? 0L));
+            }
+
+            transaction.Commit();
+        }
+
+        return ids;
+    }
+
+    /// <summary>
     /// Finished sessions newest-first, optionally filtered to one user and/or
     /// ends after <paramref name="sinceMs"/> (unix ms).
     /// </summary>
@@ -111,19 +182,72 @@ public sealed partial class JellyPlayDatabase
     /// starves settings sync for the whole window. A session landing for a day
     /// after its chunk ran is picked up by the next rebuild (the cutoff keeps
     /// the day eligible), so the fold stays eventually exact.
+    ///
+    /// Recent windows enumerate their calendar days directly instead of a
+    /// DISTINCT date() scan over the raw range (the expression defeats the
+    /// EndedAt index); only days that actually re-insert rows count toward the
+    /// return, matching the distinct-days semantics. Wide ranges (backfills,
+    /// tests passing 0) keep the DISTINCT path. The window's end bound comes
+    /// from the data (max EndedAt in range), never the wall clock — the store
+    /// takes cutoffs, it does not read time (ADR-0006).
     /// </summary>
     public int RecomputePlaybackRollups(long cutoffMs)
     {
         var dayExpr = $"date({PlaybackSessionsTable}.EndedAt / 1000, 'unixepoch')";
-        List<string> days;
+        long? newestInRange;
+        using (_lock.Read())
+        using (var connection = CreateConnection())
+        using (var newest = connection.Prepare(
+                   $"select max({PlaybackSessionsTable}.EndedAt) from {PlaybackSessionsTable} where {PlaybackSessionsTable}.EndedAt >= @CutoffMs"))
+        {
+            newest.Bind("@CutoffMs", cutoffMs);
+            // max() over an empty range yields a single NULL row: NULL (or
+            // DBNull) means nothing to recompute, never a cast failure.
+            newestInRange = newest.ExecuteScalar() switch
+            {
+                long l => l,
+                int i => i,
+                _ => (long?)null,
+            };
+        }
+
+        if (newestInRange is null)
+        {
+            return 0;
+        }
+
+        var cutoffDay = DateTimeOffset.FromUnixTimeMilliseconds(Math.Max(0, cutoffMs)).UtcDateTime.Date;
+        var newestDay = DateTimeOffset.FromUnixTimeMilliseconds(newestInRange.Value).UtcDateTime.Date;
+        if ((newestDay - cutoffDay).TotalDays is >= 0 and <= 31)
+        {
+            // Small recent window (the maintenance pass uses 3): enumerate the
+            // calendar days; empty days delete+insert nothing and don't count.
+            var days = new List<string>();
+            for (var day = cutoffDay; day <= newestDay; day = day.AddDays(1))
+            {
+                days.Add(day.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+            }
+
+            return RecomputeDays(dayExpr, days, countEmpty: false);
+        }
+
+        List<string> distinct;
         using (_lock.Read())
         using (var connection = CreateConnection())
         using (var select = connection.Prepare(
                    $"select distinct {dayExpr} from {PlaybackSessionsTable} where {PlaybackSessionsTable}.EndedAt >= @CutoffMs order by 1"))
         {
             select.Bind("@CutoffMs", cutoffMs);
-            days = select.Select(row => row.GetString(0)).ToList();
+            distinct = select.Select(row => row.GetString(0)).ToList();
         }
+
+        return RecomputeDays(dayExpr, distinct, countEmpty: true);
+    }
+
+    /// <summary>Per-day delete+re-derive over an explicit day list (shared by the enumerated and distinct paths).</summary>
+    private int RecomputeDays(string dayExpr, IReadOnlyList<string> days, bool countEmpty)
+    {
+        var recomputed = 0;
 
         foreach (var day in days)
         {
@@ -151,14 +275,18 @@ public sealed partial class JellyPlayDatabase
                               group by {dayExpr}, UserId"))
                 {
                     insert.Bind("@Day", day);
-                    insert.ExecuteNonQuery();
+                    var inserted = insert.ExecuteNonQuery();
+                    if (countEmpty || inserted > 0)
+                    {
+                        recomputed++;
+                    }
                 }
 
                 transaction.Commit();
             }
         }
 
-        return days.Count;
+        return countEmpty ? days.Count : recomputed;
     }
 
     /// <summary>

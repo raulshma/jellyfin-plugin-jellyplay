@@ -259,6 +259,23 @@ public sealed class PushDispatcher
         using var gate = new SemaphoreSlim(MaxConcurrentSends, MaxConcurrentSends);
         var sends = new List<Task>(devices.Count);
         var payloadIndex = 0;
+
+        // The FCM bearer fetch starts ahead of the loop when any fcm device is
+        // present, so it overlaps the generic/ntfy sends instead of blocking
+        // them inline at the first fcm device. The token is still awaited
+        // lazily exactly once (a failure skips every fcm device, as before).
+        Task<string?>? fcmTask = null;
+        foreach (var device in devices)
+        {
+            if (PushPolicy.IsFcmKind(device.PushKind))
+            {
+                fcmTask ??= _fcmTokens is null
+                    ? Task.FromResult<string?>(null)
+                    : _fcmTokens.GetTokenAsync(CancellationToken.None);
+                break;
+            }
+        }
+
         foreach (var device in devices)
         {
             var payload = payloads[payloadIndex++];
@@ -267,9 +284,9 @@ public sealed class PushDispatcher
                 if (!fcmResolved)
                 {
                     fcmResolved = true;
-                    fcmToken = _fcmTokens is null
+                    fcmToken = fcmTask is null
                         ? null
-                        : await _fcmTokens.GetTokenAsync(CancellationToken.None).ConfigureAwait(false);
+                        : await fcmTask.ConfigureAwait(false);
                     if (fcmToken is null)
                     {
                         _logger.LogDebug("{Context}: FCM transport unavailable (unconfigured or token fetch failed)", logContext);

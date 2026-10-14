@@ -52,6 +52,15 @@ public sealed class NewMediaPipeline
         = Array.Empty<MediaBrowser.Model.Entities.VirtualFolderInfo>();
 
     /// <summary>
+    /// Flat (location → library id) index rebuilt on every snapshot refresh:
+    /// the per-item scan walks this list instead of the folder×locations nest.
+    /// Locations keep their original text (the Contains fallback below needs
+    /// it); the prefix fast path compares against the trimmed form.
+    /// </summary>
+    private volatile IReadOnlyList<(string Location, string Trimmed, string LibraryId)> _locationIndex
+        = Array.Empty<(string, string, string)>();
+
+    /// <summary>
     /// Directory → library id memo, scoped to one refresh cycle (cleared when
     /// the folder snapshot changes): episodes of one season share a directory,
     /// so a bulk import resolves each folder's O(folders × locations)
@@ -97,6 +106,7 @@ public sealed class NewMediaPipeline
         {
             _virtualFoldersSnapshot = _virtualFoldersProvider() ?? Array.Empty<MediaBrowser.Model.Entities.VirtualFolderInfo>();
             _libraryByFolder.Clear();
+            RebuildLocationIndex();
         }
         catch (Exception ex)
         {
@@ -111,6 +121,11 @@ public sealed class NewMediaPipeline
     /// lifetime (see <see cref="_libraryByFolder"/>); a location match on the
     /// file path and on its directory are the same match because library
     /// locations are directories.
+    ///
+    /// The prefix tests run first (fail-fast on the first differing char over
+    /// the short directory string); the legacy substring test stays as the
+    /// fallback, so every path that used to resolve still resolves — the
+    /// reorder only makes misses cheaper and hits earlier.
     /// </summary>
     public string? ResolveLibraryId(string? itemPath)
     {
@@ -132,9 +147,7 @@ public sealed class NewMediaPipeline
                 return memoized;
             }
 
-            var resolved = _virtualFoldersSnapshot
-                .FirstOrDefault(vf => vf.Locations.Any(location => itemPath.Contains(location, StringComparison.OrdinalIgnoreCase)))
-                ?.ItemId.ToString();
+            var resolved = ResolveLibraryIdCore(itemPath, folderKey);
             _libraryByFolder[folderKey] = resolved;
             return resolved;
         }
@@ -143,6 +156,64 @@ public sealed class NewMediaPipeline
             _logger.LogDebug(ex, "Could not resolve library for {Path}", itemPath);
             return null;
         }
+    }
+
+    /// <summary>Prefix fast path over the flat location index, substring fallback for byte-identical legacy matches.</summary>
+    private string? ResolveLibraryIdCore(string itemPath, string folderKey)
+    {
+        var index = _locationIndex;
+        foreach (var (location, trimmed, libraryId) in index)
+        {
+            if (IsPathPrefix(folderKey, trimmed) || IsPathPrefix(itemPath, trimmed))
+            {
+                return libraryId;
+            }
+        }
+
+        // Legacy fallback: the exact Contains scan this replaced — any path
+        // it matched still matches here.
+        return _virtualFoldersSnapshot
+            .FirstOrDefault(vf => vf.Locations.Any(location => itemPath.Contains(location, StringComparison.OrdinalIgnoreCase)))
+            ?.ItemId.ToString();
+    }
+
+    /// <summary>Whether <paramref name="path"/> lives at-or-under <paramref name="trimmedLocation"/> (trailing separators trimmed).</summary>
+    private static bool IsPathPrefix(string path, string trimmedLocation)
+    {
+        if (trimmedLocation.Length == 0 || path.Length < trimmedLocation.Length)
+        {
+            return false;
+        }
+
+        if (!path.StartsWith(trimmedLocation, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return path.Length == trimmedLocation.Length
+            || path[trimmedLocation.Length] == '/'
+            || path[trimmedLocation.Length] == '\\';
+    }
+
+    /// <summary>Flattens the folder snapshot to one entry per location (skipped when a folder carries no locations).</summary>
+    private void RebuildLocationIndex()
+    {
+        var flat = new List<(string Location, string Trimmed, string LibraryId)>();
+        foreach (var folder in _virtualFoldersSnapshot)
+        {
+            var libraryId = folder.ItemId.ToString();
+            foreach (var location in folder.Locations)
+            {
+                if (string.IsNullOrEmpty(location))
+                {
+                    continue;
+                }
+
+                flat.Add((location, location.TrimEnd('/', '\\'), libraryId));
+            }
+        }
+
+        _locationIndex = flat;
     }
 
     /// <summary>

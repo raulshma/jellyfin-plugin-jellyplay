@@ -79,7 +79,7 @@ public sealed partial class JellyPlayDatabase
         using (var connection = CreateConnection())
         using (var transaction = connection.BeginTransaction())
         {
-            var (applied, rejected) = ApplyWriteLoop(connection, userId, profile, writes, quotas, maxWriteUpdatedAt: long.MaxValue, revokedDeviceId: null);
+            var (applied, rejected, _) = ApplyWriteLoop(connection, userId, profile, writes, quotas, maxWriteUpdatedAt: long.MaxValue, revokedDeviceId: null);
             transaction.Commit();
             return new UpsertResult(applied, rejected);
         }
@@ -174,11 +174,8 @@ public sealed partial class JellyPlayDatabase
                 rejected = new List<RejectedSetting>();
                 (headBefore, headAfter) = RunWithHistoryBracket(connection, userId, deviceId, op, historyTs, () =>
                 {
-                    (applied, rejected) = ApplyWriteLoop(connection, userId, profile, writes, quotas, maxWriteUpdatedAt, revokedDeviceId: deviceId);
-                    var appliedSet = applied.Select(a => (a.Ns, a.Key)).ToHashSet();
-                    var appliedBytes = writes
-                        .Where(write => appliedSet.Contains((write.Ns, write.Key)))
-                        .Sum(write => (long)write.Value.Length);
+                    long appliedBytes;
+                    (applied, rejected, appliedBytes) = ApplyWriteLoop(connection, userId, profile, writes, quotas, maxWriteUpdatedAt, revokedDeviceId: deviceId);
                     return new HistoryRecord(applied.Count, rejected.Count, appliedBytes, rejectsJsonBuilder?.Invoke(rejected));
                 });
 
@@ -215,8 +212,16 @@ public sealed partial class JellyPlayDatabase
     /// wiped at revoke time — re-pushing them must not resurrect); writes
     /// stamped past <paramref name="maxWriteUpdatedAt"/> reject with
     /// clock-skew (long.MaxValue disables the ceiling).
+    ///
+    /// The returned bytes are the recorded-history approximation (the
+    /// serialized length of every applied write, tombstones included at 0)
+    /// accumulated inline — no second pass over the batch. Watermarks for
+    /// absent keys come from the per-key indexed probe on first miss and are
+    /// memoized for the batch (refreshed on every appended log row, so the
+    /// memo always reflects in-batch appends); unique keys still cost exactly
+    /// one probe each, duplicate absent keys cost none.
     /// </summary>
-    private (List<AppliedSetting> Applied, List<RejectedSetting> Rejected) ApplyWriteLoop(
+    private (List<AppliedSetting> Applied, List<RejectedSetting> Rejected, long AppliedBytes) ApplyWriteLoop(
         SqliteConnection connection,
         string userId,
         string profile,
@@ -229,12 +234,14 @@ public sealed partial class JellyPlayDatabase
         var rejected = new List<RejectedSetting>();
         if (writes.Count == 0)
         {
-            return (applied, rejected);
+            return (applied, rejected, 0);
         }
 
         var (keyCount, totalBytes) = GetUserSettingsFootprint(connection, userId);
         var namespaceBytes = LoadNamespaceBytes(connection, userId);
         var deviceRevoked = revokedDeviceId is not null && IsDeviceRevoked(connection, revokedDeviceId);
+        long appliedBytes = 0;
+        var watermarkMemo = new Dictionary<(string Ns, string Key), long?>(writes.Count);
 
         // All five per-key statements are prepared ONCE per batch and re-bound
         // per write (SqliteCommand parameters are mutable) — the loop used to
@@ -311,16 +318,24 @@ public sealed partial class JellyPlayDatabase
             if (existingValue is null)
             {
                 // No live row: the key's latest change-log entry (put or
-                // del) is the watermark the write must beat.
-                latestChange.Parameters["@Ns"].Value = write.Ns;
-                latestChange.Parameters["@Key"].Value = write.Key;
-                (long Seq, long UpdatedAt, string Op)? latest = null;
-                foreach (var row in latestChange.Select(row => (row.GetInt64(0), row.GetInt64(1), row.GetString(2))))
+                // del) is the watermark the write must beat — memoized per
+                // batch (a repeated absent key reuses it; every appended log
+                // row below refreshes it).
+                var watermarkKey = (write.Ns, write.Key);
+                if (!watermarkMemo.TryGetValue(watermarkKey, out var watermark))
                 {
-                    latest = row;
+                    latestChange.Parameters["@Ns"].Value = write.Ns;
+                    latestChange.Parameters["@Key"].Value = write.Key;
+                    watermark = null;
+                    foreach (var row in latestChange.Select(row => row.GetInt64(1)))
+                    {
+                        watermark = row;
+                    }
+
+                    watermarkMemo[watermarkKey] = watermark;
                 }
 
-                if (latest is not null && !SettingsLww.WouldApply(write.UpdatedAt, latest.Value.UpdatedAt))
+                if (watermark is not null && !SettingsLww.WouldApply(write.UpdatedAt, watermark.Value))
                 {
                     rejected.Add(new RejectedSetting(write.Ns, write.Key, "stale-write"));
                     continue;
@@ -351,6 +366,8 @@ public sealed partial class JellyPlayDatabase
                 logInsert.Parameters["@Op"].Value = "del";
                 var seq = (long)(logInsert.ExecuteScalar() ?? 0L);
                 applied.Add(new AppliedSetting(write.Ns, write.Key, write.UpdatedAt, seq, Deleted: true));
+                watermarkMemo[(write.Ns, write.Key)] = write.UpdatedAt;
+                appliedBytes += write.Value.Length;
                 continue;
             }
 
@@ -419,9 +436,11 @@ public sealed partial class JellyPlayDatabase
             logInsert.Parameters["@Op"].Value = "put";
             var putSeq = (long)(logInsert.ExecuteScalar() ?? 0L);
             applied.Add(new AppliedSetting(write.Ns, write.Key, write.UpdatedAt, putSeq));
+            watermarkMemo[(write.Ns, write.Key)] = write.UpdatedAt;
+            appliedBytes += write.Value.Length;
         }
 
-        return (applied, rejected);
+        return (applied, rejected, appliedBytes);
     }
 
     private static long NamespaceBytesOf(Dictionary<string, long> namespaceBytes, string ns)
@@ -1214,6 +1233,14 @@ public sealed partial class JellyPlayDatabase
     {
         using (_lock.Read())
         using (var connection = CreateConnection())
+        {
+            return GetAdminDefaults(connection, scope);
+        }
+    }
+
+    /// <summary>Connection-scoped admin-defaults read (the resolve composite reads both scopes on its own connection).</summary>
+    private static AdminDefaultsRow? GetAdminDefaults(SqliteConnection connection, string scope)
+    {
         using (var statement = connection.Prepare($"select Scope, Payload, UpdatedAt from {AdminDefaultsTable} where Scope = @Scope"))
         {
             statement.Bind("@Scope", scope);
@@ -1224,6 +1251,30 @@ public sealed partial class JellyPlayDatabase
             }
 
             return null;
+        }
+    }
+
+    /// <summary>
+    /// The resolve-profile composite: base rows, overlay rows (empty when the
+    /// profile is the base), both admin-default scopes and the change-log head
+    /// in ONE connection/read-lock — the five separate connections the resolve
+    /// path used to open on every client boot.
+    /// </summary>
+    public ResolveBundle GetResolveBundle(string userId, string profile)
+    {
+        using (_lock.Read())
+        using (var connection = CreateConnection())
+        {
+            var baseRows = GetSettings(connection, userId, BaseProfile, offset: 0, limit: int.MaxValue);
+            var overlayRows = profile == BaseProfile
+                ? (IReadOnlyList<SettingRow>)Array.Empty<SettingRow>()
+                : GetSettings(connection, userId, profile, offset: 0, limit: int.MaxValue);
+            return new ResolveBundle(
+                baseRows,
+                overlayRows,
+                GetAdminDefaults(connection, "global"),
+                GetAdminDefaults(connection, userId),
+                GetChangeLogHead(connection, userId));
         }
     }
 

@@ -248,12 +248,14 @@ public sealed partial class AnimeMarkersService
         foreach (var (id, name) in run)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var attempted = false;
             if (!IsEnabled || AllFetchBreakersOpen)
             {
                 skipped++;
             }
             else
             {
+                attempted = true;
                 try
                 {
                     if (await GetSeriesMarkers(id.ToString(), providerSeriesId: null, cancellationToken) is not null)
@@ -275,8 +277,9 @@ public sealed partial class AnimeMarkersService
             done++;
             progress?.Report(100.0 * done / Math.Max(1, run.Count));
 
-            // Jitter between warm calls so the run paces the upstream sources.
-            if (done < run.Count)
+            // Jitter between warm calls so the run paces the upstream sources —
+            // skipped items attempted nothing, so they wait nothing.
+            if (attempted && done < run.Count)
             {
                 await Task.Delay(WarmSeriesDelayMs, cancellationToken);
             }
@@ -352,6 +355,9 @@ public sealed partial class AnimeMarkersService
                 // The independent sources run concurrently; the fetch pipeline owns the
                 // cache/miss choreography (a miss is memoized only when a source was
                 // really attempted) and coalesces concurrent cold callers per series.
+                // The outer resolved seam already probed this exact key/TTL/miss
+                // window, so the inner probe is skipped (same result, one fewer
+                // file stat on the cold path).
                 return await _fetcher.GetOrFetchMultiAsync(
                     cacheKey,
                     ttl,
@@ -370,7 +376,8 @@ public sealed partial class AnimeMarkersService
                     },
                     missCache: true,
                     missTtl: TtlPolicy.Miss,
-                    cancellationToken: cancellation);
+                    cancellationToken: cancellation,
+                    skipProbe: true);
             },
             missCache: true,
             missTtl: TtlPolicy.Miss,

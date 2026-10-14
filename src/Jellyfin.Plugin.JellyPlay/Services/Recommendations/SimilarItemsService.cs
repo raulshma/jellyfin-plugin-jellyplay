@@ -178,6 +178,12 @@ public sealed class SimilarItemsService
             }
         });
 
+        // O(1) exclusion: the old Contains scan over the raw list cost O(m)
+        // per candidate.
+        HashSet<Guid>? exclude = excludeItemIds is null or { Count: 0 }
+            ? null
+            : new HashSet<Guid>(excludeItemIds);
+
         // Request-scoped memoization (internal seam, same outputs): people and
         // parent lookups are folded through per-request dictionaries so a repeat
         // scoring of one item never re-crosses the host seam. A true batch
@@ -191,14 +197,40 @@ public sealed class SimilarItemsService
         // item) are extracted once and set-shaped once, not once per candidate.
         var sourceFeatures = ExtractFeatures(source, peopleMemo, parentMemo);
         var preparedSource = SimilarityScorer.PrepareSource(sourceFeatures);
+        var keep = Math.Clamp(limit, 1, 100);
 
-        var scored = new List<ScoredItem>(candidates.Count);
-        foreach (var candidate in candidates)
+        // Cheap pass (no host calls — genres/tags/studios/year plus the
+        // parent-free franchise cases only): orders candidates so the full
+        // pass visits a widened pool instead of all 500. Full − cheap is
+        // exactly the host-backed remainder (shared people ≤ cap×weight plus
+        // an at-most-once parent franchise bonus), so every candidate that can
+        // reach the top-K by full score is in the pool — same winners, same
+        // order, fewer host crossings. Ties keep the old library-order
+        // tiebreak via the candidate index.
+        const double maxRemainder = SimilarityScorer.SharedPersonCap * SimilarityScorer.SharedPersonWeight + SimilarityScorer.FranchiseBonus;
+        var ordered = new List<(BaseItem Item, int Index, double Cheap)>(candidates.Count);
+        for (var index = 0; index < candidates.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (candidate.Id == source.Id || (excludeItemIds?.Contains(candidate.Id) ?? false))
+            var candidate = candidates[index];
+            if (candidate.Id == source.Id || (exclude is not null && exclude.Contains(candidate.Id)))
             {
                 continue;
+            }
+
+            ordered.Add((candidate, index, CheapScore(preparedSource, candidate)));
+        }
+
+        ordered.Sort(static (a, b) => b.Cheap.CompareTo(a.Cheap));
+        var cutoff = ordered.Count > keep ? ordered[keep - 1].Cheap - maxRemainder : double.NegativeInfinity;
+
+        var scored = new List<(ScoredItem Entry, int Index)>(Math.Min(ordered.Count, keep * 2));
+        foreach (var (candidate, index, cheap) in ordered)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (cheap < cutoff)
+            {
+                break;
             }
 
             var score = SimilarityScorer.Score(preparedSource, ExtractFeatures(candidate, peopleMemo, parentMemo));
@@ -207,13 +239,86 @@ public sealed class SimilarItemsService
                 continue;
             }
 
-            scored.Add(new ScoredItem(candidate.Id, candidate.Name ?? string.Empty, Math.Round(score, 2)) { Item = candidate });
+            scored.Add((new ScoredItem(candidate.Id, candidate.Name ?? string.Empty, Math.Round(score, 2)) { Item = candidate }, index));
         }
 
         return scored
-            .OrderByDescending(entry => entry.Score)
-            .Take(Math.Clamp(limit, 1, 100))
+            .OrderByDescending(entry => entry.Entry.Score)
+            .ThenBy(entry => entry.Index)
+            .Take(keep)
+            .Select(entry => entry.Entry)
             .ToList();
+    }
+
+    /// <summary>
+    /// Host-free similarity prefix: genre ×3, tag ×2, studio ×1.5, year
+    /// proximity and the parent-free franchise cases (collection/series/album).
+    /// Parent-folder franchise and shared people are the host-backed remainder
+    /// the widened pool accounts for (see <see cref="ScoreAgainst"/>).
+    /// </summary>
+    private static double CheapScore(PreparedSource source, BaseItem candidate)
+    {
+        double score = OverlapCount(source.Genres, candidate.Genres) * 3.0;
+        score += OverlapCount(source.Tags, candidate.Tags) * 2.0;
+        score += OverlapCount(source.Studios, candidate.Studios) * 1.5;
+        if (source.ProductionYear is { } sourceYear && candidate.ProductionYear is { } candidateYear)
+        {
+            var distance = Math.Abs(sourceYear - candidateYear);
+            score += distance <= 5 ? 2.0 : distance <= 15 ? 1.0 : 0;
+        }
+
+        var franchise = InMemoryFranchiseKey(candidate);
+        if (!string.IsNullOrEmpty(franchise)
+            && !string.IsNullOrEmpty(source.FranchiseKey)
+            && string.Equals(source.FranchiseKey, franchise, StringComparison.OrdinalIgnoreCase))
+        {
+            score += SimilarityScorer.FranchiseBonus;
+        }
+
+        return score;
+    }
+
+    private static int OverlapCount(HashSet<string> source, IReadOnlyCollection<string>? values)
+    {
+        if (values is null)
+        {
+            return 0;
+        }
+
+        var hits = 0;
+        foreach (var value in values)
+        {
+            if (source.Contains(value))
+            {
+                hits++;
+            }
+        }
+
+        return hits;
+    }
+
+    /// <summary>
+    /// Franchise identity resolvable without crossing the host seam (the
+    /// <see cref="FranchiseKey"/> cases above the parent fallback).
+    /// </summary>
+    private static string? InMemoryFranchiseKey(BaseItem item)
+    {
+        switch (item)
+        {
+            case Movie { CollectionName: not null and not "" } movie:
+                return "collection:" + movie.CollectionName;
+            case Episode { SeriesId: var seriesId } when seriesId != Guid.Empty:
+                return "series:" + seriesId;
+            case Series series:
+                return "series:" + series.Id;
+        }
+
+        if (!string.IsNullOrEmpty(item.Album))
+        {
+            return "album:" + item.Album;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -267,23 +372,16 @@ public sealed class SimilarItemsService
     /// Franchise identity: the TMDB collection name (movies), the series id
     /// (TV), the album (music) or a physical parent folder. Library views
     /// (aggregate folders, collection folders, user views) are NOT franchises —
-    /// everything in one library would otherwise share a key.
+    /// everything in one library would otherwise share a key. The host-free
+    /// cases live in <see cref="InMemoryFranchiseKey"/> (shared with the
+    /// cheap-score prefix so the two can never drift); only the physical
+    /// parent fallback stays here.
     /// </summary>
     private static string? FranchiseKey(BaseItem item, Dictionary<Guid, BaseItem?> parentMemo)
     {
-        switch (item)
+        if (InMemoryFranchiseKey(item) is { } key)
         {
-            case Movie { CollectionName: not null and not "" } movie:
-                return "collection:" + movie.CollectionName;
-            case Episode { SeriesId: var seriesId } when seriesId != Guid.Empty:
-                return "series:" + seriesId;
-            case Series series:
-                return "series:" + series.Id;
-        }
-
-        if (!string.IsNullOrEmpty(item.Album))
-        {
-            return "album:" + item.Album;
+            return key;
         }
 
         if (!parentMemo.TryGetValue(item.Id, out var parent))

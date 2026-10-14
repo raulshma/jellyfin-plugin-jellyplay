@@ -67,7 +67,8 @@ public sealed class UserRatingsService
     /// <summary>The user's liked/disliked/rated items, folded from Jellyfin's own user-data store.</summary>
     public IReadOnlyList<UserRatingEntry> GetMyRatings(Guid userId, string? filter)
     {
-        if (_userManager.GetUserById(userId) is null)
+        var user = _userManager.GetUserById(userId);
+        if (user is null)
         {
             return Array.Empty<UserRatingEntry>();
         }
@@ -79,7 +80,7 @@ public sealed class UserRatingsService
             return memoized.Entries;
         }
 
-        var entries = BuildRatings(userId, filter);
+        var entries = BuildRatings(user, filter);
         if (_memo.Count < MemoCap)
         {
             _memo[key] = new MemoizedRatings(nowMs, entries);
@@ -120,14 +121,8 @@ public sealed class UserRatingsService
         }
     }
 
-    private IReadOnlyList<UserRatingEntry> BuildRatings(Guid userId, string? filter)
+    private IReadOnlyList<UserRatingEntry> BuildRatings(Jellyfin.Database.Implementations.Entities.User user, string? filter)
     {
-        var user = _userManager.GetUserById(userId);
-        if (user is null)
-        {
-            return Array.Empty<UserRatingEntry>();
-        }
-
         var items = _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery(user)
         {
             IncludeItemTypes = new[] { Jellyfin.Data.Enums.BaseItemKind.Movie, Jellyfin.Data.Enums.BaseItemKind.Series, Jellyfin.Data.Enums.BaseItemKind.Episode, Jellyfin.Data.Enums.BaseItemKind.Audio, Jellyfin.Data.Enums.BaseItemKind.MusicAlbum, Jellyfin.Data.Enums.BaseItemKind.Book },

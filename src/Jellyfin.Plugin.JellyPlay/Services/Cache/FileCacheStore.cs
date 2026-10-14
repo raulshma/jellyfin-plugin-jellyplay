@@ -139,7 +139,7 @@ public sealed class FileCacheStore
                 return default;
             }
 
-            var entry = JsonSerializer.Deserialize<CachedEntry<T>>(await File.ReadAllTextAsync(path).ConfigureAwait(false));
+            var entry = await ReadEntryAsync<T>(path).ConfigureAwait(false);
             var value = entry is null ? default : entry.Value;
             if (value is not null)
             {
@@ -183,9 +183,12 @@ public sealed class FileCacheStore
         var path = PathFor(key);
         try
         {
-            var payload = JsonSerializer.Serialize(new CachedEntry<T> { Value = value });
             var temp = path + ".tmp" + Guid.NewGuid().ToString("N");
-            await File.WriteAllTextAsync(temp, payload).ConfigureAwait(false);
+            await using (var stream = File.Create(temp))
+            {
+                await JsonSerializer.SerializeAsync(stream, new CachedEntry<T> { Value = value }).ConfigureAwait(false);
+            }
+
             File.Move(temp, path, overwrite: true);
             if (value is not null)
             {
@@ -324,14 +327,61 @@ public sealed class FileCacheStore
     {
         if (_memory.Count >= MemoryCap)
         {
+            // Partial eviction without the full sort the old path paid per
+            // over-cap insert: one linear pass keeps the oldest quarter.
             var toEvict = Math.Max(MemoryCap / 4, 1);
-            foreach (var oldest in _memory.ToArray().OrderBy(entry => entry.Value.LoadedUtc).Take(toEvict))
+            var snapshot = _memory.ToArray();
+            var victims = SelectOldest(snapshot, toEvict);
+            foreach (var victim in victims)
             {
-                _memory.TryRemove(oldest.Key, out _);
+                _memory.TryRemove(victim, out _);
             }
         }
 
         _memory[key] = new MemoryEntry { LoadedUtc = DateTimeOffset.UtcNow, WrittenUtc = writtenUtc, Value = value };
+    }
+
+    /// <summary>Streaming cold-path read: no intermediate string allocation (the old ReadAllText+parse pair).</summary>
+    private static async Task<CachedEntry<T>?> ReadEntryAsync<T>(string path)
+    {
+        await using var stream = File.OpenRead(path);
+        return await JsonSerializer.DeserializeAsync<CachedEntry<T>>(stream).ConfigureAwait(false);
+    }
+
+    /// <summary>Oldest-<paramref name="count"/> keys by load time via a small bounded selection (no full sort).</summary>
+    private static List<string> SelectOldest(KeyValuePair<string, MemoryEntry>[] snapshot, int count)
+    {
+        var oldest = new List<(string Key, DateTimeOffset Loaded)>(count);
+        foreach (var entry in snapshot)
+        {
+            var loaded = entry.Value.LoadedUtc;
+            if (oldest.Count < count)
+            {
+                var at = oldest.FindIndex(candidate => loaded < candidate.Loaded);
+                if (at < 0)
+                {
+                    oldest.Add((entry.Key, loaded));
+                }
+                else
+                {
+                    oldest.Insert(at, (entry.Key, loaded));
+                }
+            }
+            else if (loaded < oldest[count - 1].Loaded)
+            {
+                var at = oldest.FindIndex(candidate => loaded < candidate.Loaded);
+                oldest.Insert(at, (entry.Key, loaded));
+                oldest.RemoveAt(count);
+            }
+        }
+
+        var keys = new List<string>(oldest.Count);
+        foreach (var (key, _) in oldest)
+        {
+            keys.Add(key);
+        }
+
+        return keys;
     }
 
     private string PathFor(string key)

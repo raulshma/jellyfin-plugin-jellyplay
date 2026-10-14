@@ -206,6 +206,18 @@ public sealed record SyncStatusBundle(
     IReadOnlyList<NamespaceFootprint> Namespaces,
     IReadOnlyList<DeviceSyncSummary> PerDevice);
 
+/// <summary>
+/// The resolve-profile bundle: everything a resolved snapshot needs (base +
+/// overlay rows, both admin-default scopes, change-log head) resolved in ONE
+/// connection by <see cref="JellyPlayDatabase.GetResolveBundle"/>.
+/// </summary>
+public sealed record ResolveBundle(
+    IReadOnlyList<SettingRow> BaseRows,
+    IReadOnlyList<SettingRow> OverlayRows,
+    AdminDefaultsRow? GlobalDefaults,
+    AdminDefaultsRow? UserDefaults,
+    long Head);
+
 /// <summary>One recorded operation together with its resolved per-key diff (the audit export's fold).</summary>
 public sealed record SyncHistoryWithKeys(SyncHistoryRow Row, IReadOnlyList<ChangeLogEntry> Keys);
 

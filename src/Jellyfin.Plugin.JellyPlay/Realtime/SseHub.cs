@@ -58,6 +58,12 @@ public sealed class SseHub
     private readonly ConcurrentDictionary<Guid, Subscriber> _subscribers = new();
     private readonly ILogger<SseHub> _logger;
 
+    // Fan-out index: (stream, user) -> subscriber ids. PublishToUser and
+    // targeted publishes resolve only their bucket instead of scanning every
+    // subscriber; broadcast keeps the full scan. Maintained alongside
+    // _subscribers on subscribe/unsubscribe.
+    private readonly ConcurrentDictionary<(string Stream, string UserId), ConcurrentDictionary<Guid, byte>> _index = new();
+
     // Monotonic counter, lock-free: a plain increment under Interlocked is the
     // only discipline it needs (no other state is read alongside it).
     private long _sequence;
@@ -68,7 +74,20 @@ public sealed class SseHub
     // received at least one recorded event — a bounded set (the server's user
     // count), each ring bounded by ReplayRingCapacity.
     private readonly ConcurrentDictionary<string, Queue<SseEvent>> _eventsReplay = new();
-    private readonly object _replayLock = new();
+
+    // Per-user replay locks (striped): targeted publishes lock only their own
+    // users' rings instead of serializing every events publish on one gate.
+    // Broadcast holds the creation gate (not the per-user locks) while
+    // snapshotting, and ring creation takes the same gate — so a ring created
+    // concurrently is either fully in the broadcast or legitimately post-dates
+    // it. Steady-state targeted publishes (ring exists) never touch the gate.
+    // Bounded by the user count, like the rings themselves.
+    private readonly ConcurrentDictionary<string, object> _replayLocks = new(StringComparer.Ordinal);
+
+    /// <summary>Serializes replay-ring creation against broadcast snapshots (steady-state reads/appends stay per-user).</summary>
+    private readonly object _replayCreateLock = new();
+
+    private object ReplayLockFor(string userId) => _replayLocks.GetOrAdd(userId, _ => new object());
 
     public SseHub(ILogger<SseHub> logger)
     {
@@ -91,6 +110,7 @@ public sealed class SseHub
                 FullMode = BoundedChannelFullMode.DropOldest
             })
         };
+        _index.GetOrAdd((stream, userId), _ => new ConcurrentDictionary<Guid, byte>())[id] = 0;
         return id;
     }
 
@@ -99,6 +119,14 @@ public sealed class SseHub
         if (_subscribers.TryRemove(subscriberId, out var subscriber))
         {
             subscriber.Channel.Writer.TryComplete();
+            if (_index.TryGetValue((subscriber.Stream, subscriber.UserId), out var bucket))
+            {
+                bucket.TryRemove(subscriberId, out _);
+                if (bucket.IsEmpty)
+                {
+                    _index.TryRemove((subscriber.Stream, subscriber.UserId), out _);
+                }
+            }
         }
     }
 
@@ -119,8 +147,28 @@ public sealed class SseHub
 
         // One set built per publish: O(1) membership per subscriber instead of
         // a Contains scan over the raw list; the replay pass reads it too.
+        // Targeted delivery resolves only the matching index buckets — no full
+        // subscriber scan.
         var targetSet = targets as HashSet<string> ?? new HashSet<string>(targets, StringComparer.Ordinal);
-        return PublishWhere(stream, subscriber => targetSet.Contains(subscriber.UserId), eventName, jsonData, eventId, targetSet);
+        if (targetSet.Count == 0)
+        {
+            var empty = new SseEvent(eventName, jsonData, eventId ?? (ulong)Interlocked.Increment(ref _sequence));
+            if (string.Equals(stream, EventsStream, StringComparison.Ordinal))
+            {
+                RecordReplay(targetSet, empty);
+            }
+
+            return 0;
+        }
+
+        var evt = CreateRecordedEvent(stream, eventName, jsonData, eventId, targetSet);
+        var delivered = 0;
+        foreach (var userId in targetSet)
+        {
+            delivered += DeliverToBucket(stream, userId, evt, eventName);
+        }
+
+        return delivered;
     }
 
     /// <summary>
@@ -144,13 +192,57 @@ public sealed class SseHub
     /// </summary>
     public int PublishToUser(string stream, string userId, string eventName, string jsonData, ulong? eventId = null)
     {
-        // The replay pass needs the id enumerable, but only on the events
-        // stream — this method's hot caller (settings) skips the ring, so no
-        // per-call singleton array is built for it.
+        // Index fast path: only this user's bucket is visited — no scan over
+        // every subscriber. The replay pass needs the id enumerable, but only
+        // on the events stream — this method's hot caller (settings) skips the
+        // ring, so no per-call singleton array is built for it.
         IReadOnlyCollection<string>? replayTargets = string.Equals(stream, EventsStream, StringComparison.Ordinal)
             ? new[] { userId }
             : null;
-        return PublishWhere(stream, subscriber => string.Equals(subscriber.UserId, userId, StringComparison.Ordinal), eventName, jsonData, eventId, replayTargets);
+        var evt = CreateRecordedEvent(stream, eventName, jsonData, eventId, replayTargets);
+        return DeliverToBucket(stream, userId, evt, eventName);
+    }
+
+    /// <summary>Builds the wire event (anchored id or monotonic sequence) and records the events-stream replay ring.</summary>
+    private SseEvent CreateRecordedEvent(string stream, string eventName, string jsonData, ulong? eventId, IReadOnlyCollection<string>? replayTargets)
+    {
+        var seq = eventId ?? (ulong)Interlocked.Increment(ref _sequence);
+        var evt = new SseEvent(eventName, jsonData, seq);
+        if (string.Equals(stream, EventsStream, StringComparison.Ordinal))
+        {
+            RecordReplay(replayTargets, evt);
+        }
+
+        return evt;
+    }
+
+    /// <summary>Delivers one event to every subscriber in the (stream, user) index bucket.</summary>
+    private int DeliverToBucket(string stream, string userId, SseEvent evt, string eventName)
+    {
+        if (!_index.TryGetValue((stream, userId), out var bucket))
+        {
+            return 0;
+        }
+
+        var delivered = 0;
+        foreach (var subscriberId in bucket.Keys)
+        {
+            if (!_subscribers.TryGetValue(subscriberId, out var subscriber))
+            {
+                continue;
+            }
+
+            if (subscriber.Channel.Writer.TryWrite(evt))
+            {
+                delivered++;
+            }
+            else
+            {
+                _logger.LogWarning("SSE subscriber {SubscriberId} channel unavailable; dropping event {Event}", subscriber.GetHashCode(), eventName);
+            }
+        }
+
+        return delivered;
     }
 
     private int PublishWhere(
@@ -212,7 +304,7 @@ public sealed class SseHub
             return Array.Empty<SseEvent>();
         }
 
-        lock (_replayLock)
+        lock (ReplayLockFor(userId))
         {
             return ring.Where(evt => evt.Id > afterId).ToList();
         }
@@ -221,22 +313,52 @@ public sealed class SseHub
     /// <summary>Records one published events-stream event into the target users' rings (every existing ring when targets is null = a broadcast).</summary>
     private void RecordReplay(IReadOnlyCollection<string>? replayTargets, SseEvent evt)
     {
-        lock (_replayLock)
+        if (replayTargets is null)
         {
-            if (replayTargets is null)
+            // Broadcast: the creation gate makes the snapshot atomic against
+            // concurrent ring creation; per-ring appends then proceed under
+            // their own locks (never nested inside the gate's reverse order).
+            string[] users;
+            lock (_replayCreateLock)
             {
-                foreach (var ring in _eventsReplay.Values)
+                users = _eventsReplay.Keys.ToArray();
+            }
+
+            foreach (var userId in users)
+            {
+                if (_eventsReplay.TryGetValue(userId, out var ring))
+                {
+                    lock (ReplayLockFor(userId))
+                    {
+                        AppendReplay(ring, evt);
+                    }
+                }
+            }
+        }
+        else
+        {
+            foreach (var userId in replayTargets)
+            {
+                var ring = GetOrCreateRing(userId);
+                lock (ReplayLockFor(userId))
                 {
                     AppendReplay(ring, evt);
                 }
             }
-            else
-            {
-                foreach (var userId in replayTargets)
-                {
-                    AppendReplay(_eventsReplay.GetOrAdd(userId, _ => new Queue<SseEvent>()), evt);
-                }
-            }
+        }
+    }
+
+    /// <summary>Fetches the user's replay ring, creating it under the creation gate so broadcast snapshots stay atomic.</summary>
+    private Queue<SseEvent> GetOrCreateRing(string userId)
+    {
+        if (_eventsReplay.TryGetValue(userId, out var ring))
+        {
+            return ring;
+        }
+
+        lock (_replayCreateLock)
+        {
+            return _eventsReplay.GetOrAdd(userId, _ => new Queue<SseEvent>());
         }
     }
 

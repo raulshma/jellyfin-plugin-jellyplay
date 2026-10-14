@@ -98,6 +98,10 @@ public sealed class ResilientFetcher
     /// <see cref="GetOrFetchAsync{T}"/> encodes as <c>FetchAttempt.Attempted</c>,
     /// so services hand-rolling the dance is a thing of the past. Sources run
     /// concurrently; the merge sees them in the order given.
+    /// When <paramref name="skipProbe"/> is set the caller already probed this
+    /// exact key/TTL/miss window (the anime outer seam probes before delegating
+    /// here) and the fetch runs directly — same result, one fewer file stat on
+    /// the cold path.
     /// </summary>
     /// <typeparam name="TSource">One upstream's raw result.</typeparam>
     /// <typeparam name="TValue">The merged, cached aggregate.</typeparam>
@@ -109,9 +113,12 @@ public sealed class ResilientFetcher
         Func<IReadOnlyList<TSource?>, TValue?> merge,
         bool missCache = false,
         TimeSpan? missTtl = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool skipProbe = false)
     {
-        var probe = await ProbeCacheAsync<TValue>(cacheKey, ttl, missCache, missTtl).ConfigureAwait(false);
+        var probe = skipProbe
+            ? new CacheProbe<TValue>(CacheProbeKind.NotFound)
+            : await ProbeCacheAsync<TValue>(cacheKey, ttl, missCache, missTtl).ConfigureAwait(false);
         if (probe.Kind != CacheProbeKind.NotFound)
         {
             return probe.Value;

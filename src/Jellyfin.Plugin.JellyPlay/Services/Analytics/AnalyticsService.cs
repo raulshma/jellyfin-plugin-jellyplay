@@ -56,6 +56,18 @@ public sealed class AnalyticsService : IDisposable
     private readonly object _openLock = new();
     private readonly Dictionary<string, OpenPlayback> _open = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Secondary index over the in-flight sessions by (user, client, device):
+    /// the progress path's replaced-session lookup resolves only its own
+    /// bucket instead of scanning every open session. Every mutation of
+    /// <see cref="_open"/> maintains it under the same <see cref="_openLock"/>
+    /// (add on upsert, remove on stop/stale/replace, move when a session's
+    /// client/device identity changes). Raw values (nulls included) — the
+    /// bucket comparison is exactly the scan's Ordinal comparison, where
+    /// null never equals empty.
+    /// </summary>
+    private readonly Dictionary<(string UserId, string? Client, string? Device), HashSet<string>> _openIndex = new();
+
     private readonly Channel<PlaybackSessionRow> _pendingWrites = Channel.CreateBounded<PlaybackSessionRow>(
         new BoundedChannelOptions(PendingWriteCapacity) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
     private readonly object _writeLock = new();
@@ -165,6 +177,7 @@ public sealed class AnalyticsService : IDisposable
         {
             if (_open.Remove(key, out var tracked))
             {
+                IndexRemove(tracked);
                 open = tracked;
             }
             else
@@ -203,22 +216,23 @@ public sealed class AnalyticsService : IDisposable
         var session = args.Session;
         var key = SessionKey(args.PlaySessionId, resolvedUser, itemId, session?.Client, session?.DeviceName);
 
-        // The transcode detail depends only on the event args — fold and
-        // serialize it BEFORE the lock; the lock block stays the pure
-        // map-shaping critical section.
+        // The transcode detail depends only on the event args — fold it BEFORE
+        // the lock; the lock block stays the pure map-shaping critical section.
+        // Reasons serialize lazily inside the lock (the folded array is the
+        // memoized per-flag-word instance, so an unchanged transcode serializes
+        // nothing — progress ticks for one play share the reference).
         var transcode = session?.TranscodingInfo;
         string? transcodeVideoCodec = null;
         string? transcodeAudioCodec = null;
         long? transcodeBitrate = null;
-        string? transcodeReasonsJson = null;
+        TranscodeFold.TranscodeDetail? transcodeDetail = null;
         if (transcode is not null)
         {
             // Deepening: transcode detail folds through the shared module (same payload as the monitor).
-            var detail = TranscodeFold.Fold(transcode);
-            transcodeVideoCodec = detail.VideoCodec;
-            transcodeAudioCodec = detail.AudioCodec;
-            transcodeBitrate = detail.Bitrate;
-            transcodeReasonsJson = detail.Reasons is null ? null : JsonSerializer.Serialize(detail.Reasons);
+            transcodeDetail = TranscodeFold.Fold(transcode);
+            transcodeVideoCodec = transcodeDetail.VideoCodec;
+            transcodeAudioCodec = transcodeDetail.AudioCodec;
+            transcodeBitrate = transcodeDetail.Bitrate;
         }
 
         // ONE atomic lock block: collecting-and-removing the replaced sessions
@@ -229,16 +243,21 @@ public sealed class AnalyticsService : IDisposable
         lock (_openLock)
         {
             // The host moved on to a new item without a stop event: any other
-            // in-flight session for the same user/client/device is over now.
-            replaced = _open.Values
-                .Where(candidate => candidate.Key != key
-                    && string.Equals(candidate.UserId, resolvedUser, StringComparison.Ordinal)
-                    && string.Equals(candidate.ClientName, session?.Client, StringComparison.Ordinal)
-                    && string.Equals(candidate.DeviceName, session?.DeviceName, StringComparison.Ordinal))
-                .ToList();
-            foreach (var candidate in replaced)
+            // in-flight session for the same user/client/device is over now —
+            // resolved through the secondary index (same bucket the scan
+            // compared, no full-map walk).
+            replaced = new List<OpenPlayback>();
+            var bucketKey = (resolvedUser, session?.Client, session?.DeviceName);
+            if (_openIndex.TryGetValue(bucketKey, out var bucket) && (bucket.Count > 1 || !bucket.Contains(key)))
             {
-                _open.Remove(candidate.Key);
+                foreach (var otherKey in bucket.ToArray())
+                {
+                    if (otherKey != key && _open.Remove(otherKey, out var other))
+                    {
+                        IndexRemove(other);
+                        replaced.Add(other);
+                    }
+                }
             }
 
             if (!_open.TryGetValue(key, out var open))
@@ -252,8 +271,11 @@ public sealed class AnalyticsService : IDisposable
                     PlayMethod = "DirectPlay",
                 };
                 _open[key] = open;
+                IndexAdd(open);
             }
 
+            var oldClient = open.ClientName;
+            var oldDevice = open.DeviceName;
             open.ItemName = itemName!;
             open.ItemType = itemType!;
             open.SeriesName = seriesName;
@@ -266,12 +288,24 @@ public sealed class AnalyticsService : IDisposable
                 open.PlayMethod = method.ToString();
             }
 
-            if (transcode is not null)
+            if (transcode is not null && transcodeDetail is not null)
             {
                 open.VideoCodec = transcodeVideoCodec;
                 open.AudioCodec = transcodeAudioCodec;
                 open.Bitrate = transcodeBitrate;
-                open.TranscodeReasonsJson = transcodeReasonsJson;
+                if (!ReferenceEquals(open.TranscodeReasonsRef, transcodeDetail.Reasons))
+                {
+                    open.TranscodeReasonsRef = transcodeDetail.Reasons;
+                    open.TranscodeReasonsJson = transcodeDetail.Reasons is null ? null : JsonSerializer.Serialize(transcodeDetail.Reasons);
+                }
+            }
+
+            var newClient = open.ClientName;
+            var newDevice = open.DeviceName;
+            if (!string.Equals(oldClient, newClient, StringComparison.Ordinal)
+                || !string.Equals(oldDevice, newDevice, StringComparison.Ordinal))
+            {
+                IndexMove(open, (open.UserId, oldClient, oldDevice), (open.UserId, newClient, newDevice));
             }
 
             if (args.PlaybackPositionTicks is { } progressTicks)
@@ -290,6 +324,63 @@ public sealed class AnalyticsService : IDisposable
         }
 
         CloseStaleSessions(now);
+    }
+
+    /// <summary>
+    /// Secondary-index maintenance (caller holds <see cref="_openLock"/>):
+    /// add on upsert, remove on stop/stale/replace, move when a session's
+    /// client/device identity changes. Buckets key on the session's stored
+    /// (immutable) user id plus its current client/device — exactly the triple
+    /// the old full-map scan compared.
+    /// </summary>
+    private void IndexAdd(OpenPlayback open)
+    {
+        var bucketKey = (open.UserId, open.ClientName, open.DeviceName);
+        if (!_openIndex.TryGetValue(bucketKey, out var bucket))
+        {
+            bucket = new HashSet<string>(StringComparer.Ordinal);
+            _openIndex[bucketKey] = bucket;
+        }
+
+        bucket.Add(open.Key);
+    }
+
+    private void IndexRemove(OpenPlayback open)
+    {
+        var bucketKey = (open.UserId, open.ClientName, open.DeviceName);
+        if (_openIndex.TryGetValue(bucketKey, out var bucket))
+        {
+            bucket.Remove(open.Key);
+            if (bucket.Count == 0)
+            {
+                _openIndex.Remove(bucketKey);
+            }
+        }
+    }
+
+    private void IndexMove(OpenPlayback open, (string UserId, string? Client, string? Device) from, (string UserId, string? Client, string? Device) to)
+    {
+        if (from == to)
+        {
+            return;
+        }
+
+        if (_openIndex.TryGetValue(from, out var oldBucket))
+        {
+            oldBucket.Remove(open.Key);
+            if (oldBucket.Count == 0)
+            {
+                _openIndex.Remove(from);
+            }
+        }
+
+        if (!_openIndex.TryGetValue(to, out var newBucket))
+        {
+            newBucket = new HashSet<string>(StringComparer.Ordinal);
+            _openIndex[to] = newBucket;
+        }
+
+        newBucket.Add(open.Key);
     }
 
     /// <summary>
@@ -315,6 +406,7 @@ public sealed class AnalyticsService : IDisposable
             foreach (var candidate in stale)
             {
                 _open.Remove(candidate.Key);
+                IndexRemove(candidate);
             }
         }
 
@@ -412,13 +504,53 @@ public sealed class AnalyticsService : IDisposable
     /// <summary>Row-by-row deduped inserts. Caller holds <see cref="_writeLock"/>.</summary>
     private void DrainPendingWrites()
     {
+        var pending = new List<PlaybackSessionRow>();
         while (_pendingWrites.Reader.TryRead(out var row))
         {
-            if (_db.InsertPlaybackSession(row) == 0)
+            pending.Add(row);
+        }
+
+        if (pending.Count == 0)
+        {
+            return;
+        }
+
+        // One lock/connection/transaction for the burst; a store failure falls
+        // back to row-by-row so one bad row never loses the rest (the old
+        // per-row seam's isolation).
+        IReadOnlyList<long> ids;
+        try
+        {
+            ids = _db.InsertPlaybackSessionsBatch(pending);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "JellyPlay analytics: batched persist failed; retrying row-by-row");
+            foreach (var single in pending)
+            {
+                try
+                {
+                    if (_db.InsertPlaybackSession(single) == 0)
+                    {
+                        _logger.LogDebug("JellyPlay analytics: deduplicated playback row for user {UserId} item {ItemId}", single.UserId, single.ItemId);
+                    }
+                }
+                catch (Exception inner)
+                {
+                    _logger.LogDebug(inner, "JellyPlay analytics: playback persist failed for user {UserId} item {ItemId}", single.UserId, single.ItemId);
+                }
+            }
+
+            return;
+        }
+
+        for (var index = 0; index < pending.Count; index++)
+        {
+            if (ids[index] == 0)
             {
                 // Same (user, item, start-minute) already recorded — replay of the
                 // same play through both the progress and stop paths.
-                _logger.LogDebug("JellyPlay analytics: deduplicated playback row for user {UserId} item {ItemId}", row.UserId, row.ItemId);
+                _logger.LogDebug("JellyPlay analytics: deduplicated playback row for user {UserId} item {ItemId}", pending[index].UserId, pending[index].ItemId);
             }
         }
     }
@@ -659,6 +791,13 @@ public sealed class AnalyticsService : IDisposable
         public long? Bitrate { get; set; }
 
         public string? TranscodeReasonsJson { get; set; }
+
+        /// <summary>
+        /// The folded reasons array behind <see cref="TranscodeReasonsJson"/>:
+        /// the shared fold memoizes per flag word, so reference equality means
+        /// an unchanged transcode and the progress path skips re-serializing.
+        /// </summary>
+        public string[]? TranscodeReasonsRef { get; set; }
 
         public long PositionTicks { get; set; }
 
