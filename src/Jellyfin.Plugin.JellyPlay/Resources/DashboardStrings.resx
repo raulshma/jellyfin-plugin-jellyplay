@@ -379,6 +379,47 @@
   <data name="AnimeOverridesSaved" xml:space="preserve">
     <value>Anime overrides saved.</value>
   </data>
+
+  <!-- Hero billboard -->
+  <data name="SectionHero" xml:space="preserve">
+    <value>Hero billboard</value>
+  </data>
+  <data name="HeroEnabled" xml:space="preserve">
+    <value>Enable curated hero (advertises the hero feature to clients)</value>
+  </data>
+  <data name="SectionHeroCandidates" xml:space="preserve">
+    <value>Hero candidates</value>
+  </data>
+  <data name="HeroCandidatesDescription" xml:space="preserve">
+    <value>The home hero billboards clients feature ahead of their local picks (clients with the hero feature enabled). Each candidate needs the Jellyfin item id; headline and subhead override the item's own title; higher weight serves first (config order breaks ties, max 10 serve).</value>
+  </data>
+  <data name="HeroEmpty" xml:space="preserve">
+    <value>No hero candidates configured — clients fall back to their local hero picks.</value>
+  </data>
+  <data name="HeroAdd" xml:space="preserve">
+    <value>Add candidate</value>
+  </data>
+  <data name="HeroSave" xml:space="preserve">
+    <value>Save hero</value>
+  </data>
+  <data name="HeroSaved" xml:space="preserve">
+    <value>Hero candidates saved.</value>
+  </data>
+  <data name="HeroItemId" xml:space="preserve">
+    <value>Item id (Jellyfin item id)</value>
+  </data>
+  <data name="HeroHeadline" xml:space="preserve">
+    <value>Headline (optional)</value>
+  </data>
+  <data name="HeroSubhead" xml:space="preserve">
+    <value>Subhead (optional)</value>
+  </data>
+  <data name="HeroWeight" xml:space="preserve">
+    <value>Weight</value>
+  </data>
+  <data name="HeroInvalidItemId" xml:space="preserve">
+    <value>Every candidate needs a non-empty item id.</value>
+  </data>
   <data name="AnimeOverridesSeriesId" xml:space="preserve">
     <value>Series id (Jellyfin item id)</value>
   </data>

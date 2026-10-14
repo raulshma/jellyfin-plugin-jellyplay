@@ -13,6 +13,7 @@
         NewMediaEnabled: 'Events.NewMediaEnabled',
         NewMediaGroupingSeconds: 'Events.NewMediaGroupingSeconds',
         NewMediaAudience: 'Events.NewMediaAudience',
+        HeroEnabled: 'Hero.Enabled',
         SeerrServerUrl: 'Seerr.ServerUrl',
         SeerrApiKey: 'Seerr.ApiKey',
         WebhookSecret: 'Seerr.WebhookSecret',
@@ -1218,6 +1219,121 @@
         });
     });
 
+    // ── hero candidates ──
+
+    function heroList() { return document.getElementById('jellyplayHeroList'); }
+    function heroEmptyLabel() { return document.getElementById('jellyplayHeroEmpty'); }
+
+    function addHeroCandidateRow(entry) {
+        ensureRowStyles();
+        var row = document.createElement('div');
+        row.className = 'jellyplay-row';
+
+        appendField(row, strings.HeroItemId || 'Item id', {
+            tag: 'input', className: 'emby-input', placeholder: strings.HeroItemId || 'Item id (Jellyfin item id)',
+            value: (entry && entry.ItemId) || ''
+        });
+
+        appendField(row, strings.HeroHeadline || 'Headline', {
+            tag: 'input', className: 'emby-input', placeholder: strings.HeroHeadline || 'Headline (optional)',
+            value: (entry && entry.Headline) || ''
+        });
+
+        appendField(row, strings.HeroSubhead || 'Subhead', {
+            tag: 'input', className: 'emby-input', placeholder: strings.HeroSubhead || 'Subhead (optional)',
+            value: (entry && entry.Subhead) || ''
+        });
+
+        appendField(row, strings.HeroWeight || 'Weight', {
+            tag: 'input', className: 'emby-input', type: 'number', variant: 'fixed',
+            placeholder: strings.HeroWeight || 'Weight',
+            value: entry && entry.Weight !== undefined ? entry.Weight : 0
+        });
+
+        removeButton(row, refreshHeroEmptyLabel, 'CustomRowsRemove');
+        heroList().appendChild(row);
+        refreshHeroEmptyLabel();
+    }
+
+    function refreshHeroEmptyLabel() {
+        var empty = heroList().children.length === 0;
+        heroEmptyLabel().style.display = empty ? '' : 'none';
+    }
+
+    // Collects and validates the hero rows. Fully blank rows are dropped
+    // silently; a row with no item id cannot resolve client-side, so it is
+    // marked inline and the save aborts (nothing is written half-way).
+    function collectHeroCandidates() {
+        var candidates = [];
+        var valid = true;
+        var children = heroList().children;
+        for (var i = 0; i < children.length; i++) {
+            var row = children[i];
+            clearFieldErrors(row);
+            var inputs = row.querySelectorAll('input');
+            var itemId = inputs[0].value.trim();
+            var headline = inputs[1].value.trim();
+            var subhead = inputs[2].value.trim();
+            var weight = Number(inputs[3].value);
+
+            if (itemId.length === 0 && headline.length === 0 && subhead.length === 0 && inputs[3].value === '') {
+                continue;
+            }
+
+            if (itemId.length === 0) {
+                setFieldError(inputs[0], strings.HeroInvalidItemId || 'Every candidate needs a non-empty item id.');
+                valid = false;
+                continue;
+            }
+
+            candidates.push({
+                ItemId: itemId,
+                Headline: headline,
+                Subhead: subhead,
+                Weight: isNaN(weight) ? 0 : Math.floor(weight)
+            });
+        }
+
+        return valid ? candidates : null;
+    }
+
+    function loadHeroCandidates() {
+        return window.ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
+            heroList().innerHTML = '';
+            var candidates = (config && config.Hero && config.Hero.Candidates) || [];
+            candidates.forEach(function (entry) {
+                addHeroCandidateRow(entry);
+            });
+            refreshHeroEmptyLabel();
+        });
+    }
+
+    document.getElementById('jellyplayHeroAdd').addEventListener('click', function () {
+        addHeroCandidateRow(null);
+    });
+
+    document.getElementById('jellyplayHeroSave').addEventListener('click', function () {
+        var candidates = collectHeroCandidates();
+        if (candidates === null) {
+            alertFmt('EditorFixHighlighted', 'Fix the highlighted fields.');
+            return;
+        }
+        enqueueConfigWrite(function () {
+            // Round-trip the WHOLE config object: unrelated sections survive;
+            // only Hero.Candidates is touched (Hero.Enabled rides the form).
+            return window.ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
+                if (!config.Hero) { config.Hero = {}; }
+                config.Hero.Candidates = candidates;
+                return window.ApiClient.updatePluginConfiguration(PLUGIN_ID, config).then(function () {
+                    alertText('HeroSaved', 'Hero candidates saved.');
+                    return loadHeroCandidates();
+                });
+            }).catch(function (error) {
+                alertFmt('MsgLoadFailed', 'Failed to load: {0}', error && error.message || error);
+            });
+        });
+    });
+
     // ── backup / restore ──
 
     document.getElementById('jellyplayBackupDownload').addEventListener('click', function () {
@@ -1264,6 +1380,7 @@
             load();
             loadDefaults();
             loadRows();
+            loadHeroCandidates();
             loadAnimeOverrides();
         });
     });

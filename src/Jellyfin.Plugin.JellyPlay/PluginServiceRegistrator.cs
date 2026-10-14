@@ -82,6 +82,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton(_ => new Func<Configuration.AnimeConfig>(() => JellyPlayPlugin.Instance!.Configuration.Anime));
         serviceCollection.AddSingleton(_ => new Func<Configuration.CacheConfig>(() => JellyPlayPlugin.Instance!.Configuration.Cache));
         serviceCollection.AddSingleton(_ => new Func<Configuration.RowsConfig>(() => JellyPlayPlugin.Instance!.Configuration.Rows));
+        serviceCollection.AddSingleton(_ => new Func<Configuration.HeroConfig>(() => JellyPlayPlugin.Instance!.Configuration.Hero));
 
         // Push notifications (plugin is the push server; fire-and-forget).
         // FcmTokenProvider mints OAuth2 tokens for the fcm transport from the

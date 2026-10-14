@@ -14,15 +14,20 @@ namespace Jellyfin.Plugin.JellyPlay.Api;
 [Route(JellyPlayContract.RoutePrefix)]
 public class RowsController : JellyPlayControllerBase
 {
+    /// <summary>Serve-order cap for the curated hero — the hero is a small rotation pool, not a row.</summary>
+    private const int MaxHeroCandidates = 10;
+
     private readonly CustomRowsService _rows;
     private readonly SeasonalService _seasonal;
     private readonly Func<Configuration.RowsConfig> _config;
+    private readonly Func<Configuration.HeroConfig> _hero;
 
-    public RowsController(CustomRowsService rows, SeasonalService seasonal, Func<Configuration.RowsConfig> config)
+    public RowsController(CustomRowsService rows, SeasonalService seasonal, Func<Configuration.RowsConfig> config, Func<Configuration.HeroConfig> hero)
     {
         _rows = rows;
         _seasonal = seasonal;
         _config = config;
+        _hero = hero;
     }
 
     /// <summary>
@@ -61,5 +66,27 @@ public class RowsController : JellyPlayControllerBase
     {
         var result = await _seasonal.GetSeasonalRow(keyword);
         return result is null ? NotFound() : JellyPlayResponses.Camel(result);
+    }
+
+    /// <summary>
+    /// The admin-curated hero billboards (the `hero` feature): candidates in
+    /// serve order — weight descending, config order breaking ties (the LINQ
+    /// sort is stable, so an equal-weight list is exactly the authored order).
+    /// Item ids only, no image payload: clients resolve them locally via
+    /// `/Items?Ids=`, so art and metadata are always the client's own library
+    /// read and an id the library no longer knows simply drops client-side.
+    /// Blank ids never serve — they can never resolve.
+    /// </summary>
+    [HttpGet("hero")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public IActionResult GetHero()
+    {
+        var candidates = _hero().Candidates
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate.ItemId))
+            .OrderByDescending(candidate => candidate.Weight)
+            .Take(MaxHeroCandidates)
+            .Select(candidate => new { candidate.ItemId, candidate.Headline, candidate.Subhead, candidate.Weight })
+            .ToList();
+        return JellyPlayResponses.Camel(new { candidates });
     }
 }

@@ -718,9 +718,72 @@
         },
         {
             "ns": "prefs",
+            "key": "home_hero_video_enabled",
+            "label": "Home Hero Video Enabled",
+            "description": "",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "home_hero_video_tv_enabled",
+            "label": "Home Hero Video Tv Enabled",
+            "description": "",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
             "key": "home_backdrop_enabled",
             "label": "Home Backdrop",
             "description": "Blur the hero artwork as an ambient background",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "home_focus_backdrop",
+            "label": "Home Focus Backdrop",
+            "description": "",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "home_stats_card",
+            "label": "Home Stats Card",
+            "description": "",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "home_genre_rail",
+            "label": "Home Genre Rail",
+            "description": "",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "home_presence_chips",
+            "label": "Home Presence Chips",
+            "description": "",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "home_new_section_announcements",
+            "label": "Home New Section Announcements",
+            "description": "",
             "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": true
@@ -792,6 +855,15 @@
         },
         {
             "ns": "prefs",
+            "key": "home_layout_autopush",
+            "label": "Home Layout Autopush",
+            "description": "",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
             "key": "continue_watching_click_behavior",
             "label": "Continue Watching Tap",
             "description": "Resume playback or open details when tapping a Continue Watching tile",
@@ -847,6 +919,42 @@
         },
         {
             "ns": "prefs",
+            "key": "show_quality_badges",
+            "label": "Show Quality Badges",
+            "description": "",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "show_new_badges",
+            "label": "Show New Badges",
+            "description": "",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "home_trickplay_preview",
+            "label": "Home Trickplay Preview",
+            "description": "",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "anti_spoiler_home",
+            "label": "Anti Spoiler Home",
+            "description": "",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
             "key": "merge_continue_watching_next_up",
             "label": "Merge Continue & Next Up",
             "description": "Combine Next Up items into the Continue Watching row",
@@ -884,6 +992,15 @@
         },
         {
             "ns": "prefs",
+            "key": "home_cw_exclude_active_sessions",
+            "label": "Home Cw Exclude Active Sessions",
+            "description": "",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
             "key": "next_up_excluded_series_ids",
             "label": "Hidden from Next Up",
             "description": "View and restore series excluded from the Next Up row",
@@ -905,6 +1022,40 @@
             "description": "",
             "group": "Home & discovery",
             "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "my_media_hidden_library_ids",
+            "label": "Hidden libraries",
+            "description": "View and restore libraries excluded from the My Media row",
+            "group": "Home & discovery",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "theme_music_muted_series_ids",
+            "label": "Theme Music Muted Series Ids",
+            "description": "",
+            "group": "Home & discovery",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "home_last_visit_epoch_ms",
+            "label": "Home Last Visit Epoch Ms",
+            "description": "",
+            "group": "Home & discovery",
+            "valueType": "number",
+            "defaultValue": 0.0
+        },
+        {
+            "ns": "prefs",
+            "key": "home_announced_version",
+            "label": "Home Announced Version",
+            "description": "",
+            "group": "Home & discovery",
+            "valueType": "number",
+            "defaultValue": 0
         },
         {
             "ns": "prefs",
@@ -1162,6 +1313,15 @@
             "key": "cinema_mode_enabled",
             "label": "Cinema Mode",
             "description": "Play pre-roll intros before the main feature",
+            "group": "Video player",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "play_trailer_before_movie",
+            "label": "Play Trailer Before Movie",
+            "description": "Queue a trailer ahead of the feature when one is available",
             "group": "Video player",
             "valueType": "boolean",
             "defaultValue": false

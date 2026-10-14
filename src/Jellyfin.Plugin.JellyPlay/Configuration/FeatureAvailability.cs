@@ -26,6 +26,7 @@ public static class FeatureAvailability
             [JellyPlayContract.Features.Ratings] = c => c.Ratings.Enabled(),
             [JellyPlayContract.Features.CustomRows] = c => c.Rows.Enabled,
             [JellyPlayContract.Features.SeasonalRows] = c => c.Rows.SeasonalEnabled,
+            [JellyPlayContract.Features.Hero] = c => c.Hero.Enabled,
             [JellyPlayContract.Features.AnimeMarkers] = c => c.Anime.Enabled,
             [JellyPlayContract.Features.Newsletter] = c => !string.IsNullOrEmpty(c.Newsletter.SmtpHost),
             [JellyPlayContract.Features.Push] = c => c.Push.Enabled,

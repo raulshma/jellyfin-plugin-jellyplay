@@ -48,6 +48,13 @@
                     </div>
 
                     <div class="verticalSection">
+                        <h3 class="sectionTitle" data-i18n="SectionHero">Hero billboard</h3>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label><input type="checkbox" is="emby-checkbox" id="HeroEnabled" /><span data-i18n="HeroEnabled">Enable curated hero (advertises the hero feature to clients)</span></label>
+                        </div>
+                    </div>
+
+                    <div class="verticalSection">
                         <h3 class="sectionTitle" data-i18n="SectionRatings">Ratings</h3>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="MdbListApiKey" data-i18n="RatingsMdbListKey">MDBList API key</label>
@@ -127,6 +134,17 @@
                 </div>
 
                 <div class="verticalSection" style="margin-top:2em">
+                    <h3 class="sectionTitle" data-i18n="SectionHeroCandidates">Hero candidates</h3>
+                    <p class="sectionDescription" data-i18n="HeroCandidatesDescription">The home hero billboards clients feature ahead of their local picks (clients with the hero feature enabled). Each candidate needs the Jellyfin item id; headline and subhead override the item's own title; higher weight serves first (config order breaks ties, max 10 serve).</p>
+                    <div id="jellyplayHeroList" class="jellyplay-rows"></div>
+                    <p class="sectionDescription" id="jellyplayHeroEmpty" data-i18n="HeroEmpty" style="display:none">No hero candidates configured — clients fall back to their local hero picks.</p>
+                    <div style="margin-top:0.75em">
+                        <button is="emby-button" type="button" id="jellyplayHeroAdd" class="raised emby-button"><span data-i18n="HeroAdd">Add candidate</span></button>
+                        <button is="emby-button" type="button" id="jellyplayHeroSave" class="raised button-submit emby-button"><span data-i18n="HeroSave">Save hero</span></button>
+                    </div>
+                </div>
+
+                <div class="verticalSection" style="margin-top:2em">
                     <h3 class="sectionTitle" data-i18n="SectionBackup">Backup &amp; restore</h3>
                     <button is="emby-button" type="button" id="jellyplayBackupDownload" class="raised emby-button"><span data-i18n="BackupDownload">Download backup</span></button>
                     <button is="emby-button" type="button" id="jellyplayBackupRestore" class="raised emby-button"><span data-i18n="BackupRestore">Restore backup…</span></button>
@@ -147,7 +165,7 @@
              every index.js change, or upgraded browsers keep running the old
              script indefinitely. -->
         <script type="text/javascript" src="configurationpage?name=JellyPlayCommon.js&amp;v=1"></script>
-        <script type="text/javascript" src="configurationpage?name=JellyPlay.js&amp;v=9"></script>
+        <script type="text/javascript" src="configurationpage?name=JellyPlay.js&amp;v=10"></script>
     </div>
 </body>
 </html>

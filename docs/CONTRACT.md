@@ -26,7 +26,7 @@ two.
 
 Feature keys: `settings-sync`, `device-profiles`, `admin-defaults`, `config-backup`,
 `events`, `messages`, `seerr-bridge`, `newsletter`, `ratings`, `custom-rows`,
-`seasonal-rows`, `anime-markers`, `recommendations`, `user-ratings`, `bookmarks`,
+`seasonal-rows`, `hero`, `anime-markers`, `recommendations`, `user-ratings`, `bookmarks`,
 `transcodes`, `push`, `analytics`.
 Keys are removed (not emptied) when the module is unconfigured (e.g. no Seerr URL/key).
 
@@ -504,6 +504,24 @@ native cards for those, deep-link/ex otherwise. Row sources: `letterboxd`,
 `imdb`, `mdblist`, `tmdb` (TMDB v3 `GET /list/{id}` using the ratings TMDB API
 key). All upstream fetches are circuit-broken — an open breaker answers from
 cache if present, otherwise 404.
+
+## Hero (`hero`)
+
+Admin-curated home hero billboards. Configuration-only authoring (the plugin
+config's `Hero:Candidates`, dashboard YAML editor; no separate API). Item ids
+only — clients resolve them against their own library (`/Items?Ids=` plugin-rows
+pattern), so art and metadata are always the client's local read and an id the
+library no longer knows simply drops.
+
+```
+GET jellyplay/hero → { candidates: [{itemId, headline?, subhead?, weight}] }
+```
+
+Candidates arrive in serve order: `weight` descending, config order breaking
+ties (stable sort — an equal-weight list is exactly the authored order),
+capped at 10. An empty/unconfigured list serves an empty `candidates` array.
+`headline`/`subhead` are optional overrides the client renders over the item's
+own metadata when present.
 
 ## Anime markers (`anime-markers`)
 

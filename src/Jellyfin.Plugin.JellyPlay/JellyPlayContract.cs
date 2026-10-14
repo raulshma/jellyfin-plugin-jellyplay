@@ -30,6 +30,7 @@ public static class JellyPlayContract
         public const string Ratings = "ratings";
         public const string CustomRows = "custom-rows";
         public const string SeasonalRows = "seasonal-rows";
+        public const string Hero = "hero";
         public const string AnimeMarkers = "anime-markers";
         public const string Recommendations = "recommendations";
         public const string UserRatings = "user-ratings";

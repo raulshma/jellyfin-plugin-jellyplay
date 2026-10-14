@@ -13,6 +13,8 @@ public class PluginConfiguration : BasePluginConfiguration
 
     public RowsConfig Rows { get; set; } = new();
 
+    public HeroConfig Hero { get; set; } = new();
+
     public AnimeConfig Anime { get; set; } = new();
 
     public NewsletterConfig Newsletter { get; set; } = new();
@@ -101,6 +103,35 @@ public class RowsConfig
     public bool SeasonalEnabled { get; set; } = true;
 
     public List<CustomRowDefinition> CustomRows { get; set; } = new();
+}
+
+public class HeroConfig
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Empty = the hero feature reports unconfigured to clients.</summary>
+    public List<HeroCandidateDefinition> Candidates { get; set; } = new();
+}
+
+/// <summary>
+/// One admin-authored hero billboard candidate (the `hero` feature). The item
+/// id is the only required field — clients resolve it against their own
+/// library (`/Items?Ids=`), so art and metadata are always the client's local
+/// read and an id the library no longer knows simply drops.
+/// </summary>
+public class HeroCandidateDefinition
+{
+    /// <summary>The Jellyfin item id this candidate features.</summary>
+    public string ItemId { get; set; } = string.Empty;
+
+    /// <summary>Optional headline override — replaces the item's own title when present.</summary>
+    public string? Headline { get; set; }
+
+    /// <summary>Optional subhead override — the billboard kicker rendered above the headline.</summary>
+    public string? Subhead { get; set; }
+
+    /// <summary>Serve-order weight (higher first; config order breaks ties).</summary>
+    public int Weight { get; set; }
 }
 
 /// <summary>An admin-defined home row resolved from an external list.</summary>
