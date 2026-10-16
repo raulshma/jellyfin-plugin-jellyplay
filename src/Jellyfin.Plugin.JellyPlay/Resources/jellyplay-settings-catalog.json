@@ -594,6 +594,24 @@
         },
         {
             "ns": "prefs",
+            "key": "spatial_audio_enabled",
+            "label": "Spatial Audio",
+            "description": "Advisory: keeps the engine's downmix and speaker cap out of the way so Android's spatial audio can engage (ExoPlayer, Android 12L+)",
+            "group": "Playback",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "spatial_audio_only_headphones",
+            "label": "Spatial Audio Only Headphones",
+            "description": "",
+            "group": "Playback",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
             "key": "frame_rate_matching",
             "label": "Frame Rate Matching",
             "description": "",
