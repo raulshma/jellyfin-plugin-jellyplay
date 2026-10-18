@@ -1718,6 +1718,98 @@
         },
         {
             "ns": "prefs",
+            "key": "preferred_subtitle_lang",
+            "label": "Preferred Subtitle Language",
+            "description": "Select default language for media subtitles",
+            "group": "Subtitles & language",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "subtitles_forced_only",
+            "label": "Forced Subtitles Only",
+            "description": "Show subtitles only when forced tracks are present",
+            "group": "Subtitles & language",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "preferred_audio_lang",
+            "label": "Preferred Audio Language",
+            "description": "Select default audio language track",
+            "group": "Subtitles & language",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "subtitle_preview_in_settings",
+            "label": "Subtitle Preview In Settings",
+            "description": "",
+            "group": "Subtitles & language",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "high_contrast_subtitles",
+            "label": "High-Contrast Subtitles",
+            "description": "Maximally legible subtitle style for accessibility",
+            "group": "Subtitles & language",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "hdr_subtitle_style_enabled",
+            "label": "HDR Subtitle Style",
+            "description": "Separate subtitle styling for HDR content",
+            "group": "Subtitles & language",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "subtitle_style",
+            "label": "Subtitle Style",
+            "description": "",
+            "group": "Subtitles & language",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "hdr_subtitle_style",
+            "label": "Hdr Subtitle Style",
+            "description": "",
+            "group": "Subtitles & language",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "subtitle_delay_by_item",
+            "label": "Subtitle Delay By Item",
+            "description": "",
+            "group": "Subtitles & language",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "track_selection_rules",
+            "label": "Track Selection Rules",
+            "description": "",
+            "group": "Subtitles & language",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "subtitle_style_presets",
+            "label": "Subtitle Style Presets",
+            "description": "",
+            "group": "Subtitles & language",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
             "key": "remember_volume_per_content_type",
             "label": "Remember Volume Per Content Type",
             "description": "Remember playback volume per content type (movie, episode, …).",
