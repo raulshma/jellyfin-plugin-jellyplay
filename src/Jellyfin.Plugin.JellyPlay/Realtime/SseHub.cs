@@ -384,6 +384,16 @@ public sealed class SseHub
             return null;
         }
 
+        // Buffered data beats the keepalive timer: WaitToReadAsync honors an
+        // already-elapsed window (throws OperationCanceledException) even when
+        // events are sitting in the channel, so a scheduler stall between
+        // CancelAfter and the await would report a quiet stream — a keepalive
+        // frame ordered ahead of an already-published event.
+        if (subscriber.Channel.Reader.TryRead(out var immediate))
+        {
+            return immediate;
+        }
+
         using var linked = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         linked.CancelAfter(timeout);
         try
@@ -398,8 +408,11 @@ public sealed class SseHub
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            // Keepalive window elapsed; the outer cancellation token is still live.
-            return null;
+            // Keepalive window elapsed; the outer cancellation token is still
+            // live. A publish may have raced the timer — re-check the buffer
+            // once before declaring the stream quiet.
+            subscriber.Channel.Reader.TryRead(out var late);
+            return late;
         }
     }
 
@@ -420,28 +433,49 @@ public sealed class SseHub
             return null;
         }
 
+        // Buffered data beats the keepalive timer — same rationale as the
+        // single-event seam above: an already-elapsed window must never hide
+        // events that are already queued.
+        var buffered = DrainBuffered(subscriber.Channel.Reader);
+        if (buffered is not null)
+        {
+            return buffered;
+        }
+
         using var linked = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         linked.CancelAfter(timeout);
         try
         {
-            if (!await subscriber.Channel.Reader.WaitToReadAsync(linked.Token).ConfigureAwait(false)
-                || !subscriber.Channel.Reader.TryRead(out var first))
+            if (!await subscriber.Channel.Reader.WaitToReadAsync(linked.Token).ConfigureAwait(false))
             {
                 return null;
             }
 
-            var events = new List<SseEvent> { first };
-            while (subscriber.Channel.Reader.TryRead(out var more))
-            {
-                events.Add(more);
-            }
-
-            return events;
+            return DrainBuffered(subscriber.Channel.Reader);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            // Keepalive window elapsed; the outer cancellation token is still live.
+            // Keepalive window elapsed; the outer cancellation token is still
+            // live. Re-check the buffer once — a publish may have raced the
+            // timer, and data wins over the keepalive frame.
+            return DrainBuffered(subscriber.Channel.Reader);
+        }
+    }
+
+    /// <summary>Reads every event buffered right now (null when none), so a publish burst drains as one batch.</summary>
+    private static IReadOnlyList<SseEvent>? DrainBuffered(ChannelReader<SseEvent> reader)
+    {
+        if (!reader.TryRead(out var first))
+        {
             return null;
         }
+
+        var events = new List<SseEvent> { first };
+        while (reader.TryRead(out var more))
+        {
+            events.Add(more);
+        }
+
+        return events;
     }
 }
