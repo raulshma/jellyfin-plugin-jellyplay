@@ -50,6 +50,32 @@ public class SseHubTests
     }
 
     [Fact]
+    public async Task BufferedEvent_IsReturnedEvenWhenTheWaitWindowAlreadyElapsed()
+    {
+        // WaitToReadAsync throws OperationCanceledException when the presented
+        // token is already canceled — even with events sitting in the channel.
+        // A scheduler stall between CancelAfter and the await must not make
+        // the writer emit a keepalive frame ahead of already-published data:
+        // buffered events are read before any cancellation state is touched.
+        var hub = new SseHub(NullLogger<SseHub>.Instance);
+        var id = hub.Subscribe("alice", "events");
+        hub.PublishAll("events", "new-media", "{\"x\":1}");
+
+        using var elapsed = new CancellationTokenSource();
+        elapsed.Cancel(); // the keepalive window is already gone
+
+        var evt = await hub.WaitForEventAsync(id, TimeSpan.FromMilliseconds(50), elapsed.Token);
+        Assert.NotNull(evt);
+        Assert.Equal("new-media", evt!.EventName);
+
+        hub.PublishAll("events", "new-media", "{\"x\":2}");
+        var batch = await hub.WaitForEventsAsync(id, TimeSpan.FromMilliseconds(50), elapsed.Token);
+        Assert.Equal("{\"x\":2}", Assert.Single(batch!).Data);
+
+        hub.Unsubscribe(id);
+    }
+
+    [Fact]
     public void Unsubscribe_StopsDelivery()
     {
         var hub = new SseHub(NullLogger<SseHub>.Instance);
