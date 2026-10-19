@@ -1104,15 +1104,6 @@
         },
         {
             "ns": "prefs",
-            "key": "home_ns_migrated",
-            "label": "Home Ns Migrated",
-            "description": "",
-            "group": "Home & discovery",
-            "valueType": "boolean",
-            "defaultValue": false
-        },
-        {
-            "ns": "prefs",
             "key": "video_seek_duration_ms",
             "label": "Seek Duration",
             "description": "Double-tap seek step duration in player",
