@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/raulshma/jellyfin-plugin-jellyplay/main/images/plugin.png",
     "versions": [
       {
+        "version": "0.11.5.0",
+        "changelog": "https://github.com/raulshma/jellyfin-plugin-jellyplay/releases/tag/v0.11.5.0",
+        "targetAbi": "10.11.11.0",
+        "sourceUrl": "https://github.com/raulshma/jellyfin-plugin-jellyplay/releases/download/v0.11.5.0/Jellyfin.Plugin.JellyPlay.zip",
+        "timestamp": "2026-10-20T01:39:08Z",
+        "checksum": "43ec02153ccaeac58925be8a61ecea7f"
+      },
+      {
         "version": "0.11.3.1",
         "changelog": "https://github.com/raulshma/jellyfin-plugin-jellyplay/releases/tag/v0.11.3.1",
         "targetAbi": "10.11.11.0",
