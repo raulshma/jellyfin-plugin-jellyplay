@@ -1122,6 +1122,15 @@
         },
         {
             "ns": "prefs",
+            "key": "skip_prompt_duration_ms",
+            "label": "Skip Button Duration",
+            "description": "How long the skip intro/segment button stays on screen",
+            "group": "Video player",
+            "valueType": "number",
+            "defaultValue": 10000.0
+        },
+        {
+            "ns": "prefs",
             "key": "video_hide_osd_on_pause",
             "label": "Hide OSD on Pause",
             "description": "Don't show the control overlay when pausing",
@@ -1720,6 +1729,15 @@
             "key": "subtitles_forced_only",
             "label": "Forced Subtitles Only",
             "description": "Show subtitles only when forced tracks are present",
+            "group": "Subtitles & language",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "show_only_preferred_subtitles",
+            "label": "Preferred Subtitles Only",
+            "description": "Show only subtitle tracks in your preferred languages",
             "group": "Subtitles & language",
             "valueType": "boolean",
             "defaultValue": false
