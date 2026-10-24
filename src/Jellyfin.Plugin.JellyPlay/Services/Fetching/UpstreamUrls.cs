@@ -46,6 +46,18 @@ public static class TmdbUrls
 }
 
 /// <summary>
+/// URL builders for the OMDb API — the awards enrichment source. Builders
+/// only, no I/O; the ratings module keeps its own breaker and key handling.
+/// </summary>
+public static class OmdbUrls
+{
+    private const string BaseUrl = "http://www.omdbapi.com";
+
+    /// <summary>One title's full record addressed by IMDb id (awards/box office/rating live here).</summary>
+    public static string Awards(string imdbId, string apiKey) => $"{BaseUrl}/?apikey={apiKey}&i={Uri.EscapeDataString(imdbId)}";
+}
+
+/// <summary>
 /// URL builders for the IMDb chart page — the one scraped source with a fixed
 /// address. Builders only, no I/O; the ratings module keeps its own breaker.
 /// </summary>

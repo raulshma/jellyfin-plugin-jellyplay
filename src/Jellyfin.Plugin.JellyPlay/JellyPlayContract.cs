@@ -28,6 +28,7 @@ public static class JellyPlayContract
         public const string SeerrBridge = "seerr-bridge";
         public const string Newsletter = "newsletter";
         public const string Ratings = "ratings";
+        public const string OmdbAwards = "omdb-awards";
         public const string CustomRows = "custom-rows";
         public const string SeasonalRows = "seasonal-rows";
         public const string Hero = "hero";

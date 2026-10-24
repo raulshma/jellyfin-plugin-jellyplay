@@ -91,6 +91,9 @@ public class RatingsConfig
 
     public string TmdbApiKey { get; set; } = string.Empty;
 
+    /// <summary>OMDb API key (the awards enrichment source). Server-held so clients never need it.</summary>
+    public string OmdbApiKey { get; set; } = string.Empty;
+
     public bool EnableImdbCharts { get; set; } = true;
 
     public int CacheTtlHours { get; set; } = 24;

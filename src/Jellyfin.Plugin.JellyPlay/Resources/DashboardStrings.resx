@@ -111,6 +111,9 @@
   <data name="RatingsTmdbKey" xml:space="preserve">
     <value>TMDB API key</value>
   </data>
+  <data name="RatingsOmdbKey" xml:space="preserve">
+    <value>OMDb API key</value>
+  </data>
 
   <data name="SectionNewsletter" xml:space="preserve">
     <value>Newsletter (SMTP)</value>

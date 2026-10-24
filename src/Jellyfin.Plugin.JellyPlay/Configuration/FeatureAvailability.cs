@@ -7,7 +7,9 @@ public static class ConfigurationExtensions
 {
     /// <summary>Ratings module is on when any rating source is configured.</summary>
     public static bool Enabled(this RatingsConfig config)
-        => !string.IsNullOrEmpty(config.MdbListApiKey) || !string.IsNullOrEmpty(config.TmdbApiKey);
+        => !string.IsNullOrEmpty(config.MdbListApiKey)
+            || !string.IsNullOrEmpty(config.TmdbApiKey)
+            || !string.IsNullOrEmpty(config.OmdbApiKey);
 }
 
 /// <summary>
@@ -24,6 +26,7 @@ public static class FeatureAvailability
             [JellyPlayContract.Features.SeerrBridge] = c =>
                 !string.IsNullOrEmpty(c.Seerr.ServerUrl) && !string.IsNullOrEmpty(c.Seerr.ApiKey),
             [JellyPlayContract.Features.Ratings] = c => c.Ratings.Enabled(),
+            [JellyPlayContract.Features.OmdbAwards] = c => !string.IsNullOrEmpty(c.Ratings.OmdbApiKey),
             [JellyPlayContract.Features.CustomRows] = c => c.Rows.Enabled,
             [JellyPlayContract.Features.SeasonalRows] = c => c.Rows.SeasonalEnabled,
             [JellyPlayContract.Features.Hero] = c => c.Hero.Enabled,

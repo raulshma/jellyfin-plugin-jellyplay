@@ -26,6 +26,9 @@ public static class CacheKeys
     /// <summary>TMDB next-episode-to-air for one series (was "tmdb:next:{id}").</summary>
     public static string TmdbNext(string tmdbId) => $"tmdb:next:{tmdbId}";
 
+    /// <summary>OMDb awards enrichment for one IMDb id.</summary>
+    public static string OmdbAwards(string imdbId) => $"omdb:awards:{imdbId}";
+
     /// <summary>IMDb top-250 chart snapshot (was "imdb:top250").</summary>
     public static string ImdbChart() => ImdbChart("top250");
 

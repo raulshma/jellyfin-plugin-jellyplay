@@ -25,7 +25,7 @@ the stock `GET /Items/{id}/Similar` returns the same scored list the
 two.
 
 Feature keys: `settings-sync`, `device-profiles`, `admin-defaults`, `config-backup`,
-`events`, `messages`, `seerr-bridge`, `newsletter`, `ratings`, `custom-rows`,
+`events`, `messages`, `seerr-bridge`, `newsletter`, `ratings`, `omdb-awards`, `custom-rows`,
 `seasonal-rows`, `hero`, `anime-markers`, `recommendations`, `user-ratings`, `bookmarks`,
 `transcodes`, `push`, `analytics`.
 Keys are removed (not emptied) when the module is unconfigured (e.g. no Seerr URL/key).
@@ -490,6 +490,19 @@ GET jellyplay/tmdb/seasonRatings?tmdbId=&seasonNumber=  → { season, episodes: 
 GET jellyplay/tmdb/nextEpisode?tmdbId=     → { name?, airDate? }
 GET jellyplay/imdb/charts                  → { chart: "top250", entries: [{rank, title, year?, imdbId?, rating?}], fetchedAt }
 ```
+
+## OMDb awards (`omdb-awards`)
+
+```
+GET jellyplay/omdb/awards?imdbId=          → { imdbId, awards?, boxOffice?, imdbRating? } | 404
+```
+
+The awards enrichment behind the client detail screen's awards badge, keyed by
+IMDb id. 404 when the OMDb API key is unconfigured (the MDBList no-key
+behavior) or the upstream has no usable data for the id (OMDb's HTTP-200
+`Response:"False"` error shape maps to a miss, not a fault). Cached per id
+under the shared ratings TTL; served through the same resilient-fetch /
+circuit-breaker chassis as the other ratings sources.
 
 ## Rows (`custom-rows`, `seasonal-rows`)
 

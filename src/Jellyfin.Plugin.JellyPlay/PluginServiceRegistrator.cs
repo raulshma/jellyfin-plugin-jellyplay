@@ -179,6 +179,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<MdbListService>();
         serviceCollection.AddSingleton<TmdbRatingsService>();
         serviceCollection.AddSingleton<ImdbChartsService>();
+        serviceCollection.AddSingleton<OmdbService>();
 
         // Rows
         serviceCollection.AddSingleton<CustomRowsService>();

@@ -237,6 +237,15 @@
         },
         {
             "ns": "prefs",
+            "key": "details_awards_badges_enabled",
+            "label": "Awards Badges",
+            "description": "Award badges on details pages",
+            "group": "Appearance",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
             "key": "haptics_enabled",
             "label": "Haptic Feedback",
             "description": "Enable vibration feedback for UI interactions",
@@ -471,6 +480,83 @@
         },
         {
             "ns": "prefs",
+            "key": "hdr_format_preference",
+            "label": "HDR Format Preference",
+            "description": "Prefer Dolby Vision, HDR10 or SDR output",
+            "group": "Playback",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "PREFER_DV_OVER_HDR10",
+                "SDR_ONLY",
+                "HDR10_ONLY",
+                "DOLBY_VISION_ONLY"
+            ],
+            "optionLabels": [
+                "Auto",
+                "Prefer Dv Over Hdr10",
+                "Sdr Only",
+                "Hdr10 Only",
+                "Dolby Vision Only"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "force_transcode_above_height",
+            "label": "Force transcode above resolution",
+            "description": "Transcode sources above a resolution cap even when direct play is possible",
+            "group": "Playback",
+            "valueType": "number",
+            "defaultValue": 0,
+            "min": 0.0
+        },
+        {
+            "ns": "prefs",
+            "key": "preferred_transcode_video_codec",
+            "label": "Preferred Transcode Video Codec",
+            "description": "The video codec used when the server transcodes",
+            "group": "Playback",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "H264",
+                "HEVC",
+                "AV1"
+            ],
+            "optionLabels": [
+                "Auto",
+                "H264",
+                "Hevc",
+                "Av1"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "preferred_transcode_audio_codec",
+            "label": "Preferred Transcode Audio Codec",
+            "description": "The audio codec used when the server transcodes",
+            "group": "Playback",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "AAC",
+                "AC3",
+                "EAC3",
+                "OPUS"
+            ],
+            "optionLabels": [
+                "Auto",
+                "Aac",
+                "Ac3",
+                "Eac3",
+                "Opus"
+            ]
+        },
+        {
+            "ns": "prefs",
             "key": "playback_mode",
             "label": "Playback Mode",
             "description": "",
@@ -683,6 +769,52 @@
         },
         {
             "ns": "prefs",
+            "key": "session_restore_mode",
+            "label": "Session Restore",
+            "description": "How unfinished playback resumes after the app relaunches",
+            "group": "Playback",
+            "valueType": "enum",
+            "defaultValue": "ASK",
+            "options": [
+                "OFF",
+                "ASK",
+                "AUTO"
+            ],
+            "optionLabels": [
+                "Off",
+                "Ask",
+                "Auto"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "offer_delete_after_playback_movies",
+            "label": "Delete Watched Movies Offer",
+            "description": "Prompt to delete movie files after playback",
+            "group": "Playback",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "offer_delete_after_playback_episodes",
+            "label": "Delete Watched Episodes Offer",
+            "description": "Prompt to delete episode files after playback",
+            "group": "Playback",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "custom_device_profile_json",
+            "label": "Custom Device Profile",
+            "description": "Advanced custom transcode profile JSON",
+            "group": "Playback",
+            "valueType": "string",
+            "defaultValue": ""
+        },
+        {
+            "ns": "prefs",
             "key": "pgs_subtitle_direct_play",
             "label": "Pgs Subtitle Direct Play",
             "description": "",
@@ -733,6 +865,38 @@
             "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "home_hero_style",
+            "label": "Home Hero Style",
+            "description": "Carousel, slideshow, detailed or TV slider hero",
+            "group": "Home & discovery",
+            "valueType": "enum",
+            "defaultValue": "CAROUSEL",
+            "options": [
+                "CAROUSEL",
+                "SLIDESHOW",
+                "DETAILED",
+                "TV_SLIDER"
+            ],
+            "optionLabels": [
+                "Carousel",
+                "Slideshow",
+                "Detailed",
+                "Tv Slider"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "home_hero_slideshow_interval_sec",
+            "label": "Hero Slideshow Interval",
+            "description": "Seconds each slideshow hero stays on screen",
+            "group": "Home & discovery",
+            "valueType": "number",
+            "defaultValue": 8,
+            "min": 3.0,
+            "max": 60.0
         },
         {
             "ns": "prefs",
@@ -1288,6 +1452,25 @@
         },
         {
             "ns": "prefs",
+            "key": "autoplay_episode_limit",
+            "label": "Autoplay Episode Limit",
+            "description": "Stop auto-playing after a set number of episodes",
+            "group": "Video player",
+            "valueType": "number",
+            "defaultValue": 0,
+            "min": 0.0
+        },
+        {
+            "ns": "prefs",
+            "key": "show_next_episode_details_after_finish",
+            "label": "Next Episode Details",
+            "description": "Show next episode details after an episode finishes",
+            "group": "Video player",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
             "key": "still_watching_mode",
             "label": "Still Watching Prompt",
             "description": "Confirm before continuing after several episodes or hours",
@@ -1427,6 +1610,25 @@
         },
         {
             "ns": "prefs",
+            "key": "trickplay_mode",
+            "label": "Trickplay Style",
+            "description": "Bubble, film strip or fullscreen seek previews",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "BUBBLE",
+            "options": [
+                "BUBBLE",
+                "FILMSTRIP",
+                "FULLSCREEN"
+            ],
+            "optionLabels": [
+                "Bubble",
+                "Filmstrip",
+                "Fullscreen"
+            ]
+        },
+        {
+            "ns": "prefs",
             "key": "video_episode_browser_enabled",
             "label": "In-Player Episode Browser",
             "description": "Show inline list of episodes during playback",
@@ -1493,6 +1695,15 @@
         },
         {
             "ns": "prefs",
+            "key": "ambient_blur_enabled",
+            "label": "Ambient Blur",
+            "description": "Blur the backdrop behind the paused player",
+            "group": "Video player",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
             "key": "tv_zoom_mode_percent",
             "label": "TV Zoom Mode",
             "description": "Crop/zoom video to fill the screen",
@@ -1502,9 +1713,69 @@
         },
         {
             "ns": "prefs",
+            "key": "bitmap_subtitle_scale_mode",
+            "label": "Bitmap Subtitle Scaling",
+            "description": "How bitmap subtitles stretch to the video frame",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "FIT",
+            "options": [
+                "FIT",
+                "STRETCH",
+                "COVER"
+            ],
+            "optionLabels": [
+                "Fit",
+                "Stretch",
+                "Cover"
+            ]
+        },
+        {
+            "ns": "prefs",
             "key": "incognito_mode_enabled",
             "label": "Incognito Mode",
             "description": "Bypasses reporting watching progress/history to server",
+            "group": "Video player",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "pause_screensaver_mode",
+            "label": "Pause Screensaver",
+            "description": "Clock, logo or fade-to-black on long pauses",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "OFF",
+            "options": [
+                "OFF",
+                "CLOCK",
+                "LOGO",
+                "FADE_TO_BLACK"
+            ],
+            "optionLabels": [
+                "Off",
+                "Clock",
+                "Logo",
+                "Fade To Black"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "pause_screensaver_after_minutes",
+            "label": "Pause Screensaver Delay",
+            "description": "Minutes of pause before the screensaver starts",
+            "group": "Video player",
+            "valueType": "number",
+            "defaultValue": 5,
+            "min": 1.0,
+            "max": 60.0
+        },
+        {
+            "ns": "prefs",
+            "key": "pause_details_enabled",
+            "label": "Pause Details",
+            "description": "Media details on the pause screen",
             "group": "Video player",
             "valueType": "boolean",
             "defaultValue": false
@@ -1565,6 +1836,92 @@
             "group": "Video player",
             "valueType": "boolean",
             "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "next_up_button_preroll_sec",
+            "label": "Next Up Preroll",
+            "description": "Seconds before the end the Next Up button appears",
+            "group": "Video player",
+            "valueType": "number",
+            "defaultValue": 30,
+            "min": 5.0,
+            "max": 120.0
+        },
+        {
+            "ns": "prefs",
+            "key": "mpv_tone_mapping_curve",
+            "label": "Tone Mapping Curve",
+            "description": "The mpv HDR-to-SDR tone-mapping curve",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "BT_2390",
+                "BT_2446A",
+                "SPLINE",
+                "HABLE",
+                "CLIP",
+                "LINEAR"
+            ],
+            "optionLabels": [
+                "Auto",
+                "Bt 2390",
+                "Bt 2446a",
+                "Spline",
+                "Hable",
+                "Clip",
+                "Linear"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "mpv_deband_mode",
+            "label": "Debanding Level",
+            "description": "Off, light, medium or heavy mpv debanding",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "OFF",
+            "options": [
+                "OFF",
+                "LIGHT",
+                "MEDIUM",
+                "HEAVY"
+            ],
+            "optionLabels": [
+                "Off",
+                "Light",
+                "Medium",
+                "Heavy"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "mpv_motion_interpolation",
+            "label": "Motion Interpolation",
+            "description": "Smooth lower frame rates with mpv motion interpolation",
+            "group": "Video player",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "mpv_input_conf",
+            "label": "Custom Input Bindings",
+            "description": "Custom mpv key bindings (input.conf)",
+            "group": "Video player",
+            "valueType": "string",
+            "defaultValue": ""
+        },
+        {
+            "ns": "prefs",
+            "key": "mpv_custom_buttons",
+            "label": "Custom Player Buttons",
+            "description": "JSON list of custom player buttons (mpv)",
+            "group": "Video player",
+            "valueType": "string",
+            "defaultValue": ""
         },
         {
             "ns": "prefs",

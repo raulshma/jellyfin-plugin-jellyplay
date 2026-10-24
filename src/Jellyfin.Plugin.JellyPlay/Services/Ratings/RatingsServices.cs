@@ -112,6 +112,82 @@ public sealed class MdbListService
     private int TtlHours => _config().CacheTtlHours;
 }
 
+/// <summary>OMDb awards enrichment for one title: the awards line, box office and the IMDb rating.</summary>
+public sealed record OmdbAwardsResult(string ImdbId, string? Awards, string? BoxOffice, string? ImdbRating);
+
+/// <summary>
+/// OMDb awards enrichment (awards line, box office, IMDb rating) with the
+/// server-held API key. Cached per IMDb id; no key = unconfigured (the
+/// endpoint 404s exactly like MDBList without a key). OMDb answers unknown
+/// ids and over-limit keys with a 200 <c>Response:"False"</c> body — that is
+/// a miss, not a fault, so it never trips the breaker.
+/// </summary>
+public sealed class OmdbService
+{
+    private readonly ResilientFetcher _fetcher;
+    private readonly CircuitBreaker _breaker;
+    private readonly Func<RatingsConfig> _config;
+
+    public OmdbService(ResilientFetcher fetcher, Func<RatingsConfig> config, TimeProvider? clock = null)
+    {
+        _fetcher = fetcher;
+        _config = config;
+        _breaker = new(clock: clock);
+    }
+
+    public bool IsConfigured => !string.IsNullOrEmpty(ApiKey);
+
+    private string ApiKey => _config().OmdbApiKey;
+
+    public async Task<OmdbAwardsResult?> GetAwards(string imdbId)
+    {
+        if (!IsConfigured || string.IsNullOrEmpty(imdbId))
+        {
+            return null;
+        }
+
+        return await _fetcher.GetOrFetchAsync(
+            CacheKeys.OmdbAwards(imdbId),
+            TtlPolicy.Ratings(TtlHours),
+            (client, cancellationToken) => FetchAwardsAsync(client, imdbId, ApiKey, cancellationToken),
+            _breaker,
+            failureLogLevel: LogLevel.Debug); // a dead upstream silently drops the badge — Debug-worthy
+    }
+
+    private static async Task<OmdbAwardsResult?> FetchAwardsAsync(HttpClient client, string imdbId, string apiKey, CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync(OmdbUrls.Awards(imdbId, apiKey), cancellationToken);
+        response.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        var root = doc.RootElement;
+
+        // OMDb's error shape: HTTP 200 with {"Response":"False","Error":"…"}.
+        if (root.TryGetProperty("Response", out var responseFlag) && responseFlag.GetString() == "False")
+        {
+            return null;
+        }
+
+        string? ReadString(string property)
+            => root.TryGetProperty(property, out var value)
+                && value.ValueKind == JsonValueKind.String
+                && value.GetString() is { Length: > 0 } text
+                ? text
+                : null;
+
+        var awards = ReadString("Awards");
+        var boxOffice = ReadString("BoxOffice");
+        var imdbRating = ReadString("imdbRating");
+        if (awards is null && boxOffice is null && imdbRating is null)
+        {
+            return null;
+        }
+
+        return new OmdbAwardsResult(imdbId, awards, boxOffice, imdbRating);
+    }
+
+    private int TtlHours => _config().CacheTtlHours;
+}
+
 /// <summary>TMDB episode/season ratings + next-episode air date.</summary>
 public sealed class TmdbRatingsService
 {

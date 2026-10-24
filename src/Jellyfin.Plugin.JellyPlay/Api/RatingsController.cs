@@ -15,12 +15,14 @@ public class RatingsController : JellyPlayControllerBase
     private readonly MdbListService _mdbList;
     private readonly TmdbRatingsService _tmdb;
     private readonly ImdbChartsService _imdb;
+    private readonly OmdbService _omdb;
 
-    public RatingsController(MdbListService mdbList, TmdbRatingsService tmdb, ImdbChartsService imdb)
+    public RatingsController(MdbListService mdbList, TmdbRatingsService tmdb, ImdbChartsService imdb, OmdbService omdb)
     {
         _mdbList = mdbList;
         _tmdb = tmdb;
         _imdb = imdb;
+        _omdb = omdb;
     }
 
     [HttpGet("mdblist/ratings")]
@@ -68,5 +70,14 @@ public class RatingsController : JellyPlayControllerBase
     {
         var chart = await _imdb.GetTop250();
         return chart is null ? NotFound() : JellyPlayResponses.Camel(chart);
+    }
+
+    [HttpGet("omdb/awards")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetOmdbAwards([FromQuery, Required] string imdbId)
+    {
+        var result = await _omdb.GetAwards(imdbId);
+        return result is null ? NotFound() : JellyPlayResponses.Camel(result);
     }
 }

@@ -19,6 +19,7 @@
         WebhookSecret: 'Seerr.WebhookSecret',
         MdbListApiKey: 'Ratings.MdbListApiKey',
         TmdbApiKey: 'Ratings.TmdbApiKey',
+        OmdbApiKey: 'Ratings.OmdbApiKey',
         SmtpHost: 'Newsletter.SmtpHost',
         SmtpPort: 'Newsletter.SmtpPort',
         SmtpUsername: 'Newsletter.SmtpUsername',
