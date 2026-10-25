@@ -75,11 +75,25 @@ public sealed class ClientSettingsCatalogTests
         Assert.All(bounded, descriptor =>
             Assert.True(descriptor.ValueType == "number", descriptor.Id + ": range on a non-number row"));
 
-        // The audited clamps (downmix 0–12 dB, the rest floor-at-zero). A new
-        // bound must be evidence-backed in the client's spec declarations —
-        // extend this set in the same commit as the artifact regen.
+        // The audited clamps, mirrored from the client's spec declarations
+        // (downmix 0–12 dB, slideshow 3–60 s, screensaver pause 1–60 min,
+        // preroll 5–120 s; the rest floor-at-zero). A new bound must be
+        // evidence-backed in the client's spec declarations — extend this set
+        // in the same commit as the artifact regen.
         Assert.Equal(
-            new HashSet<string> { "downmix_boost_db", "next_up_max_days", "video_pass_out_protection_hours", "video_skip_back_on_resume_ms", "still_watching_episode_threshold" },
+            new HashSet<string>
+            {
+                "downmix_boost_db",
+                "next_up_max_days",
+                "video_pass_out_protection_hours",
+                "video_skip_back_on_resume_ms",
+                "still_watching_episode_threshold",
+                "force_transcode_above_height",
+                "home_hero_slideshow_interval_sec",
+                "autoplay_episode_limit",
+                "pause_screensaver_after_minutes",
+                "next_up_button_preroll_sec"
+            },
             bounded.Select(s => s.Key).ToHashSet());
     }
 
