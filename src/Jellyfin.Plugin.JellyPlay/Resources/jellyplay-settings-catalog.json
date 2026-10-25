@@ -559,7 +559,7 @@
             "ns": "prefs",
             "key": "playback_mode",
             "label": "Playback Mode",
-            "description": "",
+            "description": "Auto, Force Direct Play, or Force Transcode — the delivery method for streams",
             "group": "Playback",
             "valueType": "string"
         },
