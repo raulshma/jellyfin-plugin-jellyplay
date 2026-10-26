@@ -1306,7 +1306,7 @@
             "ns": "prefs",
             "key": "video_resume_on_headset_plug",
             "label": "Resume When Headphones Reconnect",
-            "description": "Resume when headphones are plugged back in after the unplug auto-pause",
+            "description": "Resume when headphones reconnect after the unplug auto-pause (wired or Bluetooth)",
             "group": "Video player",
             "valueType": "boolean",
             "defaultValue": false
