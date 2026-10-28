@@ -2176,19 +2176,1661 @@
         },
         {
             "ns": "prefs",
-            "key": "remember_volume_per_content_type",
-            "label": "Remember Volume Per Content Type",
-            "description": "Remember playback volume per content type (movie, episode, …).",
-            "group": "General",
+            "key": "dialogue_boost_enabled",
+            "label": "Dialogue Boost",
+            "description": "Enhance spoken speech frequencies in video tracks",
+            "group": "Audio effects",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "dialogue_boost_strength",
+            "label": "Dialogue Boost Strength",
+            "description": "Level of dialogue amplification",
+            "group": "Audio effects",
+            "valueType": "enum",
+            "defaultValue": "MODERATE",
+            "options": [
+                "NONE",
+                "LOW",
+                "MODERATE",
+                "HIGH"
+            ],
+            "optionLabels": [
+                "None",
+                "Low",
+                "Moderate",
+                "High"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "equalizer_enabled",
+            "label": "Equalizer (EQ)",
+            "description": "Configure 10-band audio equalizer and presets",
+            "group": "Audio effects",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "equalizer_settings",
+            "label": "Equalizer Settings",
+            "description": "",
+            "group": "Audio effects",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "equalizer_preset",
+            "label": "Equalizer Preset",
+            "description": "Quick equalizer preset selection",
+            "group": "Audio effects",
+            "valueType": "enum",
+            "defaultValue": "FLAT",
+            "options": [
+                "FLAT",
+                "BASS_BOOST",
+                "TREBLE_BOOST",
+                "ROCK",
+                "POP",
+                "JAZZ",
+                "CLASSICAL",
+                "ELECTRONIC",
+                "HIP_HOP",
+                "VOCAL",
+                "ACOUSTIC",
+                "PODCAST",
+                "LATIN",
+                "CUSTOM"
+            ],
+            "optionLabels": [
+                "Flat",
+                "Bass Boost",
+                "Treble Boost",
+                "Rock",
+                "Pop",
+                "Jazz",
+                "Classical",
+                "Electronic",
+                "Hip Hop",
+                "Vocal",
+                "Acoustic",
+                "Podcast",
+                "Latin",
+                "Custom"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "night_mode_enabled",
+            "label": "Night Mode",
+            "description": "Lower intensity audio profile at night",
+            "group": "Audio effects",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "night_mode_strength",
+            "label": "Night Mode Strength",
+            "description": "Intensity of night mode audio profile",
+            "group": "Audio effects",
+            "valueType": "enum",
+            "defaultValue": "MODERATE",
+            "options": [
+                "NONE",
+                "LOW",
+                "MODERATE",
+                "HIGH"
+            ],
+            "optionLabels": [
+                "None",
+                "Low",
+                "Moderate",
+                "High"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "bass_boost_enabled",
+            "label": "Bass Boost Strength",
+            "description": "Amplify low-end bass frequencies",
+            "group": "Audio effects",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "bass_boost_strength",
+            "label": "Bass Boost Strength",
+            "description": "Intensity of low-end bass boost",
+            "group": "Audio effects",
+            "valueType": "enum",
+            "defaultValue": "MODERATE",
+            "options": [
+                "NONE",
+                "LOW",
+                "MODERATE",
+                "HIGH"
+            ],
+            "optionLabels": [
+                "None",
+                "Low",
+                "Moderate",
+                "High"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "virtualizer_enabled",
+            "label": "Virtualizer / Spatial Audio",
+            "description": "Simulate multi-channel spatial audio field",
+            "group": "Audio effects",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "virtualizer_strength",
+            "label": "Virtualizer Strength",
+            "description": "Intensity of spatial audio virtualizer",
+            "group": "Audio effects",
+            "valueType": "number",
+            "defaultValue": 500
+        },
+        {
+            "ns": "prefs",
+            "key": "reverb_preset",
+            "label": "Reverb Preset",
+            "description": "Simulate environmental acoustics (e.g. Hall, Room, Concert)",
+            "group": "Audio effects",
+            "valueType": "enum",
+            "defaultValue": "NONE",
+            "options": [
+                "NONE",
+                "SMALL_ROOM",
+                "MEDIUM_ROOM",
+                "LARGE_ROOM",
+                "MEDIUM_HALL",
+                "LARGE_HALL",
+                "PLATE"
+            ],
+            "optionLabels": [
+                "None",
+                "Small Room",
+                "Medium Room",
+                "Large Room",
+                "Medium Hall",
+                "Large Hall",
+                "Plate"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "lr_balance",
+            "label": "L/R Balance",
+            "description": "Adjust audio balance between left and right channels",
+            "group": "Audio effects",
+            "valueType": "number",
+            "defaultValue": 0.0
+        },
+        {
+            "ns": "prefs",
+            "key": "auto_eq_by_genre",
+            "label": "Auto-EQ by Genre",
+            "description": "Automatically apply EQ preset based on genre",
+            "group": "Audio effects",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "pitch_semitones",
+            "label": "Pitch Shift",
+            "description": "Shift audio pitch in semitones",
+            "group": "Audio effects",
+            "valueType": "number",
+            "defaultValue": 0.0
+        },
+        {
+            "ns": "prefs",
+            "key": "volume_boost_enabled",
+            "label": "Volume Boost Gain",
+            "description": "Add software pre-amplifier volume gain",
+            "group": "Audio effects",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "volume_boost_gain",
+            "label": "Volume Boost Gain",
+            "description": "Loudness boost level",
+            "group": "Audio effects",
+            "valueType": "number",
+            "defaultValue": 0
+        },
+        {
+            "ns": "prefs",
+            "key": "mpv_config",
+            "label": "Mpv Config",
+            "description": "",
+            "group": "Player engines",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "libvlc_config",
+            "label": "Libvlc Config",
+            "description": "",
+            "group": "Player engines",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "exo_config",
+            "label": "Exo Config",
+            "description": "",
+            "group": "Player engines",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "media_stream_selections",
+            "label": "Media Stream Selections",
+            "description": "",
+            "group": "Player engines",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "video_effects_selections",
+            "label": "Video Effects Selections",
+            "description": "",
+            "group": "Player engines",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "notifications_enabled",
+            "label": "Notifications Check Frequency",
+            "description": "Enable library background updates checking frequency",
+            "group": "Notifications & newsletter",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "notifications_check_frequency",
+            "label": "Notification Check Frequency",
+            "description": "How often to check for new media",
+            "group": "Notifications & newsletter",
+            "valueType": "enum",
+            "defaultValue": "EVERY_6_HOURS",
+            "options": [
+                "EVERY_HOUR",
+                "EVERY_3_HOURS",
+                "EVERY_6_HOURS",
+                "EVERY_12_HOURS",
+                "EVERY_24_HOURS"
+            ],
+            "optionLabels": [
+                "Every Hour",
+                "Every 3 Hours",
+                "Every 6 Hours",
+                "Every 12 Hours",
+                "Every 24 Hours"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "notifications_quiet_hours_enabled",
+            "label": "Quiet Hours",
+            "description": "Suppress notifications during set hours",
+            "group": "Notifications & newsletter",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "notifications_quiet_hours_start",
+            "label": "Quiet Hours Start",
+            "description": "Begin quiet hours",
+            "group": "Notifications & newsletter",
+            "valueType": "number",
+            "defaultValue": 1380
+        },
+        {
+            "ns": "prefs",
+            "key": "notifications_quiet_hours_end",
+            "label": "Quiet Hours End",
+            "description": "End quiet hours",
+            "group": "Notifications & newsletter",
+            "valueType": "number",
+            "defaultValue": 420
+        },
+        {
+            "ns": "prefs",
+            "key": "notifications_sound_enabled",
+            "label": "Notification Sound",
+            "description": "Play notification sound",
+            "group": "Notifications & newsletter",
             "valueType": "boolean",
             "defaultValue": true
         },
         {
             "ns": "prefs",
+            "key": "notifications_vibrate_enabled",
+            "label": "Notification Vibrate",
+            "description": "Vibrate on notification",
+            "group": "Notifications & newsletter",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "notifications_lights_enabled",
+            "label": "Notification Lights",
+            "description": "Pulse notification light on supported devices",
+            "group": "Notifications & newsletter",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "notifications_max_per_check",
+            "label": "Max Notifications Per Check",
+            "description": "Maximum items per notification batch",
+            "group": "Notifications & newsletter",
+            "valueType": "number",
+            "defaultValue": 10
+        },
+        {
+            "ns": "prefs",
+            "key": "notifications_library_configs",
+            "label": "Notification Libraries",
+            "description": "Choose which libraries trigger notifications",
+            "group": "Notifications & newsletter",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "notifications_new_episodes_enabled",
+            "label": "New Episode Notifications",
+            "description": "Get a dedicated channel for newly added episodes",
+            "group": "Notifications & newsletter",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "notifications_series_configs",
+            "label": "Series Notifications",
+            "description": "Manage the series you get new-episode alerts for",
+            "group": "Notifications & newsletter",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "newsletter_enabled",
+            "label": "Enable Newsletter",
+            "description": "Enable periodic newsletter digest",
+            "group": "Notifications & newsletter",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "newsletter_day_of_week",
+            "label": "Newsletter Delivery Day",
+            "description": "Day of the week to receive the newsletter",
+            "group": "Notifications & newsletter",
+            "valueType": "number",
+            "defaultValue": 7
+        },
+        {
+            "ns": "prefs",
+            "key": "newsletter_last_viewed_ms",
+            "label": "Newsletter Last Viewed Ms",
+            "description": "",
+            "group": "Notifications & newsletter",
+            "valueType": "number",
+            "defaultValue": 0.0
+        },
+        {
+            "ns": "prefs",
+            "key": "enabled_newsletter_sections",
+            "label": "Newsletter Layout & Config",
+            "description": "Choose which sections appear in the newsletter",
+            "group": "Notifications & newsletter",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "newsletter_section_order",
+            "label": "Newsletter Section Order",
+            "description": "",
+            "group": "Notifications & newsletter",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_reading_directions",
+            "label": "Reader Reading Directions",
+            "description": "",
+            "group": "Reader",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_reading_layouts",
+            "label": "Reader Reading Layouts",
+            "description": "",
+            "group": "Reader",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_theme",
+            "label": "Reader Theme",
+            "description": "",
+            "group": "Reader",
+            "valueType": "enum",
+            "defaultValue": "DARK",
+            "options": [
+                "DARK",
+                "SEPIA",
+                "LIGHT"
+            ],
+            "optionLabels": [
+                "Dark",
+                "Sepia",
+                "Light"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_font_size_px",
+            "label": "Reader Font Size Px",
+            "description": "",
+            "group": "Reader",
+            "valueType": "number",
+            "defaultValue": 17,
+            "min": 12.0,
+            "max": 32.0
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_font_family",
+            "label": "Reader Font Family",
+            "description": "",
+            "group": "Reader",
+            "valueType": "enum",
+            "defaultValue": "SYSTEM",
+            "options": [
+                "SYSTEM",
+                "SERIF",
+                "SANS",
+                "MONO"
+            ],
+            "optionLabels": [
+                "System",
+                "Serif",
+                "Sans",
+                "Mono"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_line_height_pct",
+            "label": "Reader Line Height Pct",
+            "description": "",
+            "group": "Reader",
+            "valueType": "number",
+            "defaultValue": 160,
+            "min": 100.0,
+            "max": 200.0
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_margin_pct",
+            "label": "Reader Margin Pct",
+            "description": "",
+            "group": "Reader",
+            "valueType": "number",
+            "defaultValue": 8,
+            "min": 0.0,
+            "max": 100.0
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_justify",
+            "label": "Reader Justify",
+            "description": "",
+            "group": "Reader",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_scroll_mode",
+            "label": "Reader Scroll Mode",
+            "description": "",
+            "group": "Reader",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_brightness_pct",
+            "label": "Reader Brightness Pct",
+            "description": "",
+            "group": "Reader",
+            "valueType": "number",
+            "defaultValue": 100,
+            "min": 0.0,
+            "max": 100.0
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_volume_key_paging",
+            "label": "Reader Volume Key Paging",
+            "description": "",
+            "group": "Reader",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_animated_page_turns",
+            "label": "Reader Animated Page Turns",
+            "description": "",
+            "group": "Reader",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_toc_rail",
+            "label": "Reader Toc Rail",
+            "description": "",
+            "group": "Reader",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_speech_rate",
+            "label": "Reader Speech Rate",
+            "description": "",
+            "group": "Reader",
+            "valueType": "number",
+            "defaultValue": 100,
+            "min": 50.0,
+            "max": 200.0
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_speech_pitch",
+            "label": "Reader Speech Pitch",
+            "description": "",
+            "group": "Reader",
+            "valueType": "number",
+            "defaultValue": 100,
+            "min": 50.0,
+            "max": 200.0
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_reading_speed_wpm",
+            "label": "Reader Reading Speed Wpm",
+            "description": "",
+            "group": "Reader",
+            "valueType": "number",
+            "defaultValue": 238,
+            "min": 100.0,
+            "max": 1000.0
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_auto_scroll_speed_px",
+            "label": "Reader Auto Scroll Speed Px",
+            "description": "",
+            "group": "Reader",
+            "valueType": "number",
+            "defaultValue": 40,
+            "min": 20.0,
+            "max": 120.0
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_per_book_appearance",
+            "label": "Reader Per Book Appearance",
+            "description": "",
+            "group": "Reader",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "reader_last_cfis",
+            "label": "Reader Last Cfis",
+            "description": "",
+            "group": "Reader",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "library_view_mode",
+            "label": "Library View Mode",
+            "description": "",
+            "group": "Library",
+            "valueType": "enum",
+            "defaultValue": "GRID",
+            "options": [
+                "GRID",
+                "LIST",
+                "THUMB",
+                "MASONRY"
+            ],
+            "optionLabels": [
+                "Grid",
+                "List",
+                "Thumb",
+                "Masonry"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "default_library_sort_orders",
+            "label": "Default Library Sort Orders",
+            "description": "",
+            "group": "Library",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "library_view_modes",
+            "label": "Library View Modes",
+            "description": "",
+            "group": "Library",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "library_filters",
+            "label": "Library Filters",
+            "description": "",
+            "group": "Library",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "hide_episode_thumbnails",
+            "label": "Hide Episode Thumbnails",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "episodes_descending",
+            "label": "Episodes Descending",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "skip_specials",
+            "label": "Skip Specials",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "compact_episode_list",
+            "label": "Compact Episode List",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "show_detail_up_next",
+            "label": "Show Detail Up Next",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "show_missing_episodes",
+            "label": "Show Missing Episodes",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "library_poster_size",
+            "label": "Library Poster Size",
+            "description": "",
+            "group": "Library",
+            "valueType": "number",
+            "defaultValue": 1.0,
+            "min": 0.699999988079071,
+            "max": 1.399999976158142
+        },
+        {
+            "ns": "prefs",
+            "key": "prefer_logos",
+            "label": "Prefer Logos",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "library_group_by",
+            "label": "Library Group By",
+            "description": "",
+            "group": "Library",
+            "valueType": "enum",
+            "defaultValue": "NONE",
+            "options": [
+                "NONE",
+                "NAME",
+                "TYPE",
+                "GENRE",
+                "YEAR"
+            ],
+            "optionLabels": [
+                "None",
+                "Name",
+                "Type",
+                "Genre",
+                "Year"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "confirm_library_reset",
+            "label": "Confirm Library Reset",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "show_external_links",
+            "label": "Show External Links",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "show_tagline",
+            "label": "Show Tagline",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "prefer_local_trailers",
+            "label": "Prefer Local Trailers",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "show_more_in_collection",
+            "label": "Show More In Collection",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "show_upcoming_strip",
+            "label": "Show Upcoming Strip",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "play_theme_music",
+            "label": "Play Theme Music",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "show_reviews",
+            "label": "Show Reviews",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "show_episode_stream_badges",
+            "label": "Show Episode Stream Badges",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "show_filmography_roles",
+            "label": "Show Filmography Roles",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "show_frequent_costars",
+            "label": "Show Frequent Costars",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "trailer_preview_on_focus",
+            "label": "Trailer Preview On Focus",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "show_promoted_actions_landscape",
+            "label": "Show Promoted Actions Landscape",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "show_download_progress",
+            "label": "Show Download Progress",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "wifi_only_downloads",
+            "label": "Wifi Only Downloads",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "download_connections",
+            "label": "Download Connections",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "number",
+            "defaultValue": 4
+        },
+        {
+            "ns": "prefs",
+            "key": "max_concurrent_downloads",
+            "label": "Max Concurrent Downloads",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "number",
+            "defaultValue": 3,
+            "min": 1.0,
+            "max": 6.0
+        },
+        {
+            "ns": "prefs",
+            "key": "download_quality",
+            "label": "Download Quality",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "enum",
+            "defaultValue": "ORIGINAL",
+            "options": [
+                "ORIGINAL",
+                "HIGH_1080P",
+                "MEDIUM_720P",
+                "LOW_480P"
+            ],
+            "optionLabels": [
+                "Original",
+                "High 1080p",
+                "Medium 720p",
+                "Low 480p"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "smart_downloads_enabled",
+            "label": "Smart Downloads Enabled",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "auto_download_mode",
+            "label": "Auto Download Mode",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "auto_download_new_episodes",
+            "label": "Auto Download New Episodes",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "auto_download_lookahead",
+            "label": "Auto Download Lookahead",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "number",
+            "defaultValue": 3,
+            "min": 0.0,
+            "max": 10.0
+        },
+        {
+            "ns": "prefs",
+            "key": "auto_download_max_per_pass",
+            "label": "Auto Download Max Per Pass",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "number",
+            "defaultValue": 0,
+            "min": 0.0,
+            "max": 50.0
+        },
+        {
+            "ns": "prefs",
+            "key": "auto_download_keep_days",
+            "label": "Auto Download Keep Days",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "number",
+            "defaultValue": 0,
+            "min": 0.0
+        },
+        {
+            "ns": "prefs",
+            "key": "auto_download_servers",
+            "label": "Auto Download Servers",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "max_download_storage_gb",
+            "label": "Max Download Storage Gb",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "number",
+            "defaultValue": 0
+        },
+        {
+            "ns": "prefs",
+            "key": "downloads_list_filter",
+            "label": "Downloads List Filter",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "string",
+            "defaultValue": ""
+        },
+        {
+            "ns": "prefs",
+            "key": "downloads_list_sort",
+            "label": "Downloads List Sort",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "string",
+            "defaultValue": ""
+        },
+        {
+            "ns": "prefs",
+            "key": "downloads_list_status_filter",
+            "label": "Downloads List Status Filter",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "string",
+            "defaultValue": ""
+        },
+        {
+            "ns": "prefs",
+            "key": "downloads_selection_hint_seen",
+            "label": "Downloads Selection Hint Seen",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "download_storage_location",
+            "label": "Download Storage Location",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "string",
+            "defaultValue": "INTERNAL"
+        },
+        {
+            "ns": "prefs",
+            "key": "auto_delete_after_watch",
+            "label": "Auto Delete After Watch",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "cellular_download_size_warning_mb",
+            "label": "Cellular Download Size Warning Mb",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "number",
+            "defaultValue": 0
+        },
+        {
+            "ns": "prefs",
+            "key": "download_schedule_enabled",
+            "label": "Download Schedule Enabled",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "download_schedule_start",
+            "label": "Download Schedule Start",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "number",
+            "defaultValue": 0
+        },
+        {
+            "ns": "prefs",
+            "key": "download_schedule_end",
+            "label": "Download Schedule End",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "number",
+            "defaultValue": 6
+        },
+        {
+            "ns": "prefs",
+            "key": "download_schedule_wifi_only",
+            "label": "Download Schedule Wifi Only",
+            "description": "",
+            "group": "Downloads",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_default_speed",
+            "label": "Audio Default Speed",
+            "description": "",
+            "group": "Audio",
+            "valueType": "number",
+            "defaultValue": 1.0
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_night_mode_volume",
+            "label": "Audio Night Mode Volume",
+            "description": "",
+            "group": "Audio",
+            "valueType": "number",
+            "defaultValue": 0.4000000059604645
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_night_mode_gain",
+            "label": "Audio Night Mode Gain",
+            "description": "",
+            "group": "Audio",
+            "valueType": "number",
+            "defaultValue": 1200
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_skip_previous_threshold_ms",
+            "label": "Audio Skip Previous Threshold Ms",
+            "description": "",
+            "group": "Audio",
+            "valueType": "number",
+            "defaultValue": 3000.0
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_autoplay_next",
+            "label": "Audio Autoplay Next",
+            "description": "",
+            "group": "Audio",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_preload_buffer_size",
+            "label": "Audio Preload Buffer Size",
+            "description": "",
+            "group": "Audio",
+            "valueType": "enum",
+            "defaultValue": "MEDIUM",
+            "options": [
+                "LOW",
+                "MEDIUM",
+                "HIGH",
+                "UNLIMITED"
+            ],
+            "optionLabels": [
+                "Low",
+                "Medium",
+                "High",
+                "Unlimited"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_normalization_mode",
+            "label": "Audio Normalization Mode",
+            "description": "",
+            "group": "Audio",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_normalization_enabled",
+            "label": "Audio Normalization Enabled",
+            "description": "",
+            "group": "Audio",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "replaygain_pre_amp_db",
+            "label": "Replaygain Pre Amp Db",
+            "description": "",
+            "group": "Audio",
+            "valueType": "number",
+            "defaultValue": 0.0
+        },
+        {
+            "ns": "prefs",
+            "key": "channel_mix_mode",
+            "label": "Channel Mix Mode",
+            "description": "",
+            "group": "Audio",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "STEREO_DOWNMIX",
+                "SURROUND_UPMIX",
+                "MONO"
+            ],
+            "optionLabels": [
+                "Auto",
+                "Stereo Downmix",
+                "Surround Upmix",
+                "Mono"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "channel_mix_enabled",
+            "label": "Channel Mix Enabled",
+            "description": "",
+            "group": "Audio",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_gapless_enabled",
+            "label": "Audio Gapless Enabled",
+            "description": "",
+            "group": "Audio",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_crossfade_duration_ms",
+            "label": "Audio Crossfade Duration Ms",
+            "description": "",
+            "group": "Audio",
+            "valueType": "number",
+            "defaultValue": 0.0
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_delay_ms",
+            "label": "Audio Delay Ms",
+            "description": "",
+            "group": "Audio",
+            "valueType": "number",
+            "defaultValue": 0.0
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_lyrics_visible",
+            "label": "Audio Lyrics Visible",
+            "description": "",
+            "group": "Audio",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_visualizer_enabled",
+            "label": "Audio Visualizer Enabled",
+            "description": "",
+            "group": "Audio",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "sleep_timer_duration_ms",
+            "label": "Sleep Timer Duration Ms",
+            "description": "",
+            "group": "Audio",
+            "valueType": "number",
+            "defaultValue": 0.0
+        },
+        {
+            "ns": "prefs",
+            "key": "sleep_timer_end_of_episode",
+            "label": "Sleep Timer End Of Episode",
+            "description": "",
+            "group": "Audio",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_caching_enabled",
+            "label": "Audio Caching Enabled",
+            "description": "",
+            "group": "Audio cache",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_cache_size_mb",
+            "label": "Audio Cache Size Mb",
+            "description": "",
+            "group": "Audio cache",
+            "valueType": "number",
+            "defaultValue": 1024
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_prefetch_lookahead",
+            "label": "Audio Prefetch Lookahead",
+            "description": "",
+            "group": "Audio cache",
+            "valueType": "number",
+            "defaultValue": 3
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_prefetch_backfill",
+            "label": "Audio Prefetch Backfill",
+            "description": "",
+            "group": "Audio cache",
+            "valueType": "number",
+            "defaultValue": 5
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_cache_network_policy",
+            "label": "Audio Cache Network Policy",
+            "description": "",
+            "group": "Audio cache",
+            "valueType": "enum",
+            "defaultValue": "WIFI_ONLY",
+            "options": [
+                "OFF",
+                "WIFI_ONLY",
+                "ANY_NETWORK"
+            ],
+            "optionLabels": [
+                "Off",
+                "Wifi Only",
+                "Any Network"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "audio_cache_cellular_monthly_cap_mb",
+            "label": "Audio Cache Cellular Monthly Cap Mb",
+            "description": "",
+            "group": "Audio cache",
+            "valueType": "number",
+            "defaultValue": 500
+        },
+        {
+            "ns": "prefs",
+            "key": "manual_offline_enabled",
+            "label": "Manual Offline Enabled",
+            "description": "",
+            "group": "Network & offline",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "auto_offline_enabled",
+            "label": "Auto Offline Enabled",
+            "description": "",
+            "group": "Network & offline",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "manual_bandwidth_cap",
+            "label": "Manual Bandwidth Cap",
+            "description": "",
+            "group": "Network & offline",
+            "valueType": "number",
+            "defaultValue": 0.0
+        },
+        {
+            "ns": "prefs",
+            "key": "home_network_streaming_quality",
+            "label": "Home Network Streaming Quality",
+            "description": "",
+            "group": "Network & offline",
+            "valueType": "string",
+            "defaultValue": "AUTO"
+        },
+        {
+            "ns": "prefs",
+            "key": "metered_network_behavior",
+            "label": "Metered Network Behavior",
+            "description": "",
+            "group": "Network & offline",
+            "valueType": "enum",
+            "defaultValue": "WARN",
+            "options": [
+                "ALLOW",
+                "WARN",
+                "BLOCK"
+            ],
+            "optionLabels": [
+                "Allow",
+                "Warn",
+                "Block"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "adaptive_bitrate_enabled",
+            "label": "Adaptive Bitrate Enabled",
+            "description": "",
+            "group": "Network & offline",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "data_saver_enabled",
+            "label": "Data Saver Enabled",
+            "description": "",
+            "group": "Network & offline",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "verbose_network_logging",
+            "label": "Verbose Network Logging",
+            "description": "",
+            "group": "Network & offline",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "network_timeout_preset",
+            "label": "Network Timeout Preset",
+            "description": "",
+            "group": "Network & offline",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "FAST",
+                "DEFAULT",
+                "RELAXED",
+                "VERY_RELAXED"
+            ],
+            "optionLabels": [
+                "Fast",
+                "Default",
+                "Relaxed",
+                "Very Relaxed"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "max_cache_size_mb",
+            "label": "Max Cache Size Mb",
+            "description": "",
+            "group": "Network & offline",
+            "valueType": "number",
+            "defaultValue": 0
+        },
+        {
+            "ns": "prefs",
+            "key": "auto_delete_cache",
+            "label": "Auto Delete Cache",
+            "description": "",
+            "group": "Network & offline",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "sync_play_join_behavior",
+            "label": "SyncPlay Join Behavior",
+            "description": "Action when joining a SyncPlay group",
+            "group": "SyncPlay & casting",
+            "valueType": "enum",
+            "defaultValue": "ASK",
+            "options": [
+                "ALWAYS_JOIN",
+                "ASK",
+                "NEVER_JOIN"
+            ],
+            "optionLabels": [
+                "Always Join",
+                "Ask",
+                "Never Join"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "sync_play_tolerance_ms",
+            "label": "SyncPlay Sync Tolerance",
+            "description": "Allowed drift before correcting playback",
+            "group": "SyncPlay & casting",
+            "valueType": "number",
+            "defaultValue": 100.0
+        },
+        {
+            "ns": "prefs",
+            "key": "sync_play_auto_accept_invites",
+            "label": "SyncPlay Auto-Accept Invites",
+            "description": "Automatically accept SyncPlay invites from friends",
+            "group": "SyncPlay & casting",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "default_casting_strategy",
+            "label": "Casting Strategy",
+            "description": "Preferred method for big screen streaming",
+            "group": "SyncPlay & casting",
+            "valueType": "enum",
+            "defaultValue": "ASK",
+            "options": [
+                "PREFER_CAST",
+                "PREFER_DLNA",
+                "ASK"
+            ],
+            "optionLabels": [
+                "Prefer Cast",
+                "Prefer Dlna",
+                "Ask"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "background_casting_enabled",
+            "label": "Background Casting",
+            "description": "Keep casting active when app is closed",
+            "group": "SyncPlay & casting",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "preferred_renderer",
+            "label": "Preferred Renderer",
+            "description": "Device to target by default when casting",
+            "group": "SyncPlay & casting",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "dvr_pre_padding_minutes",
+            "label": "DVR Pre-Padding",
+            "description": "Start recording before scheduled time",
+            "group": "SyncPlay & casting",
+            "valueType": "number",
+            "defaultValue": 0
+        },
+        {
+            "ns": "prefs",
+            "key": "dvr_post_padding_minutes",
+            "label": "DVR Post-Padding",
+            "description": "Extend recording after scheduled end time",
+            "group": "SyncPlay & casting",
+            "valueType": "number",
+            "defaultValue": 0
+        },
+        {
+            "ns": "prefs",
+            "key": "dvr_recording_quality",
+            "label": "DVR Recording Quality",
+            "description": "Default video quality for DVR recordings",
+            "group": "SyncPlay & casting",
+            "valueType": "string",
+            "defaultValue": "AUTO"
+        },
+        {
+            "ns": "prefs",
             "key": "volume_profiles",
             "label": "Volume Profiles",
-            "description": "Remembered volume levels as a JSON map of content-type bucket to level (0..1).",
-            "group": "General",
+            "description": "",
+            "group": "Volume memory",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "remember_volume_per_content_type",
+            "label": "Remember Volume per Content Type",
+            "description": "Store one volume level each for video, music and audiobooks",
+            "group": "Volume memory",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "nav_bar_show_labels",
+            "label": "Show Navigation Labels",
+            "description": "Show icons and text labels in bottom navigation",
+            "group": "Navigation",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "hide_bottom_nav_on_scroll",
+            "label": "Hide on Scroll",
+            "description": "Bar hides when scrolling down",
+            "group": "Navigation",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "hidden_nav_items",
+            "label": "Hidden Nav Items",
+            "description": "",
+            "group": "Navigation",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "nav_item_order",
+            "label": "Nav Item Order",
+            "description": "",
+            "group": "Navigation",
             "valueType": "string"
         }
     ]
