@@ -77,9 +77,10 @@ public sealed class ClientSettingsCatalogTests
 
         // The audited clamps, mirrored from the client's spec declarations
         // (downmix 0–12 dB, slideshow 3–60 s, screensaver pause 1–60 min,
-        // preroll 5–120 s; the rest floor-at-zero). A new bound must be
-        // evidence-backed in the client's spec declarations — extend this set
-        // in the same commit as the artifact regen.
+        // preroll 5–120 s, reader typography/speech, poster size 0.7–1.4,
+        // downloads 1–6 concurrent; the rest floor-at-zero). A new bound must
+        // be evidence-backed in the client's spec declarations — extend this
+        // set in the same commit as the artifact regen.
         Assert.Equal(
             new HashSet<string>
             {
@@ -92,7 +93,20 @@ public sealed class ClientSettingsCatalogTests
                 "home_hero_slideshow_interval_sec",
                 "autoplay_episode_limit",
                 "pause_screensaver_after_minutes",
-                "next_up_button_preroll_sec"
+                "next_up_button_preroll_sec",
+                "reader_font_size_px",
+                "reader_line_height_pct",
+                "reader_margin_pct",
+                "reader_brightness_pct",
+                "reader_speech_rate",
+                "reader_speech_pitch",
+                "reader_reading_speed_wpm",
+                "reader_auto_scroll_speed_px",
+                "library_poster_size",
+                "max_concurrent_downloads",
+                "auto_download_lookahead",
+                "auto_download_max_per_pass",
+                "auto_download_keep_days"
             },
             bounded.Select(s => s.Key).ToHashSet());
     }
