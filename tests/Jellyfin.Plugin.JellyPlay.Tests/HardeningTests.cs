@@ -39,15 +39,36 @@ public sealed class SseKeepaliveTests
 
     private static string BodyText(MemoryStream body) => Encoding.UTF8.GetString(body.ToArray());
 
+    /// <summary>
+    /// Bounded wait for the writer to produce an expected frame. A fixed
+    /// cancellation budget loses the race to thread-pool starvation on loaded
+    /// CI runners (zero keepalive iterations can land before the timer fires),
+    /// so the deadline here only guards against a hung writer, never the
+    /// scheduling itself.
+    /// </summary>
+    private static async Task WaitForBodyAsync(MemoryStream body, Func<string, bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!condition(BodyText(body)))
+        {
+            Assert.True(DateTime.UtcNow < deadline, "the writer never produced the expected frame");
+            await Task.Delay(25);
+        }
+    }
+
     [Fact]
     public async Task IdleWriter_EmitsKeepaliveFrame_AfterInterval()
     {
         var hub = new SseHub(NullLogger<SseHub>.Instance);
         var id = hub.Subscribe("alice", "events");
         var (context, body) = StreamContext();
-        using var cts = new CancellationTokenSource(600);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
-        await SseStreamWriter.WriteAsync(context, hub, id, cts.Token, TimeSpan.FromMilliseconds(50));
+        var writer = SseStreamWriter.WriteAsync(context, hub, id, cts.Token, TimeSpan.FromMilliseconds(50));
+        await WaitForBodyAsync(body, text => text.Contains(": keepalive", StringComparison.Ordinal));
+
+        cts.Cancel();
+        await writer.WaitAsync(TimeSpan.FromSeconds(2));
 
         var text = BodyText(body);
         Assert.Contains(": keepalive", text);
@@ -62,9 +83,15 @@ public sealed class SseKeepaliveTests
         var id = hub.Subscribe("alice", "events");
         hub.PublishAll("events", "new-media", "{\"x\":1}");
         var (context, body) = StreamContext();
-        using var cts = new CancellationTokenSource(1000);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
-        await SseStreamWriter.WriteAsync(context, hub, id, cts.Token, TimeSpan.FromMilliseconds(50));
+        var writer = SseStreamWriter.WriteAsync(context, hub, id, cts.Token, TimeSpan.FromMilliseconds(50));
+        // The buffered event drains before the first quiet window, so two
+        // keepalives in the body also prove the event went out first.
+        await WaitForBodyAsync(body, text => text.Split(": keepalive", StringSplitOptions.None).Length - 1 >= 2);
+
+        cts.Cancel();
+        await writer.WaitAsync(TimeSpan.FromSeconds(2));
 
         var text = BodyText(body);
         Assert.Contains("event: new-media", text);
@@ -73,9 +100,6 @@ public sealed class SseKeepaliveTests
         var keepaliveAt = text.IndexOf(": keepalive", StringComparison.Ordinal);
         var dataAt = text.IndexOf("data:", StringComparison.Ordinal);
         Assert.True(keepaliveAt > dataAt, "keepalive must come after the event, not before");
-        // A 50ms quiet interval in a 1000ms budget yields ~19 keepalives; demanding
-        // only 2 leaves ~17 frames of slack for CI runner scheduling overshoot.
-        Assert.True(text.Split(": keepalive", StringSplitOptions.None).Length - 1 >= 2);
     }
 
     [Fact]
