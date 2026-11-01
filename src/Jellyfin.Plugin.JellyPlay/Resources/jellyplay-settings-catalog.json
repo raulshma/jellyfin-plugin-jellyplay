@@ -397,6 +397,158 @@
         },
         {
             "ns": "prefs",
+            "key": "time_use_24h",
+            "label": "24-Hour Time",
+            "description": "Use the 24-hour clock instead of the system format",
+            "group": "Appearance",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "card_press_animations",
+            "label": "Card Press Animation",
+            "description": "The media cards' animated press-scale effect",
+            "group": "Appearance",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "pull_to_refresh_enabled",
+            "label": "Pull to Refresh",
+            "description": "The swipe-down refresh gesture on browse screens",
+            "group": "Appearance",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "app_backdrop_dim",
+            "label": "Backdrop Dimming",
+            "description": "How strongly artwork backdrops are dimmed app-wide",
+            "group": "Appearance",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "NONE",
+                "LIGHTER",
+                "DEFAULT",
+                "HEAVIER"
+            ],
+            "optionLabels": [
+                "None",
+                "Lighter",
+                "Default",
+                "Heavier"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "haptics_intensity",
+            "label": "Haptics Intensity",
+            "description": "How strong confirmation vibrations feel",
+            "group": "Appearance",
+            "valueType": "enum",
+            "defaultValue": "MEDIUM",
+            "options": [
+                "LIGHT",
+                "MEDIUM",
+                "STRONG"
+            ],
+            "optionLabels": [
+                "Light",
+                "Medium",
+                "Strong"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "image_quality_preset",
+            "label": "Image Quality",
+            "description": "Cap the JPEG quality the server returns for artwork",
+            "group": "Appearance",
+            "valueType": "enum",
+            "defaultValue": "ORIGINAL",
+            "options": [
+                "ORIGINAL",
+                "HIGH_90",
+                "BALANCED_70",
+                "LOW_50"
+            ],
+            "optionLabels": [
+                "Original",
+                "High 90",
+                "Balanced 70",
+                "Low 50"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "app_list_density",
+            "label": "List Density",
+            "description": "The spacing of settings and list rows",
+            "group": "Appearance",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "COMPACT",
+                "DEFAULT",
+                "ROOMY"
+            ],
+            "optionLabels": [
+                "Compact",
+                "Default",
+                "Roomy"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "app_press_effect",
+            "label": "Press Effect",
+            "description": "The touch feedback shown on clickable surfaces",
+            "group": "Appearance",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "DEFAULT",
+                "SUBTLE",
+                "NONE"
+            ],
+            "optionLabels": [
+                "Default",
+                "Subtle",
+                "None"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "app_flat_cards",
+            "label": "Flat Cards",
+            "description": "Remove the outline stroke from media cards",
+            "group": "Appearance",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "app_overscroll_style",
+            "label": "Overscroll Effect",
+            "description": "The stretch or glow at the ends of scrollable lists",
+            "group": "Appearance",
+            "valueType": "enum",
+            "defaultValue": "PLATFORM",
+            "options": [
+                "PLATFORM",
+                "NONE"
+            ],
+            "optionLabels": [
+                "Platform",
+                "None"
+            ]
+        },
+        {
+            "ns": "prefs",
             "key": "preferred_player",
             "label": "Player Engine",
             "description": "Select default media playback engine: MPV, ExoPlayer, LibVLC",
@@ -901,8 +1053,8 @@
         {
             "ns": "prefs",
             "key": "home_hero_video_enabled",
-            "label": "Home Hero Video Enabled",
-            "description": "",
+            "label": "Video Hero",
+            "description": "Play a muted looping clip in the hero while you browse",
             "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": false
@@ -910,8 +1062,8 @@
         {
             "ns": "prefs",
             "key": "home_hero_video_tv_enabled",
-            "label": "Home Hero Video Tv Enabled",
-            "description": "",
+            "label": "Video Hero (Android TV)",
+            "description": "Play a muted looping clip in the hero on Android TV",
             "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": false
@@ -928,8 +1080,8 @@
         {
             "ns": "prefs",
             "key": "home_focus_backdrop",
-            "label": "Home Focus Backdrop",
-            "description": "",
+            "label": "Focus Backdrop",
+            "description": "Android TV: the focused card repaints the ambient backdrop",
             "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": false
@@ -937,8 +1089,8 @@
         {
             "ns": "prefs",
             "key": "home_stats_card",
-            "label": "Home Stats Card",
-            "description": "",
+            "label": "Watch Stats Card",
+            "description": "Show a compact \"your library week\" stats card on home",
             "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": false
@@ -946,8 +1098,8 @@
         {
             "ns": "prefs",
             "key": "home_genre_rail",
-            "label": "Home Genre Rail",
-            "description": "",
+            "label": "Genre Rail",
+            "description": "Show quick-access genre chips above the first row",
             "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": false
@@ -955,8 +1107,8 @@
         {
             "ns": "prefs",
             "key": "home_presence_chips",
-            "label": "Home Presence Chips",
-            "description": "",
+            "label": "Watch Party Chips",
+            "description": "Show what other household members are watching right now",
             "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": false
@@ -964,8 +1116,8 @@
         {
             "ns": "prefs",
             "key": "home_new_section_announcements",
-            "label": "Home New Section Announcements",
-            "description": "",
+            "label": "New Section Announcements",
+            "description": "Announce newly shipped home sections once, with a Customize shortcut",
             "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": true
@@ -1038,8 +1190,8 @@
         {
             "ns": "prefs",
             "key": "home_layout_autopush",
-            "label": "Home Layout Autopush",
-            "description": "",
+            "label": "Auto-Push Layout to Server",
+            "description": "Save layout changes to your Jellyfin server so they follow you across devices",
             "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": false
@@ -1102,8 +1254,8 @@
         {
             "ns": "prefs",
             "key": "show_quality_badges",
-            "label": "Show Quality Badges",
-            "description": "",
+            "label": "Quality Badges",
+            "description": "Show 4K / HDR / Dolby Vision / Atmos badges on cards",
             "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": true
@@ -1111,8 +1263,8 @@
         {
             "ns": "prefs",
             "key": "show_new_badges",
-            "label": "Show New Badges",
-            "description": "",
+            "label": "NEW Badges",
+            "description": "Mark items added since your last visit with a NEW badge",
             "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": true
@@ -1120,8 +1272,8 @@
         {
             "ns": "prefs",
             "key": "home_trickplay_preview",
-            "label": "Home Trickplay Preview",
-            "description": "",
+            "label": "Trickplay Preview",
+            "description": "Android TV: show a preview frame on focused Continue Watching cards",
             "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": true
@@ -1129,8 +1281,8 @@
         {
             "ns": "prefs",
             "key": "anti_spoiler_home",
-            "label": "Anti Spoiler Home",
-            "description": "",
+            "label": "Anti-Spoiler Home",
+            "description": "Hide watch-state spoilers: progress bars, time left, watched marks and episode titles on resume cards",
             "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": false
@@ -1175,8 +1327,8 @@
         {
             "ns": "prefs",
             "key": "home_cw_exclude_active_sessions",
-            "label": "Home Cw Exclude Active Sessions",
-            "description": "",
+            "label": "Exclude Active Sessions",
+            "description": "Hide items from Continue Watching / Next Up while they are playing on another device",
             "group": "Home & discovery",
             "valueType": "boolean",
             "defaultValue": false
@@ -1268,6 +1420,334 @@
         },
         {
             "ns": "prefs",
+            "key": "home_greeting_enabled",
+            "label": "Greeting in the Header",
+            "description": "Show a time-aware greeting with your name in the home dock",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "home_hide_see_all",
+            "label": "Hide See All Buttons",
+            "description": "Remove the See All pills from section row headers",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "home_card_scale",
+            "label": "Card Size",
+            "description": "Scale the width of the home poster cards",
+            "group": "Home & discovery",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "SMALL",
+                "DEFAULT",
+                "LARGE"
+            ],
+            "optionLabels": [
+                "Small",
+                "Default",
+                "Large"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "home_card_corner_radius",
+            "label": "Card Corner Radius",
+            "description": "Corner rounding of the home cards, in dp",
+            "group": "Home & discovery",
+            "valueType": "number",
+            "defaultValue": 12,
+            "min": 0.0,
+            "max": 28.0
+        },
+        {
+            "ns": "prefs",
+            "key": "home_show_mode_switch",
+            "label": "Show Mode Switch",
+            "description": "Render the Video/Music switch in the home dock",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "home_clock_show_date",
+            "label": "Date Under Home Clock",
+            "description": "Show the current date beneath the header clock",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "home_newsletter_banner_enabled",
+            "label": "Newsletter Banner on Home",
+            "description": "Show the weekly digest banner on the home screen",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "home_always_show_user_switcher",
+            "label": "Always Show User Switcher",
+            "description": "Render the account chip even with a single profile",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "home_cw_progress_style",
+            "label": "Continue Watching Progress Style",
+            "description": "How resume cards render watch progress: bar, thick bar, or percent",
+            "group": "Home & discovery",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "DEFAULT",
+                "THICK",
+                "PERCENT"
+            ],
+            "optionLabels": [
+                "Default",
+                "Thick",
+                "Percent"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "home_presence_chips_limit",
+            "label": "Presence Chip Limit",
+            "description": "Maximum watch-party chips shown in the row",
+            "group": "Home & discovery",
+            "valueType": "number",
+            "defaultValue": 4,
+            "min": 2.0,
+            "max": 8.0
+        },
+        {
+            "ns": "prefs",
+            "key": "home_genre_rail_limit",
+            "label": "Genre Rail Limit",
+            "description": "Maximum genre chips in the quick-access rail",
+            "group": "Home & discovery",
+            "valueType": "number",
+            "defaultValue": 24,
+            "min": 6.0,
+            "max": 36.0
+        },
+        {
+            "ns": "prefs",
+            "key": "home_ask_continue_remember",
+            "label": "Remember Ask-Continue Choice",
+            "description": "Apply the picked action as the new tap behavior for Continue Watching",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "home_rows_animations",
+            "label": "Section Entrance Animations",
+            "description": "The fade/slide entrance of the home section rows",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "home_opaque_dock",
+            "label": "Opaque Dock Surfaces",
+            "description": "Render the header capsules fully solid for readability",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "home_pre_section_order",
+            "label": "Pre-Section Order",
+            "description": "Arrange the stats card, genre rail and newsletter banner",
+            "group": "Home & discovery",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "home_new_badge_sections",
+            "label": "New Badge Sections",
+            "description": "Which home rows render the NEW badge",
+            "group": "Home & discovery",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "home_refresh_cadence",
+            "label": "Home Refresh Cadence",
+            "description": "How often home re-fetches its content automatically",
+            "group": "Home & discovery",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "DEFAULT",
+                "EAGER",
+                "RELAXED",
+                "MANUAL"
+            ],
+            "optionLabels": [
+                "Default",
+                "Eager",
+                "Relaxed",
+                "Manual"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "home_hero_idle_rotation_ms",
+            "label": "Hero Rotation Dwell",
+            "description": "How long the hero waits before auto-advancing (3–30 s)",
+            "group": "Home & discovery",
+            "valueType": "number",
+            "defaultValue": 8000,
+            "min": 3000.0,
+            "max": 30000.0
+        },
+        {
+            "ns": "prefs",
+            "key": "hero_scroll_defer",
+            "label": "Defer Hero Rotation While Scrolling",
+            "description": "Hold the hero rotation while the home list is scrolling",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "home_discover_pattern",
+            "label": "Discover Row Pattern",
+            "description": "How the discover rows split their cards",
+            "group": "Home & discovery",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "DEFAULT",
+                "UNIFORM",
+                "COMPACT"
+            ],
+            "optionLabels": [
+                "Default",
+                "Uniform",
+                "Compact"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "home_newsletter_window",
+            "label": "Newsletter Banner Window",
+            "description": "Which days the weekly digest banner may show",
+            "group": "Home & discovery",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "DEFAULT",
+                "ALWAYS",
+                "WEEKENDS"
+            ],
+            "optionLabels": [
+                "Default",
+                "Always",
+                "Weekends"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "home_presence_poll_seconds",
+            "label": "Presence Poll Interval",
+            "description": "How often the watch-party chips re-check sessions (15–300 s)",
+            "group": "Home & discovery",
+            "valueType": "number",
+            "defaultValue": 60,
+            "min": 15.0,
+            "max": 300.0
+        },
+        {
+            "ns": "prefs",
+            "key": "home_trickplay_peek_ms",
+            "label": "Trickplay Peek Hold",
+            "description": "How long the preview tile holds before fading (1–5 s)",
+            "group": "Home & discovery",
+            "valueType": "number",
+            "defaultValue": 2500,
+            "min": 1000.0,
+            "max": 5000.0
+        },
+        {
+            "ns": "prefs",
+            "key": "home_search_results_height_dp",
+            "label": "Search Results Height",
+            "description": "The home search overlay\\'s maximum results height",
+            "group": "Home & discovery",
+            "valueType": "number",
+            "defaultValue": 400,
+            "min": 280.0,
+            "max": 640.0
+        },
+        {
+            "ns": "prefs",
+            "key": "home_my_media_columns",
+            "label": "My Media Columns",
+            "description": "How many library tiles fit the My Media row (0 = automatic)",
+            "group": "Home & discovery",
+            "valueType": "number",
+            "defaultValue": 0,
+            "min": 0.0,
+            "max": 6.0
+        },
+        {
+            "ns": "prefs",
+            "key": "home_stats_metrics",
+            "label": "Stats Card Metrics",
+            "description": "Which figures the personal stats card shows",
+            "group": "Home & discovery",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "home_new_badge_days",
+            "label": "New Badge Window",
+            "description": "How recently an item must have arrived to badge (1–30 days)",
+            "group": "Home & discovery",
+            "valueType": "number",
+            "defaultValue": 30,
+            "min": 1.0,
+            "max": 30.0
+        },
+        {
+            "ns": "prefs",
+            "key": "home_row_unwatched_counters",
+            "label": "Row Unwatched Counters",
+            "description": "Show unwatched counts beside the section titles",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "home_hero_random_start",
+            "label": "Hero Random Start",
+            "description": "Start the hero at a random item instead of the first",
+            "group": "Home & discovery",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
             "key": "video_seek_duration_ms",
             "label": "Seek Duration",
             "description": "Double-tap seek step duration in player",
@@ -1310,6 +1790,35 @@
             "group": "Video player",
             "valueType": "boolean",
             "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "video_overlay_animations",
+            "label": "Overlay Animations",
+            "description": "Animate the control overlay in and out",
+            "group": "Video player",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "video_resume_chip_ms",
+            "label": "Resume Chip Duration",
+            "description": "How long the \"tap to restart\" chip stays up (0 = never)",
+            "group": "Video player",
+            "valueType": "number",
+            "defaultValue": 3000.0,
+            "min": 0.0,
+            "max": 10000.0
+        },
+        {
+            "ns": "prefs",
+            "key": "video_show_prev_next_buttons",
+            "label": "Previous / Next Buttons",
+            "description": "Show the episode skip buttons beside play",
+            "group": "Video player",
+            "valueType": "boolean",
+            "defaultValue": true
         },
         {
             "ns": "prefs",
@@ -1393,6 +1902,91 @@
             "description": "Actions for gestures, mouse, keyboard, and remote",
             "group": "Video player",
             "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "video_swipe_sensitivity",
+            "label": "Swipe Sensitivity",
+            "description": "How fast the brightness/volume swipe responds",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "RELAXED",
+                "DEFAULT",
+                "SENSITIVE"
+            ],
+            "optionLabels": [
+                "Relaxed",
+                "Default",
+                "Sensitive"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "video_gesture_overlay_linger_ms",
+            "label": "Gesture Overlay Linger",
+            "description": "How long the gesture indicators stay on screen",
+            "group": "Video player",
+            "valueType": "number",
+            "defaultValue": 800.0,
+            "min": 200.0,
+            "max": 2000.0
+        },
+        {
+            "ns": "prefs",
+            "key": "video_center_double_tap_action",
+            "label": "Center Double-Tap Action",
+            "description": "What a double-tap in the middle of the video does",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "PLAY_PAUSE",
+                "ZOOM_RESET"
+            ],
+            "optionLabels": [
+                "Auto",
+                "Play Pause",
+                "Zoom Reset"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "video_double_tap_zone_bias",
+            "label": "Double-Tap Zone Width",
+            "description": "How wide the left/right double-tap seek zones are",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "DEFAULT",
+                "EVEN",
+                "EXTREME"
+            ],
+            "optionLabels": [
+                "Default",
+                "Even",
+                "Extreme"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "video_hold_speed_pill_style",
+            "label": "Hold-Speed Pill Style",
+            "description": "The hold-to-speed indicator\\'s look",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "DEFAULT",
+                "MINIMAL"
+            ],
+            "optionLabels": [
+                "Default",
+                "Minimal"
+            ]
         },
         {
             "ns": "prefs",
@@ -1644,6 +2238,86 @@
             "group": "Video player",
             "valueType": "boolean",
             "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "video_seek_bar_style",
+            "label": "Seek Bar Style",
+            "description": "The seek bar\\'s thickness",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "DEFAULT",
+                "TALL"
+            ],
+            "optionLabels": [
+                "Default",
+                "Tall"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "video_show_buffered_range",
+            "label": "Show Buffered Range",
+            "description": "Shade the buffered bands on the seek bar",
+            "group": "Video player",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "video_show_chapter_markers",
+            "label": "Chapter Markers",
+            "description": "Tick the chapter starts on the seek bar",
+            "group": "Video player",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "video_hide_seek_timestamps",
+            "label": "Hide Seek Timestamps",
+            "description": "Drop the elapsed/total labels under the seek bar",
+            "group": "Video player",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "video_show_buffer_percent",
+            "label": "Show Buffered Percent",
+            "description": "Show how far the video is buffered, next to the seek bar",
+            "group": "Video player",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "video_seek_preview_time",
+            "label": "Seek Preview Time",
+            "description": "Show the target timestamp while scrubbing",
+            "group": "Video player",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "video_show_engine_badge",
+            "label": "Show Engine Badge",
+            "description": "Name the active playback engine in the top bar",
+            "group": "Video player",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "video_episode_browser_hide_watched",
+            "label": "Hide Watched Episodes",
+            "description": "The in-player episode browser skips fully-watched episodes",
+            "group": "Video player",
+            "valueType": "boolean",
+            "defaultValue": false
         },
         {
             "ns": "prefs",
@@ -1922,6 +2596,234 @@
             "group": "Video player",
             "valueType": "string",
             "defaultValue": ""
+        },
+        {
+            "ns": "prefs",
+            "key": "video_tv_timeout_scale",
+            "label": "TV Controls Timeout Scale",
+            "description": "How much longer controls stay up on TV",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "X2",
+            "options": [
+                "X1",
+                "X2",
+                "X3"
+            ],
+            "optionLabels": [
+                "X1",
+                "X2",
+                "X3"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "video_keyboard_seek_preset",
+            "label": "Keyboard Seek Steps",
+            "description": "The modifier seek-step sizes for arrow keys",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "CONSERVATIVE",
+                "DEFAULT",
+                "AGGRESSIVE"
+            ],
+            "optionLabels": [
+                "Conservative",
+                "Default",
+                "Aggressive"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "video_hold_seek_cadence",
+            "label": "Hold Seek Cadence",
+            "description": "How fast double-tap-and-hold repeats the seek",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "RELAXED",
+                "DEFAULT",
+                "RAPID"
+            ],
+            "optionLabels": [
+                "Relaxed",
+                "Default",
+                "Rapid"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "video_speed_pill_clearance",
+            "label": "Speed Pill Position",
+            "description": "How far the hold-to-speed pill sits above the controls",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "COMPACT",
+                "DEFAULT",
+                "ROOMY"
+            ],
+            "optionLabels": [
+                "Compact",
+                "Default",
+                "Roomy"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "video_pause_fade_style",
+            "label": "Pause Details Fade",
+            "description": "How fast the pause details panel fades in and out",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "FAST",
+                "DEFAULT",
+                "SLOW"
+            ],
+            "optionLabels": [
+                "Fast",
+                "Default",
+                "Slow"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "video_control_layout",
+            "label": "Control Layout",
+            "description": "Arrange the player button clusters",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "DEFAULT",
+                "SWAPPED_SEEK",
+                "MINIMAL"
+            ],
+            "optionLabels": [
+                "Default",
+                "Swapped Seek",
+                "Minimal"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "video_max_zoom",
+            "label": "Maximum Zoom",
+            "description": "How far pinch-to-zoom can crop the video",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "X3",
+            "options": [
+                "X2",
+                "X3",
+                "X4"
+            ],
+            "optionLabels": [
+                "X2",
+                "X3",
+                "X4"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "video_poll_cadence",
+            "label": "Position Poll Rate",
+            "description": "How often the seek bar\\'s position refreshes",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "LOW_POWER",
+                "DEFAULT",
+                "RESPONSIVE"
+            ],
+            "optionLabels": [
+                "Low Power",
+                "Default",
+                "Responsive"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "video_sleep_confirm_minutes",
+            "label": "Sleep Cancel Confirm",
+            "description": "Cancelling a sleep timer with more time left than this asks first",
+            "group": "Video player",
+            "valueType": "number",
+            "defaultValue": 5,
+            "min": 1.0,
+            "max": 30.0
+        },
+        {
+            "ns": "prefs",
+            "key": "video_ambient_under_fill",
+            "label": "Ambient on Fill",
+            "description": "Allow the ambient glow behind stretched (Fill) video too",
+            "group": "Video player",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "video_buffering_veil",
+            "label": "Buffering Spinner",
+            "description": "When the loading spinner shows during stalls",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "DEFAULT",
+                "ALWAYS",
+                "HIDDEN"
+            ],
+            "optionLabels": [
+                "Default",
+                "Always",
+                "Hidden"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "video_speed_preset_set",
+            "label": "Speed Presets",
+            "description": "Which speeds the speed sheet offers as chips",
+            "group": "Video player",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "COMPACT",
+                "DEFAULT",
+                "EXTENDED"
+            ],
+            "optionLabels": [
+                "Compact",
+                "Default",
+                "Extended"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "video_autoplay_wifi_only",
+            "label": "Autoplay on Wi-Fi Only",
+            "description": "Skip auto-play next while on a metered connection",
+            "group": "Video player",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "video_confirm_exit",
+            "label": "Confirm Exit",
+            "description": "Pressing back first asks before closing the player",
+            "group": "Video player",
+            "valueType": "boolean",
+            "defaultValue": false
         },
         {
             "ns": "prefs",
@@ -3090,6 +3992,362 @@
         },
         {
             "ns": "prefs",
+            "key": "detail_cast_item_size",
+            "label": "Detail Cast Item Size",
+            "description": "",
+            "group": "Library",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "COMPACT",
+                "DEFAULT",
+                "LARGE"
+            ],
+            "optionLabels": [
+                "Compact",
+                "Default",
+                "Large"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_cast_see_all_limit",
+            "label": "Detail Cast See All Limit",
+            "description": "",
+            "group": "Library",
+            "valueType": "number",
+            "defaultValue": 12,
+            "min": 6.0,
+            "max": 24.0
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_backdrop_parallax",
+            "label": "Detail Backdrop Parallax",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_overview_collapse_lines",
+            "label": "Detail Overview Collapse Lines",
+            "description": "",
+            "group": "Library",
+            "valueType": "number",
+            "defaultValue": 3,
+            "min": 3.0,
+            "max": 8.0
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_hide_watched_episodes",
+            "label": "Detail Hide Watched Episodes",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_confirm_mark_played",
+            "label": "Detail Confirm Mark Played",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_show_studio_chips",
+            "label": "Detail Show Studio Chips",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_show_genre_chips",
+            "label": "Detail Show Genre Chips",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_show_tag_chips",
+            "label": "Detail Show Tag Chips",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_show_skip_chips",
+            "label": "Detail Show Skip Chips",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_season_tabs_artwork",
+            "label": "Detail Season Tabs Artwork",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_people_grid_density",
+            "label": "Detail People Grid Density",
+            "description": "",
+            "group": "Library",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "COMPACT",
+                "DEFAULT",
+                "LARGE"
+            ],
+            "optionLabels": [
+                "Compact",
+                "Default",
+                "Large"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_show_trailer_badges",
+            "label": "Detail Show Trailer Badges",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_persist_section_hides",
+            "label": "Detail Persist Section Hides",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_hidden_franchise_ids",
+            "label": "Detail Hidden Franchise Ids",
+            "description": "",
+            "group": "Library",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_similar_limit",
+            "label": "Detail Similar Limit",
+            "description": "",
+            "group": "Library",
+            "valueType": "number",
+            "defaultValue": 12,
+            "min": 6.0,
+            "max": 24.0
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_upcoming_limit",
+            "label": "Detail Upcoming Limit",
+            "description": "",
+            "group": "Library",
+            "valueType": "number",
+            "defaultValue": 12,
+            "min": 4.0,
+            "max": 24.0
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_section_order",
+            "label": "Detail Section Order",
+            "description": "",
+            "group": "Library",
+            "valueType": "string",
+            "defaultValue": ""
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_stagger_style",
+            "label": "Detail Stagger Style",
+            "description": "",
+            "group": "Library",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "FAST",
+                "DEFAULT",
+                "SLOW"
+            ],
+            "optionLabels": [
+                "Fast",
+                "Default",
+                "Slow"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_backdrop_resolution",
+            "label": "Detail Backdrop Resolution",
+            "description": "",
+            "group": "Library",
+            "valueType": "enum",
+            "defaultValue": "FHD_1920",
+            "options": [
+                "HD_1280",
+                "FHD_1920",
+                "QHD_2560"
+            ],
+            "optionLabels": [
+                "Hd 1280",
+                "Fhd 1920",
+                "Qhd 2560"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_chapter_card_size",
+            "label": "Detail Chapter Card Size",
+            "description": "",
+            "group": "Library",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "COMPACT",
+                "DEFAULT",
+                "LARGE"
+            ],
+            "optionLabels": [
+                "Compact",
+                "Default",
+                "Large"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_reviews_preview_lines",
+            "label": "Detail Reviews Preview Lines",
+            "description": "",
+            "group": "Library",
+            "valueType": "number",
+            "defaultValue": 6,
+            "min": 2.0,
+            "max": 12.0
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_filmography_sort",
+            "label": "Detail Filmography Sort",
+            "description": "",
+            "group": "Library",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "DEFAULT",
+                "YEAR_DESC",
+                "YEAR_ASC",
+                "ALPHABETICAL"
+            ],
+            "optionLabels": [
+                "Default",
+                "Year Desc",
+                "Year Asc",
+                "Alphabetical"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_franchise_box_limit",
+            "label": "Detail Franchise Box Limit",
+            "description": "",
+            "group": "Library",
+            "valueType": "number",
+            "defaultValue": 2,
+            "min": 1.0,
+            "max": 5.0
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_franchise_member_limit",
+            "label": "Detail Franchise Member Limit",
+            "description": "",
+            "group": "Library",
+            "valueType": "number",
+            "defaultValue": 50,
+            "min": 10.0,
+            "max": 100.0
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_smart_play_priority",
+            "label": "Detail Smart Play Priority",
+            "description": "",
+            "group": "Library",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "DEFAULT",
+                "NEXT_UP_FIRST",
+                "REPLAY_FIRST"
+            ],
+            "optionLabels": [
+                "Default",
+                "Next Up First",
+                "Replay First"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_stream_fallback_language",
+            "label": "Detail Stream Fallback Language",
+            "description": "",
+            "group": "Library",
+            "valueType": "string",
+            "defaultValue": "eng"
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_promoted_rail_source",
+            "label": "Detail Promoted Rail Source",
+            "description": "",
+            "group": "Library",
+            "valueType": "enum",
+            "defaultValue": "DEFAULT",
+            "options": [
+                "DEFAULT",
+                "COMPACT",
+                "VIEWING"
+            ],
+            "optionLabels": [
+                "Default",
+                "Compact",
+                "Viewing"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "detail_episode_overview_preview",
+            "label": "Detail Episode Overview Preview",
+            "description": "",
+            "group": "Library",
+            "valueType": "boolean",
+            "defaultValue": false
+        },
+        {
+            "ns": "prefs",
             "key": "wifi_only_downloads",
             "label": "Wifi Only Downloads",
             "description": "",
@@ -3816,6 +5074,15 @@
             "group": "Navigation",
             "valueType": "boolean",
             "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "start_tab",
+            "label": "Start Tab",
+            "description": "Which top-level destination opens on launch",
+            "group": "Navigation",
+            "valueType": "string",
+            "defaultValue": ""
         },
         {
             "ns": "prefs",
