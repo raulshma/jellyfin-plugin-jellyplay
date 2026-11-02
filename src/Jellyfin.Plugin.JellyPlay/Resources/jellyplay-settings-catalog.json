@@ -607,6 +607,27 @@
         },
         {
             "ns": "prefs",
+            "key": "video_performance_profile",
+            "label": "Performance Profile",
+            "description": "Device performance ceiling (Auto, Low, Medium, High) layered over your quality settings — the lower value wins",
+            "group": "Playback",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "LOW",
+                "MEDIUM",
+                "HIGH"
+            ],
+            "optionLabels": [
+                "Auto",
+                "Low",
+                "Medium",
+                "High"
+            ]
+        },
+        {
+            "ns": "prefs",
             "key": "cellular_streaming_quality",
             "label": "Cellular Streaming Quality",
             "description": "",
