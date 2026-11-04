@@ -63,10 +63,223 @@
             "ns": "prefs",
             "key": "performance_mode",
             "label": "Performance Mode",
-            "description": "Reduces heavy animations and layout calculations for low-end devices",
+            "description": "",
             "group": "Appearance",
             "valueType": "boolean",
             "defaultValue": false
+        },
+        {
+            "ns": "prefs",
+            "key": "performance_level",
+            "label": "Performance Level",
+            "description": "The master dial: Standard, Streamlined or Essential — granular overrides live in the hub",
+            "group": "Appearance",
+            "valueType": "string"
+        },
+        {
+            "ns": "prefs",
+            "key": "perf_animations",
+            "label": "Animations",
+            "description": "App-wide UI animations and motion effects (Auto follows the level)",
+            "group": "Appearance",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "ON",
+                "OFF"
+            ],
+            "optionLabels": [
+                "Auto",
+                "On",
+                "Off"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "perf_shared_elements",
+            "label": "Shared Element Transitions",
+            "description": "Animate artwork between screens (Auto follows the level)",
+            "group": "Appearance",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "ON",
+                "OFF"
+            ],
+            "optionLabels": [
+                "Auto",
+                "On",
+                "Off"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "perf_nav_transitions",
+            "label": "Navigation Transitions",
+            "description": "Animated screen transitions, or instant navigation (Auto follows the level)",
+            "group": "Appearance",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "ON",
+                "OFF"
+            ],
+            "optionLabels": [
+                "Auto",
+                "On",
+                "Off"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "perf_image_decode_cap",
+            "label": "Image Decode Cap",
+            "description": "Cap artwork decode size, or follow the level policy (Auto)",
+            "group": "Appearance",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "UNLIMITED",
+                "P1080",
+                "P720",
+                "P512",
+                "P256"
+            ],
+            "optionLabels": [
+                "Auto",
+                "Unlimited",
+                "P1080",
+                "P720",
+                "P512",
+                "P256"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "perf_image_crossfade",
+            "label": "Image Crossfade",
+            "description": "Fade images in when they finish loading (Auto follows the level)",
+            "group": "Appearance",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "ON",
+                "OFF"
+            ],
+            "optionLabels": [
+                "Auto",
+                "On",
+                "Off"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "perf_blurhash",
+            "label": "BlurHash Placeholders",
+            "description": "Blurry placeholder art while posters load (Auto follows the level)",
+            "group": "Appearance",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "ON",
+                "OFF"
+            ],
+            "optionLabels": [
+                "Auto",
+                "On",
+                "Off"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "perf_quality_badges",
+            "label": "Quality Badges",
+            "description": "4K / HDR / Dolby Vision badges on cards (Auto follows the level)",
+            "group": "Appearance",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "ON",
+                "OFF"
+            ],
+            "optionLabels": [
+                "Auto",
+                "On",
+                "Off"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "perf_ambient_hero_video",
+            "label": "Ambient Hero Video",
+            "description": "Animated video backdrops on detail heroes (Auto follows the level)",
+            "group": "Appearance",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "ON",
+                "OFF"
+            ],
+            "optionLabels": [
+                "Auto",
+                "On",
+                "Off"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "perf_backdrop_blur",
+            "label": "Backdrop Blur",
+            "description": "Blurred backdrop layers behind sheets and players (Auto follows the level)",
+            "group": "Appearance",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "ON",
+                "OFF"
+            ],
+            "optionLabels": [
+                "Auto",
+                "On",
+                "Off"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "perf_screensaver_motion",
+            "label": "Screensaver Motion",
+            "description": "Ken Burns drift on the screensaver (Auto follows the level)",
+            "group": "Appearance",
+            "valueType": "enum",
+            "defaultValue": "AUTO",
+            "options": [
+                "AUTO",
+                "ON",
+                "OFF"
+            ],
+            "optionLabels": [
+                "Auto",
+                "On",
+                "Off"
+            ]
+        },
+        {
+            "ns": "prefs",
+            "key": "image_memory_cache_percent",
+            "label": "Image Memory Cache",
+            "description": "Memory-cache size as a percent of the heap (0 = RAM-tiered auto, 5–35 explicit)",
+            "group": "Appearance",
+            "valueType": "number",
+            "defaultValue": 0
         },
         {
             "ns": "prefs",
@@ -868,6 +1081,46 @@
             "group": "Playback",
             "valueType": "boolean",
             "defaultValue": true
+        },
+        {
+            "ns": "prefs",
+            "key": "exo_initial_buffer_ms",
+            "label": "Initial Buffer",
+            "description": "Audio/video buffered before playback starts (250–5000 ms)",
+            "group": "Playback",
+            "valueType": "number",
+            "defaultValue": 1000,
+            "min": 250.0,
+            "max": 5000.0
+        },
+        {
+            "ns": "prefs",
+            "key": "exo_rebuffer_ms",
+            "label": "Rebuffer Target",
+            "description": "Buffered amount needed to resume after a stall (500–10000 ms)",
+            "group": "Playback",
+            "valueType": "number",
+            "defaultValue": 3000,
+            "min": 500.0,
+            "max": 10000.0
+        },
+        {
+            "ns": "prefs",
+            "key": "exo_target_buffer_mb",
+            "label": "Target Buffer Size",
+            "description": "Total forward buffer in MB (0 = engine-derived auto, 5–512 explicit)",
+            "group": "Playback",
+            "valueType": "number",
+            "defaultValue": 0
+        },
+        {
+            "ns": "prefs",
+            "key": "exo_retain_back_buffer",
+            "label": "Retain Back Buffer",
+            "description": "Keep the back buffer regardless of keyframe boundaries (instant rewind, higher memory)",
+            "group": "Playback",
+            "valueType": "boolean",
+            "defaultValue": false
         },
         {
             "ns": "prefs",
