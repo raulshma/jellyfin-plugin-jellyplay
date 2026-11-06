@@ -78,7 +78,11 @@ public sealed class ClientSettingsCatalogTests
         // The audited clamps, mirrored from the client's spec declarations
         // (downmix 0–12 dB, slideshow 3–60 s, screensaver pause 1–60 min,
         // preroll 5–120 s, reader typography/speech, poster size 0.7–1.4,
-        // downloads 1–6 concurrent; the rest floor-at-zero). A new bound must
+        // downloads 1–6 concurrent; the rest floor-at-zero). The v0.11.8
+        // settings wave added the detail-page density limits, ExoPlayer
+        // buffer ms, home-chrome timings/limits and video overlay timings
+        // below — verified against the regenerated artifact (byte-identical
+        // to the client's PreferenceSpec declarations). A new bound must
         // be evidence-backed in the client's spec declarations — extend this
         // set in the same commit as the artifact regen.
         Assert.Equal(
@@ -106,7 +110,29 @@ public sealed class ClientSettingsCatalogTests
                 "max_concurrent_downloads",
                 "auto_download_lookahead",
                 "auto_download_max_per_pass",
-                "auto_download_keep_days"
+                "auto_download_keep_days",
+                // v0.11.8 settings wave.
+                "detail_cast_see_all_limit",
+                "detail_franchise_box_limit",
+                "detail_franchise_member_limit",
+                "detail_overview_collapse_lines",
+                "detail_reviews_preview_lines",
+                "detail_similar_limit",
+                "detail_upcoming_limit",
+                "exo_initial_buffer_ms",
+                "exo_rebuffer_ms",
+                "home_card_corner_radius",
+                "home_genre_rail_limit",
+                "home_hero_idle_rotation_ms",
+                "home_my_media_columns",
+                "home_new_badge_days",
+                "home_presence_chips_limit",
+                "home_presence_poll_seconds",
+                "home_search_results_height_dp",
+                "home_trickplay_peek_ms",
+                "video_gesture_overlay_linger_ms",
+                "video_resume_chip_ms",
+                "video_sleep_confirm_minutes"
             },
             bounded.Select(s => s.Key).ToHashSet());
     }
