@@ -610,6 +610,27 @@
         },
         {
             "ns": "prefs",
+            "key": "tv_ui_scale",
+            "label": "TV UI scale",
+            "description": "Overall TV interface size (Compact / Small / Default / Larger)",
+            "group": "Appearance",
+            "valueType": "enum",
+            "defaultValue": "SMALL",
+            "options": [
+                "COMPACT",
+                "SMALL",
+                "DEFAULT",
+                "LARGE"
+            ],
+            "optionLabels": [
+                "Compact",
+                "Small",
+                "Default",
+                "Large"
+            ]
+        },
+        {
+            "ns": "prefs",
             "key": "time_use_24h",
             "label": "24-Hour Time",
             "description": "Use the 24-hour clock instead of the system format",
